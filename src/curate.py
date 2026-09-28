@@ -43,15 +43,16 @@ def _norm_title(title: str) -> str:
 def _kw_matcher(keyword: str) -> re.Pattern | None:
     """英文關鍵字用詞界比對，中文直接子字串比對（中文沒有詞界）。
 
-    沒有這層的話，'agent' 會命中 'Man arrested by federal agents'，
-    'gpu' 會命中任何含 GPU 三個字母的字串。
+    沒有這層的話，'gpu' 會命中任何含 GPU 三個字母的字串。
+    結尾允許 s／es，讓 'agent' 命中 'agents'。
+    # ponytail: 只處理規則複數；不規則變化（-y→-ies）或同義詞直接在 config 多列一個關鍵字
     """
     if keyword in _PATTERN_CACHE:
         return _PATTERN_CACHE[keyword]
     pattern = None
     if _ASCII_KW.match(keyword):
         pattern = re.compile(
-            r"(?<![a-z0-9])" + re.escape(keyword.lower()).replace(r"\ ", r"[\s-]+") + r"(?![a-z0-9])")
+            r"(?<![a-z0-9])" + re.escape(keyword.lower()).replace(r"\ ", r"[\s-]+") + r"(?:e?s)?(?![a-z0-9])")
     _PATTERN_CACHE[keyword] = pattern
     return pattern
 
@@ -278,6 +279,9 @@ if __name__ == "__main__":  # 自我檢查：python3 src/curate.py
     assert st("12 pages; on the nature of attention") is None
     assert st("ACLU report analysis") is None
     assert st("") is None
+    assert _hits("openai agents tried to bruteforce", "agent") and _hits("new gpus", "gpu")
+    assert _hits("ai agents ship", "ai agent") and _hits("two foundation models", "foundation model")
+    assert not _hits("agentic workflows", "agent") and not _hits("agentsx", "agent")
     item = {"title": "x", "summary": "", "venue_note": "ICLR 2026 camera-ready"}
     assert score(item, {}, V)[0] == 2.0 and item["venue"]["status"] == "main"
     print("ok")
