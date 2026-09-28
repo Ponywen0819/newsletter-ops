@@ -25,13 +25,17 @@
     {
       "name": "Ars Technica",
       "type": "rss",
-      "url": "https://feeds.arstechnica.com/arstechnica/index"
+      "url": "https://feeds.arstechnica.com/arstechnica/index",
+      "baseline_relevance": 0.5,
+      "note": "保底 0.5：再命中任一關鍵字（boost_low +0.4）就過門檻 0.8。試過 IEEE 給 0.8（無條件收錄），09-28 五則裡三則是無關的雜項，會擠佔配額"
     },
     {
       "name": "IEEE Spectrum",
       "type": "rss",
       "url": "https://spectrum.ieee.org/feeds/feed.rss",
-      "lookback_hours": 96
+      "lookback_hours": 96,
+      "baseline_relevance": 0.5,
+      "note": "保底 0.5：再命中任一關鍵字（boost_low +0.4）就過門檻 0.8。試過 IEEE 給 0.8（無條件收錄），09-28 五則裡三則是無關的雜項，會擠佔配額"
     }
   ]
 }
