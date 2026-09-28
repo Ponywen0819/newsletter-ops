@@ -4,26 +4,7 @@
 
 ## 未解決
 
-### 高：會擋住每日自動化
-
-**1. 本機 Claude 執行的 OAuth 過期，09-26 之後沒有報告**
-- 現象：`logs/stdout.log` 最後兩行是 `Failed to authenticate: OAuth session expired and could not be refreshed`，`reports/` 停在 2026-09-26。
-- 原因：本機 `claude` CLI 的登入過期，cron 在無人互動的情況下無法重新授權。
-- 建議：在終端機互動模式下重新登入 `claude`；之後改用 Claude 桌面 App 的本機排程任務，或定期檢查這個 log。
-
-**2. 排程還沒接到這條 pipeline**
-- 現象：目前實際在跑的是雲端排程，用的是舊的整合型 prompt（全部靠 web search），本機沒有排程任務。
-- 原因：雲端環境讀不到這個 repo；專案也不是 git repo，無法推到 GitHub。
-- 建議：
-  - 本機排程（推薦）：先解決第 1 點，prompt 照 README 的 5 步流程寫。
-  - 雲端排程：先 `git init` 並推到 GitHub，而且 `state/seen.json` 要 commit 回 repo，否則跨日去重會失效。
-
 ### 中：影響報告品質
-
-**3. 英文關鍵字比對不到複數**
-- 現象：2026-09-28 tech-industry 收錄 0 則，〈OpenAI agents tried to 'bruteforce' a UN website〉被漏掉。
-- 原因：`curate._kw_matcher` 用詞界比對，`agent` 後面接 `s` 就不算命中。
-- 建議：英文關鍵字的比對樣式允許結尾多一個 `s`／`es`，也就是 `(?:e?s)?(?![a-z0-9])`，並補一條自我檢查。
 
 **4. 國際新聞排序幾乎沒有訊號**
 - 現象：world 的候選是 BBC 的 VMAs 紅毯、沉船影片這類新聞，當天真正的頭條（荷莫茲海峽）靠 skill 裡的 WebSearch 才補上。
@@ -36,10 +17,11 @@
   - 再考慮用 feed 內的排列順序加分（BBC 的頭條是編輯排過的）。
   - 或改用關鍵名詞重疊做跨來源比對。
 
-**5. Tech-industry 常常 0 則，科技段偏單薄**
-- 現象：tech-industry 只收有命中關鍵字的新聞，週末或關鍵字沒對上的日子會整段空掉。
-- 原因：這個主題沒有 `baseline_relevance`，關鍵字又偏向 edge AI、半導體。
-- 建議：先修第 3 點再觀察；仍然太少的話，給 Ars Technica、IEEE Spectrum 小幅保底分（0.5–0.8）。
+**5. Tech-industry 常常 0 則，科技段偏單薄**（處理中）
+- 現象：tech-industry 只收有命中關鍵字的新聞，週末或關鍵字沒對上的日子會整段空掉。這個主題沒有後手：沒過門檻的新聞不會進 curated JSON，Claude 看不到；WebSearch 補充只在整個段落 0 則時才觸發。
+- 已做（2026-09-28）：修了複數比對；Ars Technica、IEEE Spectrum 保底 0.5，命中任一關鍵字就過門檻。IEEE 試過 0.8（無條件收錄），五則裡三則是無關雜項，所以沒採用。
+- 觀察：跑幾天看 tech-industry 的則數。仍然太少的話，下一步是把每個主題「差一點過門檻」的前幾則附進 curated JSON，讓 Claude 決定要不要撈回來。
+- 另外：`vision` 命中了〈Poetry for Engineers: The UI Designer's Dream〉，這個 boost_low 關鍵字太泛，可考慮改成 `computer vision`。
 
 **6. 「其餘收錄」塞了不相關的新聞**
 - 現象：VMAs 紅毯、沉船影片也出現在 email 裡。
@@ -79,20 +61,8 @@
 - 原因：5 個 arXiv 來源穿插之後，仍有 4 個排在清單最後、彼此相連，每兩個之間要等 3 秒。
 - 建議：把 arXiv 平均分散到整個清單，或讓不同網域並行抓取。目前效益不大。
 
-**12. Metrics 的量測範圍**
-- WebFetch 內部摘要網頁用的小模型，它的 token 不在 session 紀錄裡，沒有算進去。
-- `model_seconds` 是總時間扣掉工具時間，包含串流與排隊，不是純推論時間。
-- `metrics.py claude` 要在寄信之後執行，寄信的用量才會算進去。
-- 同一天跑多次時，`summary` 只取每個階段的最後一筆。
-
-**13. 專案沒有版本控制**
-- 現象：今天對 `fetch.py`、`curate.py`、skill、config 的修改都沒有歷史紀錄，出錯時無法回溯。
-- 建議：`git init`；`data/`、`logs/`、`state/` 視需要加進 `.gitignore`。
-
-**14. 今天的測試執行已經寫進 `state/seen.json`**
-- 現象：2026-09-28 那次 `/news-digest` 把 27 則標記為已收錄。
-- 影響：今天如果再跑正式流程，這些項目不會再出現，curated JSON 會被較少的結果覆蓋。
-- 處理：只影響今天，不需要動作。
+**12. Metrics 算不到 WebFetch 內部的 token**
+- WebFetch 用來摘要網頁的小模型不在 session 紀錄裡，拿不到。替代指標是 `tools.WebFetch` 的呼叫次數與秒數。
 
 ## 已解決（2026-09-28）
 
@@ -101,3 +71,5 @@
 - **「DocInsights at EMNLP」被判成主會議**：會議判斷改成三個固定清單（conference／journal／minor_tracks），加上「名稱 at 會議」規則，並直接產出中文 `label`。
 - **抓取 50 秒裡有 30 秒在等待**：請求間隔改成只套用在同一網域，並把同網域的來源穿插排開。arXiv 依 API 規範改為間隔 3 秒。抓取時間降到 23.7 秒。
 - **報告格式和排程 prompt 互相衝突**（散文 vs 條列）：skill 改成條列版晨間簡報，email 版型交給 `render_email.py`。
+- **英文關鍵字比對不到複數**（原第 3 點）：`curate._kw_matcher` 結尾允許 `s`／`es`，`agent` 現在會命中 `agents`。代價是「federal agents」這類新聞也會拿到 `agent` 的低權重加分（boost_low），靠門檻與 Claude 判讀擋掉。不規則複數與同義詞直接在 `config.json` 多列一個關鍵字。
+- **Metrics 測試紀錄被刪、同一天多次執行只剩最後一筆**（原第 12 點）：測試紀錄會和正式紀錄混在同一個檔、分不出來，所以之前測試完都被手動刪掉。現在每筆紀錄帶 `label`（`NEWSLETTER_RUN_LABEL`，預設 `prod`），`summary` 每次執行一行、預設只列 prod。`model_seconds` 改名 `non_tool_seconds`。
