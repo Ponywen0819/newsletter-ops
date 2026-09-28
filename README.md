@@ -15,6 +15,7 @@ src/curate.py              整理層：時間窗 → 跨日去重 → 近似標�
 src/report.py              輸出層：模板版 Markdown（無 LLM 保底）
 src/metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
 src/render_email.py        email 層：條列版報告 Markdown → inline-CSS HTML（reports/<date>.html）
+src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/feedback.py            回饋層：從報告收集人工標記
 src/run.py                 入口 CLI
 run_daily.sh               cron 包裝
@@ -39,7 +40,11 @@ python3 src/run.py               # 完整跑一次（含模板版報告）
 python3 src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
 python3 src/run.py --lookback 72 # 放寬時間窗到 72 小時
 python3 src/feedback.py          # 收集報告裡填的標記
+python3 src/render_email.py | python3 src/send_email.py   # 寄出當日 email
 ```
+
+`send_email.py` 讀環境變數 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（Google 帳號的應用程式密碼，需先開兩步驟驗證）、
+`NEWSLETTER_MAIL_TO`（逗號分隔，沒設就寄給自己）。加 `--dry-run` 只印標頭不寄。
 
 ## 讓它跟著你的研究重心走
 
