@@ -1,0 +1,37 @@
+{
+  "topic": "tech-industry",
+  "label": "科技產業",
+  "defaults": {
+    "weight": 0.8,
+    "lookback_hours": 24
+  },
+  "feeds": [
+    {
+      "name": "Hacker News (front)",
+      "type": "rss",
+      "url": "https://hnrss.org/frontpage?points=150"
+    },
+    {
+      "name": "TechCrunch",
+      "type": "rss",
+      "url": "https://techcrunch.com/feed/"
+    },
+    {
+      "name": "The Verge",
+      "type": "rss",
+      "url": "https://www.theverge.com/rss/index.xml",
+      "weight": 0.7
+    },
+    {
+      "name": "Ars Technica",
+      "type": "rss",
+      "url": "https://feeds.arstechnica.com/arstechnica/index"
+    },
+    {
+      "name": "IEEE Spectrum",
+      "type": "rss",
+      "url": "https://spectrum.ieee.org/feeds/feed.rss",
+      "lookback_hours": 96
+    }
+  ]
+}

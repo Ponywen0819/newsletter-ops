@@ -1,0 +1,21 @@
+{
+  "topic": "taiwan-tech",
+  "label": "台灣科技新聞",
+  "defaults": {
+    "weight": 0.9,
+    "lookback_hours": 24
+  },
+  "feeds": [
+    {
+      "name": "TechNews 科技新報",
+      "type": "rss",
+      "url": "https://technews.tw/feed/",
+      "weight": 1.0
+    },
+    {
+      "name": "iThome",
+      "type": "rss",
+      "url": "https://www.ithome.com.tw/rss"
+    }
+  ]
+}

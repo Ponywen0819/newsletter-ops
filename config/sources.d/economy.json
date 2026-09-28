@@ -1,0 +1,31 @@
+{
+  "topic": "economy",
+  "label": "財經與總體經濟",
+  "defaults": {
+    "weight": 0.9,
+    "lookback_hours": 24,
+    "baseline_relevance": 1.5
+  },
+  "feeds": [
+    {
+      "name": "WSJ Economy",
+      "type": "rss",
+      "url": "https://feeds.content.dowjones.io/public/rss/socialeconomyfeed"
+    },
+    {
+      "name": "Federal Reserve Press Releases",
+      "type": "rss",
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml"
+    },
+    {
+      "name": "經濟日報",
+      "type": "rss",
+      "url": "https://money.udn.com/rssfeed/news/1001/5591?ch=money"
+    },
+    {
+      "name": "CNBC Markets",
+      "type": "rss",
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069"
+    }
+  ]
+}

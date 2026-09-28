@@ -1,0 +1,22 @@
+{
+  "topic": "ai-industry",
+  "label": "AI 產業與模型發布",
+  "defaults": {
+    "weight": 1.2,
+    "lookback_hours": 240,
+    "baseline_relevance": 2.0
+  },
+  "feeds": [
+    {
+      "name": "OpenAI News",
+      "type": "rss",
+      "url": "https://openai.com/news/rss.xml"
+    },
+    {
+      "name": "Anthropic News",
+      "type": "rss",
+      "url": "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_news.xml",
+      "note": "官方沒有 RSS（anthropic.com/rss.xml 等路徑皆 404），改用社群爬蟲 feed github.com/Olshansk/rss-feeds；它停更時改抓 sitemap"
+    }
+  ]
+}

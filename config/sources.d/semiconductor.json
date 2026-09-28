@@ -1,0 +1,20 @@
+{
+  "topic": "semiconductor",
+  "label": "半導體與硬體",
+  "defaults": {
+    "weight": 0.9,
+    "lookback_hours": 48
+  },
+  "feeds": [
+    {
+      "name": "Tom's Hardware",
+      "type": "rss",
+      "url": "https://www.tomshardware.com/feeds/all"
+    },
+    {
+      "name": "EE Times",
+      "type": "rss",
+      "url": "https://www.eetimes.com/feed/"
+    }
+  ]
+}

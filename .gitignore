@@ -1,0 +1,36 @@
+# 白名單模式：先忽略全部，再逐一放行。
+# 新檔案預設不進版控；要追蹤就在下面加一行 !/路徑，並用 git status 確認。
+
+*
+# 讓 git 走得進子目錄（只放行目錄，裡面的檔案仍需下面的規則放行）
+!*/
+
+# 專案文件與入口
+!/.gitignore
+!/README.md
+!/ISSUES.md
+!/run_daily.sh
+
+# 程式
+!/src/*.py
+
+# 設定：主設定、興趣檔、來源清單
+!/config/*.json
+!/config/*.md
+!/config/sources.d/*.json
+
+# 報告撰寫的 skill
+!/.claude/skills/**
+
+# 人工標記：由報告的 mark 註解收集而來，重建不了，要進版控
+!/state/feedback.jsonl
+
+# 刻意不放行（可重建或每日產出）：
+#   data/raw、data/curated   每日抓取結果，可重跑
+#   reports/                 每日報告（含尚未收集的 mark，見 README）
+#   state/seen.json          去重記憶，本機狀態
+#   logs/                    執行紀錄與 metrics
+#   __pycache__/、.DS_Store  由 * 自動忽略
+
+# 放行規則之後再擋一次系統雜物（例如 .claude/skills/** 會連 .DS_Store 一起放行）
+.DS_Store

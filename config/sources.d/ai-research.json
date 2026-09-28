@@ -1,0 +1,50 @@
+{
+  "topic": "ai-research",
+  "label": "AI / 研究論文動態",
+  "defaults": {
+    "weight": 1.0,
+    "lookback_hours": 96
+  },
+  "feeds": [
+    {
+      "name": "arXiv cs.CV",
+      "type": "arxiv",
+      "query": "cat:cs.CV"
+    },
+    {
+      "name": "arXiv cs.LG",
+      "type": "arxiv",
+      "query": "cat:cs.LG"
+    },
+    {
+      "name": "arXiv cs.AI",
+      "type": "arxiv",
+      "query": "cat:cs.AI",
+      "weight": 0.9
+    },
+    {
+      "name": "arXiv cs.CL",
+      "type": "arxiv",
+      "query": "cat:cs.CL"
+    },
+    {
+      "name": "arXiv cs.MA",
+      "type": "arxiv",
+      "query": "cat:cs.MA"
+    },
+    {
+      "name": "Hugging Face Blog",
+      "type": "rss",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "lookback_hours": 240,
+      "baseline_relevance": 1.2
+    },
+    {
+      "name": "Google Research Blog",
+      "type": "rss",
+      "url": "https://research.google/blog/rss/",
+      "lookback_hours": 240,
+      "baseline_relevance": 1.2
+    }
+  ]
+}
