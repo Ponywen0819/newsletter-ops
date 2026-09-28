@@ -167,6 +167,7 @@ cd ROOT && python3 src/metrics.py claude
 
 它從本 session 的紀錄統計 news-digest 開始至今的 token、API 回合數與各工具耗時，寫進 `logs/metrics/<date>.jsonl`。
 被排程呼叫時，把這步留給排程 prompt 在寄信之後執行，寄信的用量才會算進去。
+使用者只是要測試時，指令前加 `NEWSLETTER_RUN_LABEL=test`（`run.py` 那步也要加）。`logs/metrics/` 的紀錄一律不刪。
 
 告訴使用者報告路徑、今日頭條。不要把整份報告貼進對話。寄信由呼叫端（排程 prompt）負責，這個 skill 不寄信。
 

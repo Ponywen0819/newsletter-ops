@@ -3,12 +3,13 @@
 
 開關：config.json 的 "debug": true，或環境變數 NEWSLETTER_DEBUG=1（0 可強制關閉）。
 關閉時 record() / timed() 什麼都不做，對正常執行沒有影響。
+測試執行設 NEWSLETTER_RUN_LABEL=test，紀錄會標上 label 以便區分；紀錄一律保留，不刪。
 
   python3 src/metrics.py claude [--since ISO] [--until ISO] [--session FILE]
       從 Claude Code 的 session 逐則紀錄（~/.claude/projects/<專案>/<session>.jsonl）
       統計最近一次 news-digest 開始到現在的 token、API 回合數、工具呼叫次數與耗時。
-  python3 src/metrics.py summary [天數]
-      彙整最近幾天的紀錄成表格（同一天跑多次時取每個階段的最後一筆）。
+  python3 src/metrics.py summary [天數] [--all]
+      彙整最近幾天的紀錄，每次執行一行；預設只列 label=prod，--all 連測試一起列。
 """
 from __future__ import annotations
 
@@ -44,7 +45,8 @@ def record(stage: str, **fields) -> None:
     if not enabled():
         return
     now = datetime.now(TZ)
-    row = {"ts": now.isoformat(timespec="seconds"), "stage": stage, **fields}
+    row = {"ts": now.isoformat(timespec="seconds"), "stage": stage,
+           "label": os.environ.get("NEWSLETTER_RUN_LABEL", "prod"), **fields}
     METRICS_DIR.mkdir(parents=True, exist_ok=True)
     with (METRICS_DIR / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -125,7 +127,7 @@ def claude_usage(path: Path, since: datetime | None = None, until: datetime | No
         "since": since.isoformat(timespec="seconds"),
         "seconds": round(wall, 1),
         "tool_seconds": round(tool_seconds, 1),
-        "model_seconds": round(wall - tool_seconds, 1),  # ponytail: 牆鐘時間扣掉工具時間，含串流與排隊，非純推論
+        "non_tool_seconds": round(wall - tool_seconds, 1),  # 模型生成＋串流＋排隊；session 紀錄沒有逐回合延遲
         "api_turns": len(by_id),
         "models": models,
         "tokens": tokens,
@@ -150,10 +152,25 @@ def cmd_claude(argv: list[str]) -> int:
     return 0
 
 
+def split_runs(rows: list[dict]) -> list[dict[str, dict]]:
+    """依時間順序切成多次執行：每筆 fetch 開啟新的一次，之後的階段歸到這一次。
+    ponytail: 不傳執行編號；只重跑 render 或 claude 時會歸到前一次 fetch。要精確再改成 run_id。"""
+    runs: list[dict[str, dict]] = []
+    for row in rows:
+        if row["stage"] == "fetch_source":
+            continue  # 單一來源的明細，不進表格
+        if row["stage"] == "fetch" or not runs or row["stage"] in runs[-1]:
+            runs.append({})
+        runs[-1][row["stage"]] = row
+    return runs
+
+
 def cmd_summary(argv: list[str]) -> int:
-    days = int(argv[0]) if argv else 7
+    show_all = "--all" in argv
+    days = int(next((a for a in argv if a.isdigit()), 7))
     today = datetime.now(TZ).date()
-    header = f"{'date':10} {'fetch':>7} {'curate':>7} {'claude':>7} {'render':>7} {'in+cache':>10} {'output':>8} {'turns':>5}  top tools"
+    header = (f"{'date':10} {'time':5} {'label':5} {'fetch':>7} {'curate':>7} {'claude':>7} {'render':>7} "
+              f"{'in+cache':>10} {'output':>8} {'turns':>5}  top tools")
     print(header)
     print("-" * len(header))
     for n in range(days - 1, -1, -1):
@@ -161,17 +178,19 @@ def cmd_summary(argv: list[str]) -> int:
         path = METRICS_DIR / f"{day}.jsonl"
         if not path.exists():
             continue
-        last: dict[str, dict] = {}
-        for line in path.read_text(encoding="utf-8").splitlines():
-            row = json.loads(line)
-            last[row["stage"]] = row
-        c = last.get("claude", {})
-        tok = c.get("tokens", {})
-        top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
-        sec = lambda s: f"{last[s]['seconds']:.1f}" if s in last else "-"  # noqa: E731
-        print(f"{day!s:10} {sec('fetch'):>7} {sec('curate'):>7} {sec('claude'):>7} {sec('render'):>7} "
-              f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
-              f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5}  {top}")
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not show_all:
+            rows = [r for r in rows if r.get("label", "prod") == "prod"]  # 舊紀錄沒有 label，當 prod
+        for run in split_runs(rows):
+            first = min(run.values(), key=lambda r: r["ts"])
+            c = run.get("claude", {})
+            tok = c.get("tokens", {})
+            top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
+            sec = lambda s: f"{run[s]['seconds']:.1f}" if s in run else "-"  # noqa: E731
+            print(f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} "
+                  f"{sec('fetch'):>7} {sec('curate'):>7} {sec('claude'):>7} {sec('render'):>7} "
+                  f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
+                  f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5}  {top}")
     return 0
 
 
@@ -201,7 +220,11 @@ def selftest() -> None:
     assert u["api_turns"] == 2, u                      # m0 在起點之前不算；m2 兩行只算一次
     assert u["tokens"] == {"input": 6, "cache_write": 0, "cache_read": 100, "output": 10}, u
     assert u["tools"] == {"WebFetch": {"calls": 1, "seconds": 8.0}}, u
-    assert u["seconds"] == 10.0 and u["model_seconds"] == 2.0, u
+    stages = ["fetch_source", "fetch", "curate", "render", "claude", "fetch", "curate", "render", "render"]
+    runs = split_runs([{"stage": st, "ts": str(i)} for i, st in enumerate(stages)])
+    assert [sorted(r) for r in runs] == [["claude", "curate", "fetch", "render"],
+                                         ["curate", "fetch", "render"], ["render"]], runs
+    assert u["seconds"] == 10.0 and u["non_tool_seconds"] == 2.0, u
     print("ok")
 
 

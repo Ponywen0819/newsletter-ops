@@ -82,10 +82,15 @@ arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解
 以及 news-digest 跑完後由 `python3 src/metrics.py claude` 從 Claude Code session 紀錄統計的 token 與工具耗時。
 
 ```bash
-python3 src/metrics.py summary 14   # 最近 14 天的耗時與 token 表
+python3 src/metrics.py summary 14         # 最近 14 天，每次正式執行一行
+python3 src/metrics.py summary 14 --all   # 連測試執行一起列
+NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test python3 src/run.py --no-report   # 測試執行，紀錄標 test
 ```
 
-token 只含主 session 的 API 回合；WebFetch 內部用的小模型不在紀錄裡，所以不計。
+- 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
+- 每遇到一筆 `fetch` 就算新的一次執行，之後的 curate／render／claude 歸到這一次。
+- token 只含主 session 的 API 回合；WebFetch 內部用的小模型不在紀錄裡，所以不計。
+- `non_tool_seconds` 是總時間扣掉工具時間，含模型生成、串流與排隊。
 
 ## 調整來源
 
