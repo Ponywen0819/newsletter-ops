@@ -29,7 +29,8 @@ export function FeedbackButtons({ uid, mark, onChange }: Props) {
       const saved = await api.feedback(uid, mark === value ? '' : value)
       onChange(uid, saved.mark)
     } catch {
-      setError('儲存失敗，請重試')
+      // Cloudflare Access 的登入逾時會把 POST 導去登入頁，fetch 只會丟 TypeError；重新整理才會重新登入
+      setError('儲存失敗，請重試；若一直失敗，重新整理頁面')
     } finally {
       setBusy(false)
     }

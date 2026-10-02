@@ -1,0 +1,54 @@
+# 三個容器、一個 volume：
+#   web         晨報網頁（沒有登入；不 publish 任何 port，只有這個 compose 網路上的容器連得到）
+#   scheduler   每天 08:00 跑 run_daily.sh（抓取 → agent 寫報告 → 寄信）
+#   cloudflared 出站連到 Cloudflare，再轉給 http://web:8787；Access 是唯一的防線
+# 機密放 .env（從 .env.example 複製，chmod 600，不進版控）。
+
+name: newsletter-ops
+
+x-app: &app
+  build: .
+  image: newsletter-ops:local
+  restart: unless-stopped
+  init: true
+  volumes:
+    - newsletter-data:/var/lib/newsletter   # reports/、data/、state/、logs/
+
+services:
+  web:
+    <<: *app
+    # 容器自己的網路空間裡綁 0.0.0.0（web.py 會印一行警告，可忽略）：容器外只有 cloudflared 連得到，
+    # 因為沒有 ports:。不要為了從 host 直接開而加 ports:，那會繞過 Access。
+    # 不載入任何機密：網頁程序拿不到 Gmail／OAuth token
+    # 注意：web.py 的 /auth（貼 OAuth token）只服務「來源是 loopback、沒有代理標頭」的請求，容器網路裡的請求一律 404，
+    # 所以 Docker 部署不用那一頁，token 改放 .env 的 CLAUDE_CODE_OAUTH_TOKEN。
+    command: ["python", "src/web.py", "--host", "0.0.0.0", "--port", "8787"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  scheduler:
+    <<: *app
+    command: ["/app/docker/scheduler.sh"]
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?請在 .env 設定 CLAUDE_CODE_OAUTH_TOKEN（在自己的電腦執行 claude setup-token 取得）}
+      GMAIL_USER: ${GMAIL_USER:?請在 .env 設定 GMAIL_USER}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:?請在 .env 設定 GMAIL_APP_PASSWORD}
+      NEWSLETTER_MAIL_TO: ${NEWSLETTER_MAIL_TO:-${GMAIL_USER}}   # 沒設就寄給自己
+      NEWSLETTER_RUN_AT: ${NEWSLETTER_RUN_AT:-08:00}
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN（Cloudflare Zero Trust 建立 Tunnel 時取得）}
+    # Tunnel 的 Public Hostname 要填的 Service 是 http://web:8787
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  newsletter-data:

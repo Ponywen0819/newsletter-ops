@@ -41,7 +41,7 @@
 - 現象：2026-09-28 對話開始時還在，後來只剩 `2026-09-28.md` 和 `.html`；垃圾桶裡也沒有。
 - 原因：不明。所有 Claude session 紀錄裡都沒有刪除 `reports/` 的指令，是在 Claude 之外被移除的。
 - 影響：那幾天報告裡的 mark 標記如果還沒用 `feedback.py` 收集，就遺失了。`data/curated` 還在，需要的話可以重寫報告。
-- 建議：`.gitignore` 目前不追蹤 `reports/`；如果報告要當作「會填 mark 的工作檔」，改為放行 `!/reports/*.md`。
+- 決定（2026-10-02）：`reports/`、`state/feedback.jsonl` 等生成物都不進版控也不備份（見 README「資料保存」），不放行 `!/reports/*.md`。
 
 ### 低：已知限制，先記錄
 

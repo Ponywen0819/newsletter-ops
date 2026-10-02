@@ -60,7 +60,7 @@ describe('FeedbackButtons', () => {
   it('寫入失敗：顯示錯誤、不回報成功、可以再按', async () => {
     const { onChange } = setup('', () => ({ status: 500, json: { error: 'server error' } }))
     await userEvent.click(up())
-    expect(await screen.findByText('儲存失敗，請重試')).toBeInTheDocument()
+    expect(await screen.findByText('儲存失敗，請重試；若一直失敗，重新整理頁面')).toBeInTheDocument()
     expect(onChange).not.toHaveBeenCalled()
     expect(up()).toBeEnabled()
     expect(up()).toHaveAttribute('aria-pressed', 'false')

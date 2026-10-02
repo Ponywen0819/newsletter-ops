@@ -1,0 +1,9 @@
+# 複製到 /etc/cloudflared/config.yml（cloudflared service install 讀這裡）。
+# 先 `cloudflared tunnel login` 與 `cloudflared tunnel create newsletter`，取得 <TUNNEL_UUID> 與憑證檔。
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: news.example.com        # 換成你的網域；DNS 用 `cloudflared tunnel route dns newsletter news.example.com`
+    service: http://127.0.0.1:8787
+  - service: http_status:404           # 其餘一律 404，必須有這條 catch-all
