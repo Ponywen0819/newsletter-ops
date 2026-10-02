@@ -19,7 +19,9 @@ services:
     <<: *app
     # 容器自己的網路空間裡綁 0.0.0.0（web.py 會印一行警告，可忽略）：容器外只有 cloudflared 連得到，
     # 因為沒有 ports:。不要為了從 host 直接開而加 ports:，那會繞過 Access。
-    # 不載入任何機密：網頁程序拿不到 Gmail／API key
+    # 不載入任何機密：網頁程序拿不到 Gmail／OAuth token
+    # 注意：web.py 的 /auth（貼 OAuth token）只服務「來源是 loopback、沒有代理標頭」的請求，容器網路裡的請求一律 404，
+    # 所以 Docker 部署不用那一頁，token 改放 .env 的 CLAUDE_CODE_OAUTH_TOKEN。
     command: ["python", "src/web.py", "--host", "0.0.0.0", "--port", "8787"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)"]
@@ -31,7 +33,7 @@ services:
     <<: *app
     command: ["/app/docker/scheduler.sh"]
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?請在 .env 設定 ANTHROPIC_API_KEY}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?請在 .env 設定 CLAUDE_CODE_OAUTH_TOKEN（在自己的電腦執行 claude setup-token 取得）}
       GMAIL_USER: ${GMAIL_USER:?請在 .env 設定 GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:?請在 .env 設定 GMAIL_APP_PASSWORD}
       NEWSLETTER_MAIL_TO: ${NEWSLETTER_MAIL_TO:-${GMAIL_USER}}   # 沒設就寄給自己

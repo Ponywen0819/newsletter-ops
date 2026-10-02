@@ -21,3 +21,25 @@ nav a { color: #2563eb; text-decoration: none; margin-right: 12px; }
 .reports li { padding: 10px 0; border-bottom: 1px solid #e5e7eb; font-size: 14px; line-height: 1.5; }
 .reports a { color: #2563eb; text-decoration: none; font-weight: 600; margin-right: 10px; }
 .reports span { color: #6b7280; }
+
+/* /auth：OAuth token（只限本機） */
+.auth-status { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 16px 0; font-size: 14px; line-height: 1.5; }
+.auth-status dt { color: #6b7280; }
+.auth-status dd { margin: 0; }
+.auth-state { font-weight: 600; }
+.auth-state.auth-ok { color: #15803d; }
+.auth-expiring { color: #b45309; }
+.auth-expired, .auth-missing { color: #dc2626; }
+.auth-hint { color: #6b7280; font-size: 12px; margin-left: 6px; }
+.auth-steps { margin: 8px 0 14px; padding-left: 22px; font-size: 14px; line-height: 1.7; }
+#auth-form { display: flex; gap: 8px; margin: 10px 0; }
+#auth-token { flex: 1; min-width: 0; padding: 8px 10px; font: 13px Menlo, Consolas, monospace; border: 1px solid #d1d5db; border-radius: 6px; }
+.auth-btn { padding: 8px 14px; font-size: 14px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer; }
+.auth-btn:disabled { cursor: wait; opacity: .6; }
+.auth-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+.auth-danger { color: #dc2626; }
+.auth-actions { display: flex; gap: 8px; margin: 12px 0; }
+.auth-msg { min-height: 1.5em; margin: 6px 0; font-size: 13px; line-height: 1.5; color: #6b7280; word-break: break-word; }
+.auth-note { font-size: 12px; line-height: 1.6; color: #6b7280; }
+.auth-msg.auth-ok { color: #15803d; }
+.auth-msg.auth-err { color: #dc2626; }
