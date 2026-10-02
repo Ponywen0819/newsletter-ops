@@ -51,7 +51,8 @@ def inline(text: str, links: list[tuple[str, str]]) -> str:
     for title, url in LINK.findall(text):
         links.append((title.strip("*"), url))
     out = html.escape(text, quote=False)
-    out = LINK.sub(lambda m: f'<a href="{html.escape(m[2])}" style="{S["a"]}">{m[1]}</a>', out)
+    # 網址在上一行已被 escape 過一次；先還原再 escape，href 才不會變成 &amp;amp;
+    out = LINK.sub(lambda m: f'<a href="{html.escape(html.unescape(m[2]))}" style="{S["a"]}">{m[1]}</a>', out)
     out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
     return re.sub(r"`([^`]+)`", lambda m: f'<code style="{S["code"]}">{m[1]}</code>', out)
 
@@ -172,7 +173,7 @@ def selftest() -> None:
     assert page.count("<ul") == page.count("</ul>") == 3, page
     assert page.count("<li") - page.count("</li>") == 0
     assert "&lt;標題&gt;" in page and "mark:" not in page
-    assert "a=1&amp;b=2" in page
+    assert page.count("a=1&amp;b=2") == 2 and "&amp;amp;" not in page  # 頭條內文連結 + 資料來源，各 escape 一次
     assert page.count("https://a.example/1") == 3  # 兩處內文 + 資料來源只列一次
     assert "2026/09/28" in page
     try:
