@@ -1,0 +1,8 @@
+[Unit]
+Description=newsletter-ops daily run (fetch → report → mail)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/newsletter-ops
+ExecStart=%h/newsletter-ops/run_daily.sh
+TimeoutStartSec=30min

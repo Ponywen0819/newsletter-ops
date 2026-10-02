@@ -1,0 +1,13 @@
+# 白名單：只把執行需要的東西送進 build context。
+# 本機的 reports/、data/、state/、logs/、.env、.git、.venv 一律不進映像。
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!run_daily.sh
+!src
+!config
+!.claude
+!docker
+**/__pycache__
+.claude/settings*.json
