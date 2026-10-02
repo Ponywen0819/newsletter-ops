@@ -19,7 +19,8 @@ document.addEventListener('click', async (ev) => {
     const data = await res.json();
     buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mark === data.mark)));
   } catch (err) {
-    msg.textContent = '儲存失敗，請重試';
+    // Cloudflare Access 的登入逾時會把 POST 導去登入頁，fetch 只會丟 TypeError；重新整理才會重新登入
+    msg.textContent = '儲存失敗，請重試；若一直失敗，重新整理頁面';
   } finally {
     buttons.forEach((b) => { b.disabled = false; });
   }

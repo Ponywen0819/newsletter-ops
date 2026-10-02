@@ -20,13 +20,14 @@ src/feedback.py            回饋層：從報告收集人工標記
 src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl（stdlib，無登入）
 src/static/                web.py 用的 CSS／JS（web.css、web.js），由 /static/<檔名> 提供
 src/run.py                 入口 CLI
-run_daily.sh               cron 包裝
+run_daily.sh               排程入口：載入 env 檔 → 抓取 →（agent_run.py）→ 寄信，失敗留 log、exit 非 0
+deploy/                    部署範本：systemd 單元、cloudflared 設定、env 範本（見「部署到家用 host」）
 data/raw/<date>.jsonl      當日原始抓取（append，供回溯）
 data/curated/<date>.json   排序後的收錄清單 ← SKILL 的輸入
 reports/<date>.md          最終報告
 state/seen.json            30 天去重記憶
 state/feedback.jsonl       累積的人工標記，供日後調整關鍵字
-logs/<YYYY-MM>.log         cron 執行紀錄
+logs/<YYYY-MM>.log         排程執行紀錄
 .claude/skills/news-digest/  報告撰寫的 skill，隨專案進版控
 ```
 
@@ -90,16 +91,115 @@ python3 src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀
 
 **建議由人確認，不自動套用。** 會自己調參數的系統，出錯時你查不出它為什麼開始推垃圾。
 
-## cron
+## 排程
+
+正式排程見下一節「部署到家用 host」。`run_daily.sh` 是唯一的排程入口，systemd timer 與 cron 都呼叫它：
 
 ```cron
-0 8 * * * /Users/pony/project/newssletter-ops/run_daily.sh --no-report
+0 8 * * * /path/to/newsletter-ops/run_daily.sh
 ```
 
-macOS 的 cron 需要「完整磁碟取用權」，或改用 launchd。抓完之後在 Claude 對話中
-執行 `/news-digest`，讀當日 curated JSON 寫出條列版晨間簡報，並用 `render_email.py` 產出 email HTML。
+它依序跑 `run.py --no-report` → `agent_run.py` → `render_email.py | send_email.py`，任一步失敗就停下、
+以該步的 exit code 結束，並在 `logs/<YYYY-MM>.log` 留一行失敗紀錄。額外參數（如 `--lookback 72`）轉給 `run.py`。
+**`src/agent_run.py`（#2，Claude Agent SDK）還不存在**，目前只做抓取，log 會寫「略過寫報告與寄信」；
+檔案一出現就自動接上，不必改腳本。在那之前，報告仍由人在 Claude 對話中執行 `/news-digest` 產生。
+
+機密從 env 檔載入（預設 `~/.config/newsletter-ops/env`，`NEWSLETTER_ENV_FILE` 可改，範本在 `deploy/newsletter.env.example`），
+權限必須是 `600`，太鬆會拒絕執行（exit 78）。env 檔是 shell 語法，值含空格（Gmail 應用程式密碼）要加引號。
+macOS 的 cron 需要「完整磁碟取用權」，或改用 launchd。
 
 arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`，自我檢查：`python3 src/curate.py`、`python3 src/render_email.py --selftest`。
+
+## 部署到家用 host（Cloudflare Tunnel + Access）
+
+目標：pipeline 與 web 跑在家裡一台 Linux host（VM 也行，要 systemd），經 Cloudflare 在外也能看晨報、按 👍／👎。本機只當測試區。
+
+```
+手機／筆電 ──https──▶ Cloudflare（Access：只放行你的 email）──Tunnel──▶ cloudflared ──▶ 127.0.0.1:8787 web.py
+                                                                     （host 不開任何對外 port）
+```
+
+`web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。所以 service 只 bind `127.0.0.1`，
+Tunnel 的網域一定要先掛上 Access 再對外使用（步驟 5 的檢查不能跳過）。
+
+以下假設 repo 在 `~/newsletter-ops`；放別的地方就改 `deploy/*.service` 裡的路徑。
+
+**1. 取得程式**
+
+```bash
+git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops
+python3 ~/newsletter-ops/src/run.py --list-sources   # 不連網，確認 Python 與設定可用
+```
+
+**2. 機密**
+
+```bash
+mkdir -p ~/.config/newsletter-ops
+cp ~/newsletter-ops/deploy/newsletter.env.example ~/.config/newsletter-ops/env
+chmod 600 ~/.config/newsletter-ops/env
+$EDITOR ~/.config/newsletter-ops/env   # GMAIL_USER、GMAIL_APP_PASSWORD；ANTHROPIC_API_KEY 等 #2 再填
+```
+
+只有排程入口會載入這個檔；web service 不載入，網頁程序拿不到這些機密。
+
+**3. systemd（user 單元，不需要 root）**
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ~/newsletter-ops/deploy/newsletter-{web.service,daily.service,daily.timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now newsletter-web.service newsletter-daily.timer
+sudo loginctl enable-linger "$USER"   # 沒登入也持續執行，開機自動啟動
+```
+
+- 每天 08:00（Asia/Taipei）跑 `run_daily.sh`；host 當時關機的話，開機後補跑（`Persistent=true`）。
+- 看 web：`journalctl --user -u newsletter-web -f`；看排程：`systemctl --user list-timers`、`logs/<YYYY-MM>.log`。
+- 手動跑一次排程：`systemctl --user start newsletter-daily.service`，失敗時 `systemctl --user status newsletter-daily` 會顯示 failed。
+
+**4. cloudflared Tunnel**
+
+照 Cloudflare 文件安裝 `cloudflared`，然後：
+
+```bash
+cloudflared tunnel login
+cloudflared tunnel create newsletter                       # 印出 <TUNNEL_UUID>，憑證寫在 ~/.cloudflared/
+sudo mkdir -p /etc/cloudflared
+sudo cp ~/.cloudflared/<TUNNEL_UUID>.json /etc/cloudflared/
+sudo cp ~/newsletter-ops/deploy/cloudflared-config.yml.example /etc/cloudflared/config.yml   # 改 <TUNNEL_UUID> 與 hostname
+cloudflared tunnel route dns newsletter news.example.com
+sudo cloudflared service install                           # 以 system service 常駐
+```
+
+**5. Cloudflare Access（先做，再對外使用）**
+
+Zero Trust 後台 → Access → Applications → Add an application → Self-hosted：
+Application domain 填 `news.example.com`；Policy 一條就好：Action = Allow，Include = Emails，只填你自己的 email。
+不要留 Everyone 之類的其他 policy。
+
+**6. 驗收**
+
+| 檢查 | 預期 |
+| --- | --- |
+| host 上 `curl -sI http://127.0.0.1:8787/reports` | `200` |
+| host 上 `ss -ltn \| grep 8787` | 只有 `127.0.0.1:8787`，不是 `0.0.0.0` |
+| 另一個網路（手機關 Wi-Fi）開 `https://news.example.com` | 先到 Access 登入頁，用你的 email 登入後看到晨報 |
+| **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
+| **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
+| 登入後按一則的 👍 | host 上 `tail -n1 ~/newsletter-ops/state/feedback.jsonl` 多一行 |
+
+頁面上要有晨報可看，`reports/<date>.md` 得先存在。`#2` 完成前，在 host 上用 Claude Code 跑一次 `/news-digest` 產一份即可。
+Access 登入逾時後按 👍 會顯示「儲存失敗」，重新整理頁面重新登入即可。
+
+**7. 資料保存（尚未決定）**
+
+`reports/`、`data/curated/`、`state/` 在 host 上是正式資料，目前沒有任何備份。本 repo 是 public：
+`.gitignore` 目前放行 `state/feedback.jsonl`（每則標記含標題與來源），`reports/` 不放行。選項：
+
+- VM 快照：最省事，粒度粗。
+- 定期同步到私有位置（rsync／restic 到 NAS 或私有雲）：不碰 repo。
+- 另開私有 repo 專放資料，定期 commit／push。
+
+選定之前，不要把 `reports/` 或 `state/` 推到這個 public repo。
 
 ## 量測（debug）
 

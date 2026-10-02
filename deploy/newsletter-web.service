@@ -1,0 +1,16 @@
+# systemd --user 單元。安裝見 README「部署到家用 host」。repo 預設放在 ~/newsletter-ops。
+[Unit]
+Description=newsletter-ops web (127.0.0.1:8787)
+
+[Service]
+WorkingDirectory=%h/newsletter-ops
+# --host 寫死 127.0.0.1：web.py 沒有登入，對外只能走 cloudflared + Access
+ExecStart=/usr/bin/env python3 src/web.py --host 127.0.0.1 --port 8787
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

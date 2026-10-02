@@ -11,6 +11,11 @@
 !/ISSUES.md
 !/run_daily.sh
 
+# 部署範本（systemd 單元、cloudflared 設定、env 範本；真正的機密不放這裡）
+!/deploy/*.service
+!/deploy/*.timer
+!/deploy/*.example
+
 # 程式（含 web.py 用的 CSS／JS）
 !/src/*.py
 !/src/static/*.css

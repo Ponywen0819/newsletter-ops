@@ -1,0 +1,10 @@
+[Unit]
+Description=newsletter-ops daily run, 08:00 Asia/Taipei
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 Asia/Taipei
+# host 關機錯過時間，開機後補跑
+Persistent=true
+
+[Install]
+WantedBy=timers.target
