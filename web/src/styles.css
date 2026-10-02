@@ -1,0 +1,273 @@
+/*
+ * 版面與配色沿用 email 版型（src/render_email.py 的 S）：灰底、640px 的白色卡片。
+ * 元素的基本樣式用 :where() 壓低優先權，下面各元件的 class 才不用互相較量。
+ */
+
+:root {
+  --text: #1f2937;
+  --heading: #111827;
+  --muted: #6b7280;
+  --link: #2563eb;
+  --danger: #dc2626;
+  --ok: #15803d;
+  --warn: #b45309;
+  --border: #d1d5db;
+  --rule: #e5e7eb;
+  --page: #f3f4f6;
+  --card: #ffffff;
+  --mono: Menlo, Consolas, monospace;
+}
+
+body {
+  margin: 0;
+  padding: 24px 12px;
+  background: var(--page);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', 'Helvetica Neue',
+    Arial, sans-serif;
+}
+
+nav {
+  max-width: 640px;
+  margin: 0 auto 12px;
+  font-size: 13px;
+}
+nav a {
+  color: var(--link);
+  text-decoration: none;
+  margin-right: 12px;
+}
+nav a[aria-current='page'] {
+  font-weight: 600;
+}
+
+.card {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 28px 28px 20px;
+  background: var(--card);
+  border-radius: 10px;
+}
+
+:where(.card) h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.3;
+  color: var(--heading);
+}
+:where(.card) h2 {
+  margin: 28px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--rule);
+  font-size: 18px;
+  color: var(--heading);
+}
+:where(.card) p {
+  margin: 14px 0 6px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+:where(.card) a {
+  color: var(--link);
+  text-decoration: none;
+}
+:where(.card) code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--page);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.loading {
+  color: var(--muted);
+}
+
+/* 晨報 */
+.report-date {
+  margin: 4px 0 20px;
+  font-size: 13px;
+  line-height: normal;
+  color: var(--muted);
+}
+.callout {
+  margin: 0 0 8px;
+  padding: 14px 16px;
+  background: #fff7ed;
+  border-left: 4px solid #f97316;
+  border-radius: 6px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.report ul,
+.report ol {
+  margin: 4px 0 10px;
+  padding-left: 22px;
+}
+.report li {
+  margin: 3px 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.report ol.sources li {
+  margin: 2px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* 👍／👎 */
+.fb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+}
+.fb-btn {
+  font-size: 16px;
+  line-height: 1;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+.fb-btn:hover {
+  opacity: 1;
+}
+.fb-btn:disabled {
+  cursor: wait;
+}
+.fb-btn[aria-pressed='true'] {
+  filter: none;
+  opacity: 1;
+  background: #eff6ff;
+  border-color: var(--link);
+}
+.fb-btn[data-mark='-'][aria-pressed='true'] {
+  background: #fef2f2;
+  border-color: var(--danger);
+}
+.fb-msg {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+/* /reports 歷史列表 */
+.reports {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.reports li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.reports a {
+  font-weight: 600;
+  margin-right: 10px;
+}
+.reports span {
+  color: var(--muted);
+}
+
+/* /auth：OAuth token（只限本機） */
+.auth-status {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 16px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.auth-status dt {
+  color: var(--muted);
+}
+.auth-status dd {
+  margin: 0;
+}
+.auth-state {
+  font-weight: 600;
+}
+.auth-state.auth-ok {
+  color: var(--ok);
+}
+.auth-expiring {
+  color: var(--warn);
+}
+.auth-expired,
+.auth-missing {
+  color: var(--danger);
+}
+.auth-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 6px;
+}
+.auth-steps {
+  margin: 8px 0 14px;
+  padding-left: 22px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+#auth-form {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+#auth-token {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font: 13px var(--mono);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.auth-btn {
+  padding: 8px 14px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.auth-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.auth-primary {
+  background: var(--link);
+  border-color: var(--link);
+  color: #fff;
+}
+.auth-danger {
+  color: var(--danger);
+}
+.auth-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+.auth-msg {
+  min-height: 1.5em;
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  word-break: break-word;
+}
+.auth-msg.auth-ok {
+  color: var(--ok);
+}
+.auth-msg.auth-err {
+  color: var(--danger);
+}
+.auth-note {
+  margin: 1em 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}

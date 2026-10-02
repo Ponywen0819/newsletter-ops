@@ -6,6 +6,12 @@
 !.python-version
 !run_daily.sh
 !src
+!web/index.html
+!web/package.json
+!web/package-lock.json
+!web/tsconfig.json
+!web/vite.config.ts
+!web/src
 !config
 !.claude
 !docker

@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Web 層：瀏覽晨報，每則旁邊按 👍／👎，直接寫進 state/feedback.jsonl。
+"""Web 層：JSON API ＋ 提供前端（web/，Vite + React）的建置結果。晨報每則旁邊按 👍／👎，直接寫進 state/feedback.jsonl。
 
 用法：python3 src/web.py [--host 127.0.0.1] [--port 8787] [--selftest]
 port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
-頁面：/ 當日晨報、/reports 歷史列表、/reports/<date> 單日晨報、POST /feedback。
-/auth（只限本機）：貼上 `claude setup-token` 的 OAuth token，讓 agent_run.py 以訂閱額度執行；見下方。
-樣式與前端腳本在 src/static/（web.css、web.js、auth.js），由 /static/<檔名> 提供。
-版型沿用 render_email.render_body()；每則 `<!-- mark: uid=... -->` 的位置換成 👍／👎。
+前端是 web/ 底下的 Vite + React 專案，要先建置：`cd web && npm install && npm run build`，
+這裡把 web/dist 當靜態檔提供（/assets/* 帶 hash，長期快取；index.html 每次確認）。
+前端的路由（/、/reports、/reports/<date>、/auth）一律回 index.html，由前端自己畫；沒建置過時回 503 並說明怎麼建置。
+開發前端用 `cd web && npm run dev`（Vite dev server，把 /api 代理到這裡），不必每次重新建置。
+
+API（都是 JSON；前端的型別在 web/src/types.ts）：
+  GET  /api/session           {local}                 這個請求是不是從本機來（前端據此決定要不要顯示「Claude 授權」）
+  GET  /api/today             {date, latest, report, marks}   當日晨報；還沒產出時 report 是 null、latest 是最新一份的日期
+  GET  /api/reports           {reports: [{date, headline}]}   歷史列表，新到舊
+  GET  /api/reports/<date>    {date, report, marks}   report 是 report_data.parse_report() 的結構（不是 HTML）
+  POST /api/feedback          {uid, mark}             👍／👎
+  GET  /api/auth              {state, ...}            OAuth token 的狀態（只限本機）
+  POST /api/auth/token|test|revoke                    貼上、測試、刪除 OAuth token（只限本機）
+晨報的 Markdown 由 report_data.py 解析成結構，版型由前端負責；email 版型仍由 render_email.py 產生，兩者互不影響。
 
 回饋規則：只有 `+`（👍）、`-`（👎）兩級；再按一次同一顆＝取消，按另一顆＝覆蓋。
 一律 append 一行到 feedback.jsonl，以同一 uid 的最後一筆為準；取消寫成 mark ""。
@@ -16,9 +26,10 @@ port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
 不做登入：預設只 bind 127.0.0.1，對外交給 Cloudflare Tunnel + Access。
 POST 只收 Content-Type: application/json（跨站表單送不出這種請求，順便擋 CSRF）。
+HTML 回應帶 Content-Security-Policy（只許同源的腳本與樣式），前端因此不能有行內 <script>／style。
 只用 stdlib。
 
-/auth 與 /auth/*（token、test、revoke）能寫入憑證，比 👍／👎 敏感得多，所以**只服務本機**（is_local_request），不符合一律回 404：
+/auth 與 /api/auth*（token、test、revoke）能寫入憑證，比 👍／👎 敏感得多，所以**只服務本機**（is_local_request），不符合一律 404：
   1. 來源位址是 loopback
   2. Host 標頭是 127.0.0.1／localhost／[::1]
   3. 沒有 Cf-*、X-Forwarded-*、X-Real-IP、Forwarded、Via、Cdn-Loop 等代理標頭
@@ -32,7 +43,7 @@ token 只經由環境變數傳給子程序（不上命令列）、不回傳給�
 from __future__ import annotations
 
 import argparse
-import html
+import contextlib
 import ipaddress
 import json
 import os
@@ -45,7 +56,7 @@ from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Iterator, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -55,6 +66,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import auth_store  # noqa: E402
 import feedback  # noqa: E402
 import render_email  # noqa: E402
+import report_data  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -64,32 +76,33 @@ MARKS = {"+", "-", ""}  # "" ＝ 取消
 MAX_BODY = 4096
 CHECK_TIMEOUT = 90  # 秒；驗證 token 的子程序最多等這麼久（無效 token 約 2 秒，有效的幾秒；卡住要放棄）
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
-STATIC_TYPES = {  # 白名單：只供這幾個檔，網址不會直接對應檔案路徑
-    "web.css": "text/css; charset=utf-8",
-    "web.js": "text/javascript; charset=utf-8",
-    "auth.js": "text/javascript; charset=utf-8",
+# 前端的路由（web/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
+SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/auth")
+BUILD_COMMAND = "cd web && npm install && npm run build"
+STATIC_TYPES = {  # 副檔名白名單：dist 裡只有這些會被提供
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".webp": "image/webp",
+    ".woff2": "font/woff2",
+    ".txt": "text/plain; charset=utf-8",
 }
+IMMUTABLE = "public, max-age=31536000, immutable"  # /assets/* 的檔名帶內容 hash，內容變了檔名就變
+CSP = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-# POST 路由 → 是否只限本機。/auth/* 能寫入憑證，只給本機。
-POST_ROUTES = {"/feedback": False, "/auth/token": True, "/auth/test": True, "/auth/revoke": True}
+# POST 路由 → 是否只限本機。/api/auth/* 能寫入憑證，只給本機。
+POST_ROUTES = {"/api/feedback": False, "/api/auth/token": True, "/api/auth/test": True, "/api/auth/revoke": True}
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
 PROXY_HEADERS = {"x-real-ip", "forwarded", "via", "cdn-loop"}  # 另外 cf-*、x-forwarded-* 開頭的也算
-AUTH_NAV_SLOT = "<!--auth-nav-->"  # 導覽列的 /auth 連結只給本機請求，送出前才換掉
 
 
 def level(mark: str) -> str:
     """feedback.jsonl 裡可能有 feedback.py 收進來的 ++ / --，網頁只分兩級。"""
     return mark[:1] if mark[:1] in ("+", "-") else ""
-
-
-def buttons_html(uid: str, mark: str) -> str:
-    def btn(value: str, emoji: str, label: str) -> str:
-        pressed = "true" if mark == value else "false"
-        return (f'<button type="button" class="fb-btn" data-mark="{value}" aria-pressed="{pressed}" '
-                f'aria-label="{label}" title="{label}">{emoji}</button>')
-    return (f'<div class="fb" data-uid="{uid}">{btn("+", "👍", "有用")}{btn("-", "👎", "沒用")}'
-            f'<span class="fb-msg" role="status"></span></div>')
 
 
 def local_host(value: str) -> bool:
@@ -149,27 +162,13 @@ def run_auth_check(token: str) -> dict:
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
 
 
-def page_html(title: str, inner: str, interactive: bool = False, script_src: str = "web.js") -> str:
-    nav = f'<nav><a href="/">今日晨報</a><a href="/reports">歷史晨報</a>{AUTH_NAV_SLOT}</nav>'
-    script = f'<script src="/static/{script_src}" defer></script>' if interactive else ""
-    return (f'<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">'
-            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{html.escape(title)}</title>'
-            f'<link rel="stylesheet" href="/static/web.css">{script}</head>'
-            f'<body style="{render_email.S["body"]}">{nav}'
-            f'<div style="{render_email.S["card"]}">{inner}</div></body></html>')
-
-
-def notice_html(title: str, message: str) -> str:
-    return page_html(title, f'<h1 style="{render_email.S["h1"]}">{html.escape(title)}</h1>'
-                            f'<p style="{render_email.S["p"]}">{message}</p>')
-
-
 class NotFound(Exception):
     pass
 
 
-class BadRequest(Exception):
+class ApiError(Exception):
+    """帶狀態碼的錯誤，Handler 轉成 {"error": message}。"""
+
     def __init__(self, status: HTTPStatus, message: str):
         super().__init__(message)
         self.status = status
@@ -181,11 +180,36 @@ class Site:
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
                  checker: Callable[[str], dict] | None = None):
         self.root = root
+        self.dist = root / "web" / "dist"
         self.today = today or (lambda: f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}")
         self.feedback_path = root / "state" / "feedback.jsonl"
         self.token_path = auth_store.token_path(root)
         self.checker = checker or run_auth_check  # selftest 換成假的，不真的呼叫 Claude
         self._check_lock = threading.Lock()       # 同時只跑一個驗證，避免被連按開出一堆子程序
+
+    # ---- 前端的建置結果 ----
+
+    def index_html(self) -> bytes | None:
+        try:
+            return (self.dist / "index.html").read_bytes()
+        except OSError:
+            return None
+
+    def static_file(self, url_path: str) -> tuple[bytes, str, str] | None:
+        """dist 裡的檔案 → (內容, Content-Type, Cache-Control)；不在 dist 裡、不是檔案、副檔名不在白名單都是 None。
+        路徑不做 URL 解碼，所以 `..%2F` 只是一個不存在的檔名；resolve 後再確認仍在 dist 底下，連 symlink 都擋。"""
+        dist = self.dist.resolve()
+        try:
+            target = (dist / url_path.lstrip("/")).resolve()
+            ctype = STATIC_TYPES.get(target.suffix.lower())
+            if ctype is None or not target.is_relative_to(dist) or not target.is_file():
+                return None
+            cache = IMMUTABLE if target.relative_to(dist).parts[0] == "assets" else "no-cache"
+            return target.read_bytes(), ctype, cache
+        except (OSError, ValueError):
+            return None
+
+    # ---- 晨報 ----
 
     def report_dates(self) -> list[str]:
         """reports/*.md 的日期，新到舊。"""
@@ -203,35 +227,35 @@ class Site:
             rows = feedback.read_feedback(self.feedback_path)
         return {uid: m for uid, row in rows.items() if (m := level(row.get("mark", "")))}
 
-    def report_page(self, date: str) -> str:
-        path = self._report_path(date)
-        if not path.exists():
-            raise NotFound(date)
-        marks = self.marks()
-        body, _, _ = render_email.render_body(
-            path.read_text(encoding="utf-8"), lambda uid: buttons_html(uid, marks.get(uid, "")))
-        return page_html(f"每日晨間簡報 {date}", body, interactive=True)
-
-    def today_page(self) -> str:
-        date = self.today()
+    def report_payload(self, date: str) -> dict:
         try:
-            return self.report_page(date)
-        except NotFound:
-            latest = self.report_dates()
-            hint = (f'最新一份是 <a href="/reports/{latest[0]}" style="{render_email.S["a"]}">{latest[0]}</a>。'
-                    if latest else "目前還沒有任何晨報。")
-            return notice_html(f"{date} 的晨報還沒產出", hint)
+            text = self._report_path(date).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise NotFound(date) from None
+        try:
+            report = report_data.parse_report(text)
+        except ValueError as exc:  # Markdown 格式不符 SKILL.md 規定的子集
+            raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, f"報告格式不符：{exc}") from None
+        shown = set(report_data.uids_of(report))
+        return {"date": date, "report": report, "marks": {u: m for u, m in self.marks().items() if u in shown}}
 
-    def list_page(self) -> str:
+    def today_payload(self) -> dict:
+        date = self.today()
+        latest = self.report_dates()
+        try:
+            payload = self.report_payload(date)
+        except NotFound:
+            payload = {"date": date, "report": None, "marks": {}}
+        return {**payload, "latest": latest[0] if latest else None}
+
+    def list_payload(self) -> dict:
         rows = []
         for date in self.report_dates():
             text = self._report_path(date).read_text(encoding="utf-8")
             line = next((ln for ln in text.splitlines() if "今日頭條" in ln), "")
             headline = render_email.plain(re.sub(r"^[>\s]*\**今日頭條[：:]\**\s*", "", line))
-            rows.append(f'<li><a href="/reports/{date}">{date}</a><span>{html.escape(headline)}</span></li>')
-        inner = (f'<h1 style="{render_email.S["h1"]}">歷史晨報</h1>'
-                 f'<ul class="reports">{"".join(rows) or "<li>目前還沒有任何晨報。</li>"}</ul>')
-        return page_html("歷史晨報", inner)
+            rows.append({"date": date, "headline": headline})
+        return {"reports": rows}
 
     def _find_report(self, uid: str) -> str | None:
         """含有這個 uid 的最新一份報告（日期）。"""
@@ -251,12 +275,12 @@ class Site:
     def record(self, uid: str, mark: str) -> dict:
         """append 一列到 feedback.jsonl，回傳寫入的那一列。mark '' ＝ 取消。"""
         if mark not in MARKS:
-            raise BadRequest(HTTPStatus.BAD_REQUEST, "mark 只能是 +、- 或空字串（取消）")
+            raise ApiError(HTTPStatus.BAD_REQUEST, "mark 只能是 +、- 或空字串（取消）")
         if not UID_RE.fullmatch(uid):
-            raise BadRequest(HTTPStatus.BAD_REQUEST, "uid 格式不符")
+            raise ApiError(HTTPStatus.BAD_REQUEST, "uid 格式不符")
         date = self._find_report(uid)
         if date is None:
-            raise BadRequest(HTTPStatus.NOT_FOUND, "任何一份報告裡都找不到這個 uid")
+            raise ApiError(HTTPStatus.NOT_FOUND, "任何一份報告裡都找不到這個 uid")
         row = feedback.build_row(uid, mark, f"{date}.md", self._curated_item(date, uid))
         with feedback.locked(self.feedback_path):
             feedback.append_rows(self.feedback_path, [row])
@@ -264,70 +288,26 @@ class Site:
 
     # ---- /auth：OAuth token（只限本機，由 Handler 擋）----
 
-    def auth_status_html(self) -> str:
-        st = auth_store.status(self.token_path)
-        rows = []
-        if st["state"] == "missing":
-            rows.append('<dt>狀態</dt><dd class="auth-state auth-missing">尚未授權</dd>')
-        else:
-            label = {"ok": "已授權",
-                     "expiring": "即將到期（剩 %d 天），請重新貼上新的 token" % st.get("days_left", 0),
-                     "expired": "預計已過期，請重新貼上新的 token"}[st["state"]]
-            rows.append(f'<dt>狀態</dt><dd class="auth-state auth-{st["state"]}">{html.escape(label)}</dd>')
-            rows.append(f'<dt>Token</dt><dd><code>…{html.escape(st["tail"])}</code>（只顯示尾 4 碼）</dd>')
-            rows.append(f'<dt>儲存日期</dt><dd>{st["saved_at"]}</dd>')
-            rows.append(f'<dt>預計到期</dt><dd>{st["expires_at"]}'
-                        f'<span class="auth-hint">（以一年效期推算，實際以伺服器為準）</span></dd>')
-        note = ""
-        if st["state"] == "missing" and st["env_token"]:
-            note = (f'<p class="auth-note">這個程序的環境有 <code>{auth_store.TOKEN_ENV}</code>；'
-                    f'排程若也設了同一個環境變數，agent_run.py 會用它（優先序在這裡儲存的 token 之後）。</p>')
-        return f'<dl class="auth-status">{"".join(rows)}</dl>{note}'
+    def auth_status(self) -> dict:
+        """給前端畫的狀態，不含 token（最多尾 4 碼）。state：missing / ok / expiring / expired。"""
+        return auth_store.status(self.token_path)
 
-    def auth_page(self) -> str:
-        S = render_email.S
-        inner = f"""<h1 style="{S['h1']}">Claude 授權</h1>
-<p style="{S['p']}">無人值守執行（<code style="{S['code']}">agent_run.py</code>）只用 OAuth 的訂閱額度，<strong>不使用 API key</strong>，
-也不會因為額度用完而自動改用別的認證方式。這個頁面只能從本機開啟。</p>
-<div id="auth-status" aria-live="polite">{self.auth_status_html()}</div>
-<h2 style="{S['h2']}">貼上 token</h2>
-<ol class="auth-steps">
-<li>在<strong>自己的電腦</strong>開終端機，執行 <code style="{S['code']}">claude setup-token</code></li>
-<li>在瀏覽器完成授權</li>
-<li>複製終端機印出的 token（只會印一次，CLI 不會幫你存）</li>
-<li>貼到下面送出。伺服器會先實際呼叫一次 Claude 驗證（用掉極少的訂閱額度），通過才儲存</li>
-</ol>
-<form id="auth-form" autocomplete="off">
-<input id="auth-token" type="password" name="token" autocomplete="off" spellcheck="false"
-       placeholder="貼上 token" aria-label="OAuth token" required>
-<button type="submit" class="auth-btn auth-primary">驗證並儲存</button>
-</form>
-<p id="auth-msg" class="auth-msg" role="status"></p>
-<div class="auth-actions">
-<button type="button" class="auth-btn" data-action="test">測試連線</button>
-<button type="button" class="auth-btn auth-danger" data-action="revoke">刪除已存的 token</button>
-</div>
-<p class="auth-note">token 需要 Pro／Max／Team／Enterprise 方案，效期一年；到期前這裡會提醒。
-訂閱有使用額度，額度用完時晨報會失敗（exit 6），不會自動改用 API key。
-刪除只會移除這裡儲存的檔案，token 在 Anthropic 端仍然有效。</p>"""
-        return page_html("Claude 授權", inner, interactive=True, script_src="auth.js")
-
-    def _failure(self, result: dict) -> BadRequest:
+    def _failure(self, result: dict) -> ApiError:
         kind, msg = result.get("kind"), result.get("message", "")
         if kind == "timeout":
-            return BadRequest(HTTPStatus.GATEWAY_TIMEOUT, msg)
+            return ApiError(HTTPStatus.GATEWAY_TIMEOUT, msg)
         if kind == "env":
-            return BadRequest(HTTPStatus.SERVICE_UNAVAILABLE, msg)
+            return ApiError(HTTPStatus.SERVICE_UNAVAILABLE, msg)
         if kind == "auth":
-            return BadRequest(HTTPStatus.UNPROCESSABLE_ENTITY, f"授權失敗：{msg}（token 可能貼錯、已撤銷或已過期）")
+            return ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, f"授權失敗：{msg}（token 可能貼錯、已撤銷或已過期）")
         if kind == "quota":
-            return BadRequest(HTTPStatus.UNPROCESSABLE_ENTITY, f"額度用完，現在無法驗證：{msg}（稍後再試）")
-        return BadRequest(HTTPStatus.UNPROCESSABLE_ENTITY, f"驗證失敗：{msg}")
+            return ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, f"額度用完，現在無法驗證：{msg}（稍後再試）")
+        return ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, f"驗證失敗：{msg}")
 
     def _verify(self, token: str) -> None:
-        """跑一次驗證；沒通過就丟 BadRequest。"""
+        """跑一次驗證；沒通過就丟 ApiError。"""
         if not self._check_lock.acquire(blocking=False):
-            raise BadRequest(HTTPStatus.CONFLICT, "另一個驗證正在進行，請稍候再試")
+            raise ApiError(HTTPStatus.CONFLICT, "另一個驗證正在進行，請稍候再試")
         try:
             result = self.checker(token)
         finally:
@@ -339,22 +319,22 @@ class Site:
         """貼上新的 token：先驗證，通過才覆寫。無效的 token 不會洗掉原本可用的。"""
         token = auth_store.clean(raw)
         if (problem := auth_store.check_format(token)) is not None:
-            raise BadRequest(HTTPStatus.BAD_REQUEST, problem)
+            raise ApiError(HTTPStatus.BAD_REQUEST, problem)
         self._verify(token)
         auth_store.save(token, self.token_path)
-        return {"message": "驗證通過，已儲存", "html": self.auth_status_html()}
+        return {"message": "驗證通過，已儲存", "status": self.auth_status()}
 
     def test_token(self) -> dict:
         rec = auth_store.load(self.token_path)
         if rec is None:
-            raise BadRequest(HTTPStatus.NOT_FOUND, "還沒有儲存的 token")
+            raise ApiError(HTTPStatus.NOT_FOUND, "還沒有儲存的 token")
         self._verify(rec["token"])
-        return {"message": "連線正常", "html": self.auth_status_html()}
+        return {"message": "連線正常", "status": self.auth_status()}
 
     def revoke_token(self) -> dict:
         """只刪掉這裡儲存的檔；token 在 Anthropic 端仍然有效。"""
         removed = auth_store.delete(self.token_path)
-        return {"message": "已刪除儲存的 token" if removed else "本來就沒有儲存的 token", "html": self.auth_status_html()}
+        return {"message": "已刪除儲存的 token" if removed else "本來就沒有儲存的 token", "status": self.auth_status()}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -371,87 +351,106 @@ class Handler(BaseHTTPRequestHandler):
     def _local(self) -> bool:
         return is_local_request(self.client_address[0], self.headers)
 
-    def _send(self, status: int, body: str, ctype: str = "text/html; charset=utf-8",
-              cache: str = "no-store") -> None:
-        if AUTH_NAV_SLOT in body:
-            body = body.replace(AUTH_NAV_SLOT, '<a href="/auth">Claude 授權</a>' if self._local() else "")
-        data = body.encode("utf-8")
+    def _send(self, status: int, body: str | bytes, ctype: str = "text/plain; charset=utf-8",
+              cache: str = "no-store", headers: Mapping[str, str] | None = None) -> None:
+        data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", cache)  # 頁面的標記狀態會變，預設不快取
+        self.send_header("Cache-Control", cache)  # API 的內容（標記狀態）會變，預設不快取
         self.send_header("X-Content-Type-Options", "nosniff")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
 
     def _send_json(self, status: int, payload: dict) -> None:
         self._send(status, json.dumps(payload, ensure_ascii=False), "application/json; charset=utf-8")
 
+    def _send_shell(self, status: int = 200) -> None:
+        """前端的 index.html。沒建置過就說明怎麼建置（API 不受影響）。"""
+        index = self.site.index_html()
+        if index is None:
+            hint = (f"<!DOCTYPE html><meta charset=\"utf-8\"><title>前端尚未建置</title>"
+                    f"<p>找不到 <code>web/dist</code>。先建置前端：<code>{BUILD_COMMAND}</code></p>")
+            self._send(HTTPStatus.SERVICE_UNAVAILABLE, hint, "text/html; charset=utf-8")
+            return
+        self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
+
     def do_GET(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
+        if path.startswith("/api/"):
+            self._get_api(path)
+        elif SPA_ROUTES.fullmatch(path):
+            # /auth 對非本機＝不存在，連頁面都不給（前端會畫「找不到頁面」）
+            self._send_shell(404 if path == "/auth" and not self._local() else 200)
+        elif (found := self.site.static_file(path)) is not None:
+            body, ctype, cache = found
+            self._send(200, body, ctype, cache)
+        elif "." in path.rsplit("/", 1)[-1]:  # 像是檔案的路徑（/assets/舊版.js）：給 HTML 只會讓瀏覽器更困惑
+            self._send(404, "not found")
+        else:
+            self._send_shell(404)
+
+    def _get_api(self, path: str) -> None:
         try:
-            if path == "/":
-                self._send(200, self.site.today_page())
-            elif path == "/reports":
-                self._send(200, self.site.list_page())
-            elif m := re.fullmatch(r"/reports/(\d{4}-\d{2}-\d{2})", path):
-                self._send(200, self.site.report_page(m[1]))
-            elif path == "/auth":
-                if not self._local():
-                    raise NotFound(path)
-                self._send(200, self.site.auth_page())
-            elif path.startswith("/static/"):
-                name = path[len("/static/"):]
-                if name not in STATIC_TYPES:
-                    raise NotFound(path)
-                # 檔案很小；no-cache ＝ 每次向伺服器確認，改了 CSS／JS 重新整理就生效
-                self._send(200, (STATIC_DIR / name).read_text(encoding="utf-8"), STATIC_TYPES[name], "no-cache")
+            if path == "/api/session":
+                payload = {"local": self._local()}
+            elif path == "/api/today":
+                payload = self.site.today_payload()
+            elif path == "/api/reports":
+                payload = self.site.list_payload()
+            elif m := re.fullmatch(r"/api/reports/(\d{4}-\d{2}-\d{2})", path):
+                payload = self.site.report_payload(m[1])
+            elif path == "/api/auth" and self._local():
+                payload = self.site.auth_status()
             else:
                 raise NotFound(path)
+            self._send_json(200, payload)
         except NotFound:
-            self._send(404, notice_html("找不到頁面", '回 <a href="/reports">歷史晨報</a>。'))
-        except ValueError as exc:  # render_body：報告 Markdown 格式不符
-            self._send(500, notice_html("報告格式不符", html.escape(str(exc))))
+            self._send_json(404, {"error": "not found"})
+        except ApiError as exc:
+            self._send_json(exc.status, {"error": str(exc)})
         except Exception:
             traceback.print_exc()
-            self._send(500, notice_html("伺服器錯誤", "詳見伺服器的 stderr。"))
+            self._send_json(500, {"error": "server error"})
 
     def _read_json(self):
         if not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
-            raise BadRequest(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type 必須是 application/json")
+            raise ApiError(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type 必須是 application/json")
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
-            raise BadRequest(HTTPStatus.LENGTH_REQUIRED, "缺 Content-Length") from None
+            raise ApiError(HTTPStatus.LENGTH_REQUIRED, "缺 Content-Length") from None
         if not 0 < length <= MAX_BODY:
-            raise BadRequest(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"body 需在 1~{MAX_BODY} bytes")
+            raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"body 需在 1~{MAX_BODY} bytes")
         try:
             return json.loads(self.rfile.read(length))
         except (json.JSONDecodeError, UnicodeDecodeError):
-            raise BadRequest(HTTPStatus.BAD_REQUEST, "body 不是合法的 JSON") from None
+            raise ApiError(HTTPStatus.BAD_REQUEST, "body 不是合法的 JSON") from None
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path.rstrip("/")
         local_only = POST_ROUTES.get(path)
         if local_only is None or (local_only and not self._local()):
-            self._send_json(404, {"error": "not found"})  # /auth/* 對非本機請求＝不存在
+            self._send_json(404, {"error": "not found"})  # /api/auth/* 對非本機請求＝不存在
             return
         try:
             data = self._read_json()
-            if path == "/feedback":
+            if path == "/api/feedback":
                 if not (isinstance(data, dict) and isinstance(data.get("uid"), str) and isinstance(data.get("mark"), str)):
-                    raise BadRequest(HTTPStatus.BAD_REQUEST, "需要字串欄位 uid、mark")
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 uid、mark")
                 row = self.site.record(data["uid"], data["mark"])
                 self._send_json(200, {"uid": row["uid"], "mark": row["mark"]})
-            elif path == "/auth/token":
+            elif path == "/api/auth/token":
                 if not (isinstance(data, dict) and isinstance(data.get("token"), str)):
-                    raise BadRequest(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
                 self._send_json(200, self.site.submit_token(data["token"]))
-            elif path == "/auth/test":
+            elif path == "/api/auth/test":
                 self._send_json(200, self.site.test_token())
-            else:  # /auth/revoke
+            else:  # /api/auth/revoke
                 self._send_json(200, self.site.revoke_token())
-        except BadRequest as exc:
+        except ApiError as exc:
             self._send_json(exc.status, {"error": str(exc)})
         except Exception:
             traceback.print_exc()
@@ -465,10 +464,38 @@ def make_server(site: Site, host: str, port: int, quiet: bool = False) -> Thread
     return server
 
 
+@contextlib.contextmanager
+def served(site: Site) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
+    """selftest 用：起一個真的 HTTP 伺服器，給一個 req(method, path, headers, body) → (狀態碼, 標頭, 內文)。
+    用 http.client 而不是 urllib：路徑原樣送出（不正規化 `..`），標頭也能自己指定（Host、Cf-* 等）。"""
+    import http.client
+
+    server = make_server(site, DEFAULT_HOST, 0, quiet=True)  # port 0：讓系統挑空的 port
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+
+    def req(method: str, path: str, headers: Mapping[str, str] | None = None, body=None) -> tuple[int, dict[str, str], str]:
+        h, data = dict(headers or {}), None
+        if body is not None:
+            data = body if isinstance(body, bytes) else json.dumps(body).encode()
+            h.setdefault("Content-Type", "application/json")
+        conn = http.client.HTTPConnection(DEFAULT_HOST, port, timeout=10)
+        try:
+            conn.request(method, path, body=data, headers=h)
+            resp = conn.getresponse()
+            return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read().decode("utf-8")
+        finally:
+            conn.close()
+
+    try:
+        yield req
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def selftest() -> None:
     import tempfile
-    import urllib.error
-    import urllib.request
 
     uid_a, uid_b, uid_c = "0123456789abcdef", "1111111111111111", "2222222222222222"
     md = f"""# 每日晨間簡報 2026-09-28
@@ -502,69 +529,94 @@ def selftest() -> None:
         (root / "data" / "curated" / "2026-09-28.json").write_text(json.dumps(
             {"items": [{"uid": uid_a, "title": "重點", "source": "S1", "topic": "ai-industry",
                         "matched_keywords": ["llm"]}]}, ensure_ascii=False), encoding="utf-8")
+        # 前端的建置結果（假的）；dist 之外放一個檔案，確認拿不到
+        (root / "web" / "dist" / "assets").mkdir(parents=True)
+        shell = '<!doctype html><div id="root"></div><script type="module" src="/assets/app-abc123.js"></script>'
+        (root / "web" / "dist" / "index.html").write_text(shell, encoding="utf-8")
+        (root / "web" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
+        (root / "web" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
+        (root / "web" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+        (root / "web" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
+        (root / "web" / "secret.txt").write_text("dist 之外", encoding="utf-8")  # 一層 .. 就到
+        (root / "secret.txt").write_text("dist 之外", encoding="utf-8")          # 三層 .. 才到
         site = Site(root, today=lambda: "2026-09-28")
-        server = make_server(site, DEFAULT_HOST, 0, quiet=True)  # port 0：讓系統挑空的 port
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        base = f"http://{DEFAULT_HOST}:{server.server_address[1]}"
 
-        def get(path: str) -> tuple[int, str]:
-            try:
-                with urllib.request.urlopen(base + path) as resp:
-                    return resp.status, resp.read().decode("utf-8")
-            except urllib.error.HTTPError as exc:
-                return exc.code, exc.read().decode("utf-8")
+        with served(site) as req:
+            def get(path: str, headers=None) -> tuple[int, dict]:
+                status, _, text = req("GET", path, headers)
+                return status, json.loads(text)
 
-        def post(payload, ctype: str = "application/json") -> tuple[int, dict]:
-            raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-            req = urllib.request.Request(base + "/feedback", data=raw, method="POST",
-                                         headers={"Content-Type": ctype})
-            try:
-                with urllib.request.urlopen(req) as resp:
-                    return resp.status, json.loads(resp.read())
-            except urllib.error.HTTPError as exc:
-                return exc.code, json.loads(exc.read())
+            def post(payload, ctype: str = "application/json") -> tuple[int, dict]:
+                raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+                status, _, text = req("POST", "/api/feedback", {"Content-Type": ctype}, raw)
+                return status, json.loads(text)
 
-        def saved() -> dict[str, dict]:
-            return feedback.read_feedback(root / "state" / "feedback.jsonl")
+            def saved() -> dict[str, dict]:
+                return feedback.read_feedback(root / "state" / "feedback.jsonl")
 
-        def pressed(page: str, uid: str) -> str:
-            """該則目前亮起的是哪一顆（'+' / '-' / ''）。"""
-            box = re.search(rf'<div class="fb" data-uid="{uid}">(.*?)</div>', page, re.S)
-            assert box, f"頁面裡找不到 {uid} 的按鈕"
-            on = re.findall(r'data-mark="([+-])" aria-pressed="true"', box[1])
-            assert len(on) <= 1, on
-            return on[0] if on else ""
+            def marks(date: str = "2026-09-28") -> dict[str, str]:
+                return get(f"/api/reports/{date}")[1]["marks"]
 
-        try:
-            # 頁面：按鈕插在每則 mark 註解的位置，email 版型不受影響
-            for path in ("/", "/reports/2026-09-28"):
-                status, page = get(path)
-                assert status == 200 and page.count('class="fb"') == 3, (path, status)
-                assert "&lt;標題&gt;" in page and "mark:" not in page
-                assert [pressed(page, u) for u in (uid_a, uid_b, uid_c)] == ["", "", ""]
-            # 巢狀子項目（"  - 細節"）之後的按鈕要回到最外層 <li>，不能掛在子項目裡
-            assert re.search(r"細節</li></ul><div class=\"fb\" data-uid=\"%s\"" % uid_a, page), page
-            assert "class=\"fb\"" not in render_email.render(md)[0]
+            # 晨報：回結構，不是 HTML；巢狀子項目不帶 mark，mark 掛在最外層的項目上（與 email 版型一致）
+            status, data = get("/api/reports/2026-09-28")
+            assert status == 200 and data["date"] == "2026-09-28" and data["marks"] == {}, data
+            report = data["report"]
+            assert report["headline"] == "某事發生，見 來源。" and report["subject"] == "測試頭條"
+            assert [b["type"] for b in report["blocks"]] == ["title", "callout", "heading", "paragraph", "list",
+                                                               "heading", "list"], report["blocks"]
+            item = report["blocks"][4]["items"][0]
+            assert item["uids"] == [uid_a] and item["children"][0]["inline"] == [{"type": "text", "text": "細節"}]
+            assert "uids" not in item["children"][0]
+            assert [s["url"] for s in report["sources"]] == ["https://a.example/x", "https://a.example/1",
+                                                              "https://a.example/2", "https://a.example/3"]
+            raw = req("GET", "/api/reports/2026-09-28")[2]
+            assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw  # 原文照給，跳脫是前端的事
 
-            # CSS／JS 是獨立的靜態檔：頁面只引用、不內嵌；只供白名單裡的檔名
-            assert '<link rel="stylesheet" href="/static/web.css">' in page
-            assert '<script src="/static/web.js" defer></script>' in page
-            assert "<style" not in page and "<script>" not in page
-            for name, ctype, needle in (("web.css", "text/css", ".fb-btn"), ("web.js", "text/javascript", "/feedback")):
-                with urllib.request.urlopen(f"{base}/static/{name}") as resp:
-                    assert resp.status == 200 and resp.headers["Content-Type"].startswith(ctype), resp.headers
-                    assert resp.headers["Cache-Control"] == "no-cache"
-                    assert needle in resp.read().decode("utf-8")
-            assert all(get(f"/static/{n}")[0] == 404 for n in ("nope.css", "web.py", "../web.py", ""))
-            listing = get("/reports")[1]  # 沒有按鈕的頁面只載 CSS，不載 JS
-            assert "/static/web.css" in listing and "web.js" not in listing and "<style" not in listing
+            # 當日：有就給整份，沒有就給最新一份的日期
+            assert get("/api/today") == (200, {**data, "latest": "2026-09-28"})
+            site.today = lambda: "2026-10-05"
+            assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28"})
+            site.today = lambda: "2026-09-28"
 
-            # /reports：新到舊、略過非日期檔名、顯示頭條
-            status, listing = get("/reports")
-            assert status == 200 and "notes" not in listing
-            assert listing.index("2026-09-28") < listing.index("2026-09-27") and "某事發生，見 來源。" in listing
-            assert get("/reports/2026-01-01")[0] == 404 and get("/reports/..%2Fconfig")[0] == 404
-            assert get("/nope")[0] == 404
+            # 歷史列表：新到舊、略過非日期檔名、顯示頭條
+            status, data = get("/api/reports")
+            assert status == 200 and data == {"reports": [{"date": "2026-09-28", "headline": "某事發生，見 來源。"},
+                                                          {"date": "2026-09-27", "headline": "某事發生，見 來源。"}]}, data
+            assert get("/api/reports/2026-01-01")[0] == 404 and get("/api/reports/..%2Fconfig")[0] == 404
+            assert get("/api/nope") == (404, {"error": "not found"}) and get("/api/reports/")[0] == 200
+
+            # 格式不符的報告：單日回 500 與原因，列表照樣能列出（頭條抓不到就留空）
+            (root / "reports" / "2026-09-26.md").write_text("# 壞掉的報告\n", encoding="utf-8")
+            status, data = get("/api/reports/2026-09-26")
+            assert status == 500 and "報告格式不符" in data["error"] and "頭條" in data["error"], data
+            assert get("/api/reports")[1]["reports"][-1] == {"date": "2026-09-26", "headline": ""}
+            (root / "reports" / "2026-09-26.md").unlink()
+
+            # 前端：路由一律回 index.html（含 CSP）；沒有行內腳本與樣式
+            for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth"):
+                status, headers, body = req("GET", path)
+                assert status == 200 and body == shell, (path, status)
+                assert headers["content-type"] == "text/html; charset=utf-8" and headers["cache-control"] == "no-cache"
+                assert "default-src 'self'" in headers["content-security-policy"] and "frame-ancestors 'none'" in headers["content-security-policy"]
+            assert "<style" not in shell and "<script>" not in shell
+            # 不認得的路徑：同一份 index.html，但狀態碼是 404（前端畫「找不到頁面」）
+            for path in ("/nope", "/reports/abc", "/api", "/reports/2026-09-28/x"):
+                status, _, body = req("GET", path)
+                assert status == 404 and body == shell, (path, status)
+            # 靜態檔：assets 帶 hash 長期快取，其他每次確認；類型照副檔名
+            status, headers, body = req("GET", "/assets/app-abc123.js")
+            assert status == 200 and body == "console.log(1)" and headers["content-type"] == "text/javascript; charset=utf-8"
+            assert headers["cache-control"] == IMMUTABLE and headers["x-content-type-options"] == "nosniff"
+            assert req("GET", "/assets/app-abc123.css")[1]["content-type"] == "text/css; charset=utf-8"
+            status, headers, _ = req("GET", "/favicon.svg")
+            assert status == 200 and headers["content-type"] == "image/svg+xml" and headers["cache-control"] == "no-cache"
+            # 擋掉：不存在的檔案給純文字 404（不是 HTML）、dist 之外、副檔名不在白名單、目錄
+            for path in ("/assets/missing.js", "/../secret.txt", "/assets/../../secret.txt", "/assets/../../../secret.txt",
+                         "/assets/..%2F..%2Fsecret.txt", "/%2e%2e/secret.txt", "/secret.txt", "/build.py", "/assets", "/assets/"):
+                status, headers, body = req("GET", path)
+                assert status == 404 and "dist 之外" not in body and "不該被提供" not in body, (path, status)
+                if "." in path.rsplit("/", 1)[-1]:
+                    assert headers["content-type"].startswith("text/plain") and body == "not found", path
 
             # 寫入：欄位沿用 feedback.py，並帶出 curated 的中繼資料
             assert post({"uid": uid_a, "mark": "+"}) == (200, {"uid": uid_a, "mark": "+"})
@@ -572,7 +624,7 @@ def selftest() -> None:
             assert row["mark"] == "+" and row["report"] == "2026-09-28.md" and row["title"] == "重點"
             assert row["topic"] == "ai-industry" and row["matched_keywords"] == ["llm"]
             assert set(row) == set(feedback.build_row(uid_a, "+", "x.md", {})), row
-            assert pressed(get("/reports/2026-09-28")[1], uid_a) == "+"
+            assert marks() == {uid_a: "+"}
             # curated 裡沒有的 uid 也能標，只是沒有中繼資料
             assert post({"uid": uid_b, "mark": "-"})[0] == 200
             assert saved()[uid_b]["mark"] == "-" and saved()[uid_b]["title"] == ""
@@ -580,45 +632,51 @@ def selftest() -> None:
             # 覆蓋：以最後一筆為準；檔案是 append，不是改寫
             assert post({"uid": uid_a, "mark": "-"})[0] == 200
             assert saved()[uid_a]["mark"] == "-"
-            assert pressed(get("/")[1], uid_a) == "-" and pressed(get("/")[1], uid_b) == "-"
+            assert get("/api/today")[1]["marks"] == {uid_a: "-", uid_b: "-"}
             lines = (root / "state" / "feedback.jsonl").read_text(encoding="utf-8").splitlines()
             assert [json.loads(ln)["mark"] for ln in lines if uid_a in ln] == ["+", "-"], lines
 
             # 取消：mark "" 讀回來是未標記
             assert post({"uid": uid_a, "mark": ""}) == (200, {"uid": uid_a, "mark": ""})
             assert saved()[uid_a]["mark"] == ""
-            page = get("/reports/2026-09-28")[1]
-            assert pressed(page, uid_a) == "" and pressed(page, uid_b) == "-"
+            assert marks() == {uid_b: "-"}
 
-            # feedback.py 收進來的 ++ / -- 在網頁上算同一級
+            # feedback.py 收進來的 ++ / -- 在網頁上算同一級；只回這份報告裡出現的 uid
             site.feedback_path.write_text(site.feedback_path.read_text(encoding="utf-8").rstrip("\n"),
                                           encoding="utf-8")  # 結尾沒換行也要能接著寫
             assert post({"uid": uid_c, "mark": "+"})[0] == 200
             assert all(ln.startswith("{") for ln in site.feedback_path.read_text(encoding="utf-8").splitlines())
-            row = feedback.build_row(uid_c, "++", "2026-09-28.md", {})
             with site.feedback_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
-            assert pressed(get("/")[1], uid_c) == "+"
+                fh.write(json.dumps(feedback.build_row(uid_c, "++", "2026-09-28.md", {})) + "\n")
+                fh.write(json.dumps(feedback.build_row("f" * 16, "+", "2026-08-01.md", {})) + "\n")
+            assert marks() == {uid_b: "-", uid_c: "+"}
 
             # 擋掉不合法的請求，且不寫檔
             before = site.feedback_path.read_text(encoding="utf-8")
             assert post({"uid": uid_a, "mark": "++"})[0] == 400
             assert post({"uid": "xyz", "mark": "+"})[0] == 400
-            assert post({"uid": "f" * 16, "mark": "+"})[0] == 404          # 報告裡沒有這個 uid
+            assert post({"uid": "e" * 16, "mark": "+"})[0] == 404          # 報告裡沒有這個 uid
             assert post({"uid": uid_a})[0] == 400 and post([1, 2])[0] == 400
             assert post(b"not json")[0] == 400
             assert post({"uid": uid_a, "mark": "+"}, ctype="application/x-www-form-urlencoded")[0] == 415
             assert post(b"x" * (MAX_BODY + 1))[0] == 413
+            assert req("POST", "/feedback", None, {"uid": uid_a, "mark": "+"})[0] == 404  # 舊路徑不存在
             assert site.feedback_path.read_text(encoding="utf-8") == before
-        finally:
-            server.shutdown()
-            server.server_close()
+
+        # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
+        bare = root / "bare"
+        (bare / "reports").mkdir(parents=True)
+        with served(Site(bare, today=lambda: "2026-09-28")) as req:
+            status, _, body = req("GET", "/")
+            assert status == 503 and "npm run build" in body
+            status, _, body = req("GET", "/api/today")
+            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "latest": None}
+            assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
     print("ok")
 
 
 def selftest_auth() -> None:
-    import http.client
     import stat
     import subprocess as sp
     import tempfile
@@ -696,72 +754,65 @@ def selftest_auth() -> None:
         (root / "reports" / "2026-09-28.md").write_text(
             f"# 每日晨間簡報 2026-09-28\n\n<!-- subject: x -->\n\n> **今日頭條：** y\n\n## 科技\n\n"
             f"**[t](https://a.example/1)**\n\n- a\n<!-- mark:    uid={uid} -->\n", encoding="utf-8")
+        (root / "web" / "dist").mkdir(parents=True)
+        (root / "web" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
         site = Site(root, today=lambda: "2026-09-28", checker=checker)
-        server = make_server(site, DEFAULT_HOST, 0, quiet=True)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        port = server.server_address[1]
 
-        def req(method, path, headers=None, body=None):
-            conn = http.client.HTTPConnection(DEFAULT_HOST, port, timeout=10)
-            h, data = dict(headers or {}), None
-            if body is not None:
-                data = body if isinstance(body, bytes) else json.dumps(body).encode()
-                h.setdefault("Content-Type", "application/json")
-            conn.request(method, path, body=data, headers=h)
-            resp = conn.getresponse()
-            text = resp.read().decode("utf-8")
-            conn.close()
-            seen.append(text)
-            return resp.status, text
+        with served(site) as raw_req:
+            def req(method, path, headers=None, body=None):
+                status, _, text = raw_req(method, path, headers, body)
+                seen.append(text)
+                return status, text
 
-        def post(path, body, headers=None):
-            status, text = req("POST", path, headers, body)
-            return status, json.loads(text)
+            def post(path, body, headers=None):
+                status, text = req("POST", path, headers, body)
+                return status, json.loads(text)
 
-        try:
-            # 本機：頁面、導覽列連結、靜態檔
-            status, page = req("GET", "/auth")
-            assert status == 200 and "Claude 授權" in page and "尚未授權" in page and "/static/auth.js" in page
-            assert "<style" not in page and "<script>" not in page and AUTH_NAV_SLOT not in page
-            assert 'type="password"' in page and 'autocomplete="off"' in page and "不使用 API key" in page
-            assert 'href="/auth"' in req("GET", "/")[1] and 'href="/auth"' in req("GET", "/reports")[1]
-            status, js = req("GET", "/static/auth.js")
-            assert status == 200 and "/auth/token" in js and "Storage" not in js
+            def get(path, headers=None):
+                status, text = req("GET", path, headers)
+                return status, json.loads(text)
 
-            # 非本機（公開網域的 Host、代理標頭、跨站 Origin）：/auth 全部是 404，導覽列也沒有連結
+            # 本機：session、狀態、頁面
+            assert get("/api/session") == (200, {"local": True})
+            assert get("/api/auth") == (200, {"state": "missing", "env_token": False})
+            assert req("GET", "/auth")[0] == 200
+
+            # 非本機（公開網域的 Host、代理標頭、跨站 Origin）：/auth 與 /api/auth* 全部是 404，session 說不是本機
             for hdr in ({"Host": "news.example.com"},
                         {"Cf-Ray": "abc", "Cf-Connecting-Ip": "1.2.3.4"},
                         {"X-Forwarded-For": "1.2.3.4"},
                         {"Cdn-Loop": "cloudflare"},
                         {"Origin": "https://evil.example"}):
-                assert req("GET", "/auth", hdr)[0] == 404, hdr
-                assert req("GET", "/auth/", hdr)[0] == 404, hdr
-                for path in ("/auth/token", "/auth/test", "/auth/revoke"):
+                assert req("GET", "/auth", hdr)[0] == 404 and req("GET", "/auth/", hdr)[0] == 404, hdr
+                assert get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
+                assert get("/api/session", hdr) == (200, {"local": False}), hdr
+                for path in ("/api/auth/token", "/api/auth/test", "/api/auth/revoke"):
                     status, body = post(path, {"token": secret}, hdr)
                     assert status == 404 and body == {"error": "not found"}, (hdr, path)
-                nav_page = req("GET", "/", hdr)[1]
-                assert "/auth" not in nav_page and AUTH_NAV_SLOT not in nav_page, hdr
             assert not checked and not site.token_path.exists()  # 被擋的請求沒有觸發驗證、沒有寫檔
-            # 一般功能不受影響：經 Tunnel（公開網域）一樣能按 👍／👎
-            assert post("/feedback", {"uid": uid, "mark": "+"}, {"Host": "news.example.com", "Cf-Ray": "abc"})[0] == 200
+            # 一般功能不受影響：經 Tunnel（公開網域）一樣能讀報告、按 👍／👎
+            tunnel = {"Host": "news.example.com", "Cf-Ray": "abc"}
+            assert get("/api/today", tunnel)[0] == 200 and req("GET", "/", tunnel)[0] == 200
+            assert post("/api/feedback", {"uid": uid, "mark": "+"}, tunnel)[0] == 200
 
             # 輸入檢查：不呼叫 checker
-            assert req("POST", "/auth/token", None, b"not json")[0] == 400  # Content-Type 是 JSON、內容不是
-            status, body = post("/auth/token", {"nope": 1})
+            assert req("POST", "/api/auth/token", None, b"not json")[0] == 400  # Content-Type 是 JSON、內容不是
+            status, body = post("/api/auth/token", {"nope": 1})
             assert status == 400 and "token" in body["error"]
             for bad in ("", "   ", "short", "x" * 600, "has space " + "y" * 30, "line\nbreak" + "y" * 30):
-                status, body = post("/auth/token", {"token": bad})
+                status, body = post("/api/auth/token", {"token": bad})
                 assert status == 400, bad
-            assert req("POST", "/auth/token", {"Content-Type": "application/x-www-form-urlencoded"}, b"token=x")[0] == 415
+            assert req("POST", "/api/auth/token", {"Content-Type": "application/x-www-form-urlencoded"}, b"token=x")[0] == 415
+            assert req("POST", "/auth/token", None, {"token": secret})[0] == 404  # 舊路徑不存在
             assert not checked
 
             # 貼上有效的 token（前後有空白）：驗證 → 儲存，權限 600，回應不含完整 token
-            status, body = post("/auth/token", {"token": f"  {secret}\n"})
+            status, body = post("/api/auth/token", {"token": f"  {secret}\n"})
             assert status == 200 and body["message"] == "驗證通過，已儲存", body
-            assert checked == [secret] and "已授權" in body["html"] and secret[-4:] in body["html"]
+            assert checked == [secret] and body["status"]["state"] == "ok" and body["status"]["tail"] == secret[-4:]
             assert auth_store.load(site.token_path)["token"] == secret
             assert stat.S_IMODE(site.token_path.stat().st_mode) == 0o600
-            assert "已授權" in req("GET", "/auth")[1] and secret not in req("GET", "/auth")[1]
+            assert get("/api/auth")[1] == body["status"] and secret not in req("GET", "/api/auth")[1]
 
             # 驗證失敗：各種原因都不能洗掉原本的 token
             other = "sk-ant-oat01-" + "Zz1" * 14
@@ -771,7 +822,7 @@ def selftest_auth() -> None:
                                   ({"ok": False, "kind": "timeout", "message": "逾時"}, 504, "逾時"),
                                   ({"ok": False, "kind": "env", "message": "沒有 SDK"}, 503, "SDK")):
                 outcome["v"] = v
-                status, body = post("/auth/token", {"token": other})
+                status, body = post("/api/auth/token", {"token": other})
                 assert status == want and text in body["error"] and other not in body["error"], (v, status, body)
                 assert auth_store.load(site.token_path)["token"] == secret, v
             assert checked[-1] == other
@@ -781,39 +832,37 @@ def selftest_auth() -> None:
             n = len(checked)
             assert site._check_lock.acquire(blocking=False)
             try:
-                status, body = post("/auth/token", {"token": other})
+                status, body = post("/api/auth/token", {"token": other})
             finally:
                 site._check_lock.release()
             assert status == 409 and len(checked) == n and auth_store.load(site.token_path)["token"] == secret
 
             # 測試連線：用已存的 token；失敗只回報，不改狀態
-            status, body = post("/auth/test", {})
+            status, body = post("/api/auth/test", {})
             assert status == 200 and body["message"] == "連線正常" and checked[-1] == secret
             outcome["v"] = {"ok": False, "kind": "auth", "message": "401"}
-            status, body = post("/auth/test", {})
+            status, body = post("/api/auth/test", {})
             assert status == 422 and auth_store.load(site.token_path)["token"] == secret
 
             # 即將到期的提醒（以儲存時間推算）
             auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=345))
-            page = req("GET", "/auth")[1]
-            assert "即將到期" in page and "auth-expiring" in page
+            status, st = get("/api/auth")
+            assert st["state"] == "expiring" and 0 <= st["days_left"] <= 30, st
             auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=400))
-            assert "預計已過期" in req("GET", "/auth")[1]
+            assert get("/api/auth")[1]["state"] == "expired"
 
             # 刪除：只移除本機檔案；沒有 token 時 test 是 404
-            status, body = post("/auth/revoke", {})
-            assert status == 200 and "已刪除" in body["message"] and "尚未授權" in body["html"] and not site.token_path.exists()
-            status, body = post("/auth/revoke", {})
+            status, body = post("/api/auth/revoke", {})
+            assert status == 200 and "已刪除" in body["message"] and body["status"]["state"] == "missing"
+            assert not site.token_path.exists()
+            status, body = post("/api/auth/revoke", {})
             assert status == 200 and "本來就沒有" in body["message"]
-            assert post("/auth/test", {})[0] == 404
+            assert post("/api/auth/test", {})[0] == 404
 
             # 完整 token 不能出現在任何回應裡
             assert not any(secret in text or other in text for text in seen)
             # 👍／👎 仍照常寫入，與 /auth 互不干擾
             assert uid in (root / "state" / "feedback.jsonl").read_text(encoding="utf-8")
-        finally:
-            server.shutdown()
-            server.server_close()
 
 
 def main(argv: list[str]) -> int:
@@ -827,7 +876,10 @@ def main(argv: list[str]) -> int:
         return 0
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
-    server = make_server(Site(), args.host, args.port)
+    site = Site()
+    if site.index_html() is None:
+        print(f"[web] 找不到 web/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
+    server = make_server(site, args.host, args.port)
     print(f"[web] http://{args.host}:{server.server_address[1]}/  （Ctrl-C 結束）", file=sys.stderr)
     try:
         server.serve_forever()

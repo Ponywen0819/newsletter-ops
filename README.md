@@ -19,8 +19,9 @@ src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 src/auth_store.py          認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 src/feedback.py            回饋層：從報告收集人工標記
-src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl；/auth 貼上 OAuth token（stdlib，無登入）
-src/static/                web.py 用的 CSS／JS（web.css、web.js、auth.js），由 /static/<檔名> 提供
+src/report_data.py         報告資料層：報告 Markdown → 結構化 JSON（與 render_email.py 認同一套格式），給網頁用
+src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；👍／👎 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
+web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
 src/run.py                 入口 CLI
 run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → 寄信，失敗留 log、exit 非 0
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume（見「部署到家用 host」）
@@ -62,6 +63,7 @@ uv run src/run.py               # 完整跑一次（含模板版報告）
 uv run src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run src/run.py --lookback 72 # 放寬時間窗到 72 小時
 uv run src/feedback.py          # 收集報告裡填的標記
+(cd web && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
 uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 uv run src/render_email.py | uv run src/send_email.py   # 寄出當日 email
 ```
@@ -91,8 +93,9 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每�
 ### 用網頁標記（取代手改 Markdown）
 
 ```bash
+(cd web && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
 uv run src/web.py               # 開 http://127.0.0.1:8787/
-uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀回
+uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制
 ```
 
 `/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則末尾有 👍／👎，按下即 append 一行到
@@ -103,8 +106,34 @@ uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀�
 - 網頁與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊。
   `uv run src/feedback.py --selftest` 涵蓋這部分（含併發 append）。
 - **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，但不 publish 任何 port，見「部署到家用 host」）。
-- `POST /feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
+- `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
+  （改版前是 `POST /feedback`；若有外部腳本或 Cloudflare Access 規則寫死舊路徑，要跟著改。）
 - `/auth`（貼 OAuth token）**只服務本機**，經 Tunnel 進來的一律 404，見下一節。
+
+### Web 前端（`web/`）
+
+Vite + React + TypeScript。後端 `src/web.py` 只出 JSON，頁面全由前端畫；晨報不再是後端組好的 HTML，
+而是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
+版面沿用 email 版型（灰底、640px 白卡片），email 本身仍由 `render_email.py` 產生、不受影響。
+
+```bash
+cd web
+npm install          # 第一次；需要 Node ^20.19 或 >=22.12
+npm run build        # 型別檢查 + 建置到 web/dist，src/web.py 直接提供
+npm run dev          # 開發：Vite 在 :5173，/api 代理到 src/web.py（需另外用 uv run src/web.py 開後端）
+npm test             # Vitest + Testing Library：元件與路由
+npm run typecheck
+```
+
+- 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/auth` 授權（只限本機）。後端對這幾條回 `index.html`，
+  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`src/web.py` 的 `SPA_ROUTES` 要同步。
+- API（細節見 `src/web.py` 開頭的說明、型別見 `web/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
+  `/api/reports/<date>`、`/api/auth`；`POST /api/feedback`、`/api/auth/token|test|revoke`。
+- 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
+  前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
+- HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
+- 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時，`render_email.py`（email）與 `report_data.py`（網頁）兩邊要一起改；
+  `python3 src/report_data.py --selftest` 會拿同一份 Markdown 對照兩邊的解析結果。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
@@ -205,7 +234,8 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
   ```
 
 - 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
-- 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`。
+- 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`、
+  `python3 src/report_data.py --selftest`；前端 `cd web && npm test`。
 
 ## 部署到家用 host（Docker + Cloudflare Tunnel + Access）
 
@@ -218,7 +248,8 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。
                                     三個容器共用一個 volume：newsletter-data（reports／data／state／logs）
 ```
 
-- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，非 root 執行）。
+- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`web/`），
+  只把 `web/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。compose 沒有 `ports:`，host 不會開任何 port；
@@ -264,7 +295,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up，PORTS 欄�
 | `docker compose logs cloudflared` | 出現 `Registered tunnel connection`（沒有就是 token 有誤或出站連不到 Cloudflare） |
 | 另一個網路（手機關 Wi-Fi）開 `https://news.example.com` | 先到 Access 登入頁，用你的 email 登入後看到晨報（還沒有報告時是「還沒產出」頁） |
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
-| **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
+| **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的 👍 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
 | `docker compose run --rm scheduler uv run src/agent_run.py --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
@@ -298,15 +329,16 @@ git pull && docker compose up -d --build          # 更新（interests.md、conf
 ### 不用 Docker：systemd + cloudflared
 
 不想用 Docker 時，直接在 host 上跑。單元檔與設定範本在 `deploy/`，以下假設 repo 在 `~/newsletter-ops`，需要 [uv](https://docs.astral.sh/uv/)
-（見「環境（uv）」）。資料保存的決定同上：生成物留在 host 的 `reports/`、`data/`、`state/`、`logs/`，不備份、不進版控。
+（見「環境（uv）」）與 Node（^20.19 或 >=22.12，只在建置網頁前端時用到，之後執行不需要）。資料保存的決定同上：生成物留在 host 的 `reports/`、`data/`、`state/`、`logs/`，不備份、不進版控。
 
 **1. 取得程式**
 
-先裝 [uv](https://docs.astral.sh/uv/)（見「環境（uv）」）。
+先裝 [uv](https://docs.astral.sh/uv/)（見「環境（uv）」）與 Node。
 
 ```bash
 git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops
 cd ~/newsletter-ops && uv sync --locked      # 建 .venv、裝 claude-agent-sdk；沒有 Python 3.11 時 uv 會自己下載
+(cd web && npm ci && npm run build)          # 建置網頁前端到 web/dist；沒做的話 web service 的頁面都回 503
 uv run src/run.py --list-sources             # 不連網，確認設定可用
 ```
 
@@ -336,8 +368,8 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行，開機自動�
 - 手動跑一次排程：`systemctl --user start newsletter-daily.service`（會真的呼叫 Claude 並寄信，約數分鐘、有 API 費用），
   失敗時 `systemctl --user status newsletter-daily` 會顯示 failed，原因在 `logs/<YYYY-MM>.log`。
 - 更新（`interests.md`、`config/`、程式等被追蹤的檔案）：
-  `git -C ~/newsletter-ops pull && (cd ~/newsletter-ops && uv sync --locked) && systemctl --user restart newsletter-web`。
-  排程每次都重新讀檔，不必重啟。
+  `git -C ~/newsletter-ops pull && (cd ~/newsletter-ops && uv sync --locked && cd web && npm ci && npm run build) && systemctl --user restart newsletter-web`。
+  （前端沒變動時，`npm ci && npm run build` 可以省略。）排程每次都重新讀檔，不必重啟。
 
 **4. cloudflared Tunnel**
 
@@ -367,7 +399,7 @@ Application domain 填 `news.example.com`；Policy 一條就好：Action = Allow
 | host 上 `ss -ltn \| grep 8787` | 只有 `127.0.0.1:8787`，不是 `0.0.0.0` |
 | 另一個網路（手機關 Wi-Fi）開 `https://news.example.com` | 先到 Access 登入頁，用你的 email 登入後看到晨報 |
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
-| **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
+| **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的 👍 | host 上 `tail -n1 ~/newsletter-ops/state/feedback.jsonl` 多一行 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上 `uv run src/agent_run.py`
