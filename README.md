@@ -19,8 +19,9 @@ src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 src/auth_store.py          認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 src/feedback.py            回饋層：從報告收集人工標記
-src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl；/auth 貼上 OAuth token（stdlib，無登入）
-src/static/                web.py 用的 CSS／JS（web.css、web.js、auth.js），由 /static/<檔名> 提供
+src/report_data.py         報告資料層：報告 Markdown → 結構化 JSON（與 render_email.py 認同一套格式），給網頁用
+src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；👍／👎 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
+web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
 src/run.py                 入口 CLI
 run_daily.sh               cron 包裝
 pyproject.toml, uv.lock    Python 版本與依賴，由 uv 管理（.python-version 固定直譯器版本）
@@ -60,6 +61,7 @@ uv run src/run.py               # 完整跑一次（含模板版報告）
 uv run src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run src/run.py --lookback 72 # 放寬時間窗到 72 小時
 uv run src/feedback.py          # 收集報告裡填的標記
+(cd web && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
 uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 uv run src/render_email.py | uv run src/send_email.py   # 寄出當日 email
 ```
@@ -89,8 +91,9 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每�
 ### 用網頁標記（取代手改 Markdown）
 
 ```bash
+(cd web && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
 uv run src/web.py               # 開 http://127.0.0.1:8787/
-uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀回
+uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制
 ```
 
 `/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則末尾有 👍／👎，按下即 append 一行到
@@ -101,8 +104,34 @@ uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀�
 - 網頁與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊。
   `uv run src/feedback.py --selftest` 涵蓋這部分（含併發 append）。
 - **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`。
-- `POST /feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
+- `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
+  （改版前是 `POST /feedback`；若有外部腳本或 Cloudflare Access 規則寫死舊路徑，要跟著改。）
 - `/auth`（貼 OAuth token）**只服務本機**，經 Tunnel 進來的一律 404，見下一節。
+
+### Web 前端（`web/`）
+
+Vite + React + TypeScript。後端 `src/web.py` 只出 JSON，頁面全由前端畫；晨報不再是後端組好的 HTML，
+而是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
+版面沿用 email 版型（灰底、640px 白卡片），email 本身仍由 `render_email.py` 產生、不受影響。
+
+```bash
+cd web
+npm install          # 第一次；需要 Node ^20.19 或 >=22.12
+npm run build        # 型別檢查 + 建置到 web/dist，src/web.py 直接提供
+npm run dev          # 開發：Vite 在 :5173，/api 代理到 src/web.py（需另外用 uv run src/web.py 開後端）
+npm test             # Vitest + Testing Library：元件與路由
+npm run typecheck
+```
+
+- 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/auth` 授權（只限本機）。後端對這幾條回 `index.html`，
+  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`src/web.py` 的 `SPA_ROUTES` 要同步。
+- API（細節見 `src/web.py` 開頭的說明、型別見 `web/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
+  `/api/reports/<date>`、`/api/auth`；`POST /api/feedback`、`/api/auth/token|test|revoke`。
+- 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
+  前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
+- HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
+- 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時，`render_email.py`（email）與 `report_data.py`（網頁）兩邊要一起改；
+  `python3 src/report_data.py --selftest` 會拿同一份 Markdown 對照兩邊的解析結果。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
@@ -193,7 +222,8 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
   ```
 
 - 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
-- 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`。
+- 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`、
+  `python3 src/report_data.py --selftest`；前端 `cd web && npm test`。
 
 ## 量測（debug）
 
