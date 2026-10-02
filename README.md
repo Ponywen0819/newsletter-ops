@@ -17,9 +17,10 @@ src/metrics.py             量測層：debug 開啟時記錄各階段耗時與 C
 src/render_email.py        email 層：條列版報告 Markdown → inline-CSS HTML（reports/<date>.html）
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
+src/auth_store.py          認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 src/feedback.py            回饋層：從報告收集人工標記
-src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl（stdlib，無登入）
-src/static/                web.py 用的 CSS／JS（web.css、web.js），由 /static/<檔名> 提供
+src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl；/auth 貼上 OAuth token（stdlib，無登入）
+src/static/                web.py 用的 CSS／JS（web.css、web.js、auth.js），由 /static/<檔名> 提供
 src/run.py                 入口 CLI
 run_daily.sh               cron 包裝
 pyproject.toml, uv.lock    Python 版本與依賴，由 uv 管理（.python-version 固定直譯器版本）
@@ -28,6 +29,7 @@ data/curated/<date>.json   排序後的收錄清單 ← SKILL 的輸入
 reports/<date>.md          最終報告
 state/seen.json            30 天去重記憶
 state/feedback.jsonl       累積的人工標記，供日後調整關鍵字
+state/oauth_token.json     /auth 頁面存的 OAuth token（權限 600，不進版控；見「無人值守」）
 logs/<YYYY-MM>.log         cron 執行紀錄
 .claude/skills/news-digest/  報告撰寫的 skill，隨專案進版控
 ```
@@ -100,6 +102,7 @@ uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀�
   `uv run src/feedback.py --selftest` 涵蓋這部分（含併發 append）。
 - **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`。
 - `POST /feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
+- `/auth`（貼 OAuth token）**只服務本機**，經 Tunnel 進來的一律 404，見下一節。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
@@ -126,14 +129,43 @@ arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解
 
 ```bash
 uv sync                                   # 依 uv.lock 建立 .venv 並裝好依賴（uv run 也會自動做）
-export ANTHROPIC_API_KEY=sk-ant-...       # 按 token 計費
+uv run src/web.py                        # 第一次：開 http://127.0.0.1:8787/auth 貼上 OAuth token（見下方「認證」）
 uv run src/agent_run.py                  # 抓取 → 寫報告 → render_email.py，約數分鐘
 uv run src/agent_run.py --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
 uv run src/agent_run.py | uv run src/send_email.py   # stdout 是 render_email.py 的那行 JSON，可直接寄信
+uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼叫），不跑晨報
 ```
 
-- **認證與計費**：SDK 底層是隨套件附帶的 claude CLI。有 `ANTHROPIC_API_KEY` 就按 token 計費；沒設會退回本機
-  Claude 的登入身分（走訂閱額度），`agent_run.py` 會在 stderr 警告一行。排程請設 API key。
+### 認證：只用 OAuth（訂閱額度），不使用 API key
+
+**刻意不支援 `ANTHROPIC_API_KEY`**：這個專案走 Claude 訂閱額度，不想額外付費。環境裡就算有 key 也不會被使用。
+
+1. 在**自己的電腦**執行 `claude setup-token`，在瀏覽器完成授權；它會印出效期一年的 token（CLI 不會幫你存）。
+   需要 Pro / Max / Team / Enterprise 方案。
+2. 開 `http://127.0.0.1:8787/auth`（`uv run src/web.py`），把 token 貼上送出。伺服器會先用它實際呼叫一次 Claude
+   （極小的請求）驗證，**通過才儲存**到 `state/oauth_token.json`（權限 600、不進版控）；貼錯的 token 不會蓋掉原本可用的。
+   頁面也顯示授權狀態與預計到期日（以一年效期推算，剩 30 天內會提醒），並可「測試連線」或「刪除已存的 token」
+   （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。
+3. 不想經過網頁（例如遠端 host 沒開網頁）：直接在執行 `agent_run.py` 的環境設 `CLAUDE_CODE_OAUTH_TOKEN`。
+
+- **token 來源的優先序**：`state/oauth_token.json`（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑）→ 環境變數
+  `CLAUDE_CODE_OAUTH_TOKEN`。**都沒有就直接 exit 2**，不會退回本機 `claude` 的登入，也不會用 API key。
+  stderr 會印這次用的來源（`stored-token` / `env-token`）。
+- **為什麼要移除環境變數**：claude CLI 自己的優先順序是 `ANTHROPIC_API_KEY` 高於 OAuth token，非互動模式只要有 key
+  就用 key。所以 `agent_run.py` 啟動時會把排在 OAuth 前面的來源（`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、
+  `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY`）從環境中移除，並在 stderr 說明。
+- **額度用完不會備援**：訂閱有使用額度，用完時晨報以 exit 6 失敗，不會自動換成 API key。
+  若帳號開了「額外用量」（[extra usage](https://support.claude.com/en/articles/12429409-extra-usage-for-paid-claude-plans)）
+  之類的自動付費設定，額度用完後仍可能產生費用，請到帳號設定確認。
+- **token 保護**：token 傳給驗證子程序時走環境變數、不上命令列，不回傳給瀏覽器（最多顯示尾 4 碼）、不寫進 log。
+  注意 token 在 agent（claude CLI）的環境裡，agent 用 Bash 跑的指令讀得到它（以前的 API key 也一樣）；
+  Claude Code 有 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 可以擋，但它要求系統有 bubblewrap，沒有就整個 CLI 啟動失敗，
+  所以預設沒開；要用請先裝 bubblewrap 再自己在環境設這個變數。
+- **`/auth` 只能從本機開**：能寫入憑證，而 `web.py` 沒有登入。`cloudflared` 跑在同一台機器、以 `127.0.0.1` 連進來，
+  所以光看來源位址擋不住 Tunnel；要同時符合「來源是 loopback」「`Host` 是 `127.0.0.1` / `localhost` / `[::1]`」
+  「沒有 `Cf-*` / `X-Forwarded-*` 等代理標頭」「`Origin`（若有）是本機」，否則回 404。
+  遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>`，再用自己電腦的瀏覽器開 `http://localhost:8787/auth`。
+- 驗證 token 需要 SDK，請用 `uv run src/web.py` 啟動（用 `python3 src/web.py` 時其他頁面照常，只有貼 token 會提示缺 SDK）。
 - **範圍**：只載入專案層級的 skill（`setting_sources=["project"]`），不吃使用者層級的同名 skill；預先允許
   `Skill / Bash / Read / Write / Edit / WebFetch / WebSearch`，其餘工具一律拒絕（不會卡在沒人回答的提示）。
 - **失敗會以非 0 結束**，cron 看得到：
@@ -142,14 +174,18 @@ uv run src/agent_run.py | uv run src/send_email.py   # stdout 是 render_email.p
   | --- | --- |
   | 0 | 成功 |
   | 1 | agent 失敗：API 錯誤、超過 `--max-turns`、SDK 例外 |
-  | 2 | 沒裝 `claude-agent-sdk` |
+  | 2 | 環境問題：沒裝 `claude-agent-sdk`，或沒有可用的 OAuth token |
   | 3 | 報告沒產出：`reports/<date>.md` 沒在這次執行更新，或當天 curated 沒有收錄項目（抓取全失敗） |
   | 4 | `render_email.py` 失敗（報告格式不符） |
+  | 5 | **授權失敗**：token 無效或已過期，到 `/auth` 重新貼上新的 token |
+  | 6 | **額度用完**：訂閱的使用額度或帳務問題；不會改用別的認證，等額度恢復再跑 |
 
 - **用量與成本**：結束時從 SDK 的結果取 token 與 `total_cost_usd`，寫成 `stage: claude`、`runner: sdk` 的紀錄
   （label 沿用 `NEWSLETTER_RUN_LABEL`）。和其他 stage 一樣，**要開 debug 才會寫**：`NEWSLETTER_DEBUG=1`。
-  stderr 的 `[agent]` 摘要行不受 debug 影響，一定會進 log。`summary` 的 `via` 欄分辨路線（`sdk` / `chat`），
-  `usd` 欄只有 `sdk` 路線有值。跑幾天後用它調整 `--max-turns` 與評估成本：
+  stderr 的 `[agent]` 摘要行（含估算費用 `est_usd`）不受 debug 影響，一定會進 log。`summary` 的 `via` 欄分辨路線（`sdk` / `chat`），
+  `usd` 欄只有 `sdk` 路線有值。**走訂閱額度時 `total_cost_usd` 只是 SDK 依牌價估的 API 等價費用，不是實際扣款**
+  （[官方說明](https://code.claude.com/docs/en/agent-sdk/cost-tracking)：client-side estimate），拿來比較每次執行的相對用量即可。
+  跑幾天後用它調整 `--max-turns`，並看看一次晨報吃掉多少訂閱額度：
 
   ```bash
   NEWSLETTER_DEBUG=1 uv run src/agent_run.py
@@ -157,7 +193,7 @@ uv run src/agent_run.py | uv run src/send_email.py   # stdout 是 render_email.p
   ```
 
 - 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
-- 自我檢查：`uv run src/agent_run.py --selftest`。
+- 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`。
 
 ## 量測（debug）
 
