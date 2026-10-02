@@ -22,7 +22,8 @@ src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫
 src/static/                web.py 用的 CSS／JS（web.css、web.js），由 /static/<檔名> 提供
 src/run.py                 入口 CLI
 run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → 寄信，失敗留 log、exit 非 0
-deploy/                    部署範本：systemd 單元、cloudflared 設定、env 範本（見「部署到家用 host」）
+Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume（見「部署到家用 host」）
+deploy/                    不用 Docker 時的範本：systemd 單元、cloudflared 設定、env 範本
 pyproject.toml, uv.lock    Python 版本與依賴，由 uv 管理（.python-version 固定直譯器版本）
 data/raw/<date>.jsonl      當日原始抓取（append，供回溯）
 data/curated/<date>.json   排序後的收錄清單 ← SKILL 的輸入
@@ -99,7 +100,7 @@ uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀�
 - 頁面的標記狀態只看 `feedback.jsonl`；還留在 Markdown 裡、尚未用 `feedback.py` 收集的標記不會顯示，先跑一次 `feedback.py` 匯入即可。
 - 網頁與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊。
   `uv run src/feedback.py --selftest` 涵蓋這部分（含併發 append）。
-- **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`。
+- **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，但不 publish 任何 port，見「部署到家用 host」）。
 - `POST /feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
@@ -109,7 +110,7 @@ uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀�
 
 ## 排程
 
-正式排程見下一節「部署到家用 host」。`run_daily.sh` 是唯一的排程入口，systemd timer 與 cron 都呼叫它：
+正式排程見「部署到家用 host」。`run_daily.sh` 是唯一的排程入口，Docker 的 scheduler 容器、systemd timer 與 cron 都呼叫它：
 
 ```cron
 0 8 * * * $HOME/newsletter-ops/run_daily.sh
@@ -170,19 +171,93 @@ uv run src/agent_run.py | uv run src/send_email.py   # stdout 是 render_email.p
 - 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
 - 自我檢查：`uv run src/agent_run.py --selftest`。
 
-## 部署到家用 host（Cloudflare Tunnel + Access）
+## 部署到家用 host（Docker + Cloudflare Tunnel + Access）
 
-目標：pipeline 與 web 跑在家裡一台 Linux host（VM 也行，要 systemd），經 Cloudflare 在外也能看晨報、按 👍／👎。本機只當測試區。
+目標：pipeline 與 web 跑在家裡一台 host（VM 也行，只要有 Docker），經 Cloudflare 在外也能看晨報、按 👍／👎。本機只當測試區。
+host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。
 
 ```
-手機／筆電 ──https──▶ Cloudflare（Access：只放行你的 email）──Tunnel──▶ cloudflared ──▶ 127.0.0.1:8787 web.py
-                                                                     （host 不開任何對外 port）
+手機／筆電 ──https──▶ Cloudflare（Access：只放行你的 email）──Tunnel──▶ cloudflared 容器 ──http://web:8787──▶ web 容器
+                                                                    scheduler 容器：每天 08:00 跑 run_daily.sh
+                                    三個容器共用一個 volume：newsletter-data（reports／data／state／logs）
 ```
 
-`web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。所以 service 只 bind `127.0.0.1`，
-Tunnel 的網域一定要先掛上 Access 再對外使用（步驟 5 的檢查不能跳過）。
+- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，非 root 執行）。
+- `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
+  不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
+- `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。compose 沒有 `ports:`，host 不會開任何 port；
+  請不要為了方便從 host 直接開而加上 `ports:`，那會繞過 Access（host 本機仍連得到容器的內部 IP，所以這台 host 本身要信得過）。Tunnel 的網域一定要先掛上 Access 再對外使用（步驟 2、4）。
+- 機密只放 `.env`：`web` 容器拿不到任何機密，`scheduler` 拿不到 `TUNNEL_TOKEN`。
 
-以下假設 repo 在 `~/newsletter-ops`，單元檔的路徑就是照這個寫的。
+**1. 取得程式與機密**
+
+```bash
+git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops && cd ~/newsletter-ops
+cp .env.example .env && chmod 600 .env
+$EDITOR .env      # GMAIL_USER、GMAIL_APP_PASSWORD、ANTHROPIC_API_KEY；TUNNEL_TOKEN 在下一步取得
+```
+
+**2. Cloudflare：建立 Tunnel 與 Access（Access 一定要做）**
+
+Zero Trust 後台（介面名稱依版本略有不同）：
+
+1. Networks → Tunnels → Create a tunnel → 類型選 Cloudflared，取個名字。畫面上的安裝指令不用理它，
+   只複製其中的 token（那串很長的字）貼到 `.env` 的 `TUNNEL_TOKEN`。
+2. 該 Tunnel 的 Public Hostname：填你的網域 `news.example.com`，Service 類型選 `HTTP`、URL 填 `web:8787`（compose 服務名稱）。DNS 紀錄會自動建立。
+3. Access → Applications → Add an application → Self-hosted：Application domain 填同一個 `news.example.com`；
+   Policy 一條就好：Action = Allow，Include = Emails，只填你自己的 email。不要留 Everyone 之類的其他 policy。
+
+**3. 啟動**
+
+```bash
+docker compose up -d --build
+docker compose ps        # web 要是 healthy、cloudflared 是 Up，PORTS 欄全空
+```
+
+`.env` 缺 `GMAIL_USER`、`GMAIL_APP_PASSWORD`、`ANTHROPIC_API_KEY`、`TUNNEL_TOKEN` 任何一個，`docker compose` 會直接報錯並指出缺哪個。
+
+**4. 驗收**
+
+| 檢查 | 預期 |
+| --- | --- |
+| `docker compose ps` | `web` healthy、`cloudflared` Up、PORTS 欄是空的 |
+| `docker compose logs cloudflared` | 出現 `Registered tunnel connection`（沒有就是 token 有誤或出站連不到 Cloudflare） |
+| 另一個網路（手機關 Wi-Fi）開 `https://news.example.com` | 先到 Access 登入頁，用你的 email 登入後看到晨報（還沒有報告時是「還沒產出」頁） |
+| **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
+| **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
+| 登入後按一則的 👍 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
+
+頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、有費用）。
+Access 登入逾時後按 👍 會顯示「儲存失敗」，重新整理頁面重新登入即可。
+
+**5. 日常操作**
+
+```bash
+docker compose logs -f scheduler                  # 排程輸出；run_daily.sh 失敗時會附上 logs/ 的最後 20 行
+docker compose exec web ls reports                # volume 裡的報告
+docker compose run --rm scheduler ./run_daily.sh  # 手動跑一次完整流程（抓取 → agent → 寄信）
+docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test scheduler uv run src/agent_run.py   # 只產報告、不寄信
+git pull && docker compose up -d --build          # 更新（interests.md、config/、程式都在映像裡，要重 build）
+```
+
+- 每天 08:00（Asia/Taipei，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器停機時錯過的那一次不會補跑，要補就手動跑。
+- `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
+
+**6. 資料保存：不保存**
+
+生成物——`reports/`、`data/`、`state/`（含 `state/feedback.jsonl`）、`logs/`——都在 volume `newsletter-data` 裡（容器內 `/var/lib/newsletter`），
+換容器、換映像、`docker compose down` 都還在；**`docker compose down -v` 或 `docker volume rm` 才會刪掉**。
+不備份、不進版控，volume 壞了就重來：抓取結果可以重跑，`seen.json` 沒了只會讓時間窗內已報過的新聞再出現一次，
+`feedback.jsonl` 只是改 `config/interests.md` 時參考的中間產物（本 repo 是 public，標記含標題與來源，更不該推上來）。
+
+版控裡只有程式、設定與 `interests.md`；這些是唯一需要「持續更新」的內容，`git pull` 後重 build 即可（見上）。
+要新增被追蹤的檔案就加進 `.gitignore` 的白名單（`.dockerignore` 也是白名單，要進映像的話一併加）。
+之後若想留報告歷史，另外決定備份方式（例如定期把 volume 打包），不要放進這個 repo。
+
+### 不用 Docker：systemd + cloudflared
+
+不想用 Docker 時，直接在 host 上跑。單元檔與設定範本在 `deploy/`，以下假設 repo 在 `~/newsletter-ops`，需要 [uv](https://docs.astral.sh/uv/)
+（見「環境（uv）」）。資料保存的決定同上：生成物留在 host 的 `reports/`、`data/`、`state/`、`logs/`，不備份、不進版控。
 
 **1. 取得程式**
 
@@ -257,16 +332,6 @@ Application domain 填 `news.example.com`；Policy 一條就好：Action = Allow
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上 `uv run src/agent_run.py`
 （或上面的手動排程）先產一份。
 Access 登入逾時後按 👍 會顯示「儲存失敗」，重新整理頁面重新登入即可。
-
-**7. 資料保存：不保存**
-
-host 上的生成物——`reports/`、`data/`、`state/`（含 `state/feedback.jsonl`）、`logs/`——不備份、不進版控，host 壞了就重來：
-抓取結果可以重跑，`seen.json` 沒了只會讓時間窗內已報過的新聞再出現一次，`feedback.jsonl` 只是改 `config/interests.md`
-時參考的中間產物（本 repo 是 public，標記含標題與來源，更不該推上來）。
-
-版控裡只有程式、設定與 `interests.md`；這些是 host 上唯一需要「持續更新」的內容，
-照步驟 3 的更新指令 `git pull` 即可，要新增被追蹤的檔案就加進 `.gitignore` 的白名單。
-之後若想留報告歷史，另外決定備份方式，不要放進這個 repo。
 
 ## 量測（debug）
 

@@ -14,6 +14,13 @@
 !/uv.lock
 !/.python-version
 
+# Docker 部署（真正的機密放 .env，已被上面的 * 擋掉，只放行範本）
+!/Dockerfile
+!/.dockerignore
+!/docker-compose.yml
+!/.env.example
+!/docker/*.sh
+
 # 部署範本（systemd 單元、cloudflared 設定、env 範本；真正的機密不放這裡）
 !/deploy/*.service
 !/deploy/*.timer
