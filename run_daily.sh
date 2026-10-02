@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 排程入口（systemd timer / cron 都呼叫這支）。每日依序：
-#   1. run.py --no-report            抓取 → data/curated/<date>.json
-#   2. agent_run.py                  Claude Agent SDK 寫 reports/<date>.md（#2；還沒有這支就略過 2、3）
-#   3. render_email.py | send_email.py   轉 email HTML 並寄出
+#   1. run.py --no-report      抓取 → data/curated/<date>.json
+#   2. agent_run.py            Claude Agent SDK 依 news-digest skill 寫 reports/<date>.md 並渲染 email HTML；
+#                              stdout 是 render_email.py 的那行 JSON
+#   3. send_email.py           讀上一步的 JSON，寄出
 # 任一步失敗就停下並以該步的 exit code 結束（systemd 會標成 failed），過程全進 logs/<YYYY-MM>.log。
 # 機密從 env 檔載入，預設 ~/.config/newsletter-ops/env（NEWSLETTER_ENV_FILE 可改），權限必須是 600。
 # 額外參數（如 --lookback 72）會轉給 run.py。
@@ -11,6 +12,8 @@ cd "$(dirname "$0")"
 mkdir -p logs
 LOG="logs/$(date +%Y-%m).log"
 stamp() { echo "=== $(date '+%F %T') === $*"; }
+# cron／systemd 的 PATH 很精簡，找不到 uv 的常見安裝位置先補上
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 ENV_FILE="${NEWSLETTER_ENV_FILE:-$HOME/.config/newsletter-ops/env}"
 if [ -e "$ENV_FILE" ]; then
@@ -29,14 +32,13 @@ fi
 exec >> "$LOG" 2>&1
 trap 'status=$?; stamp "失敗，exit $status：$BASH_COMMAND"; exit $status' ERR
 
-stamp "python3 src/run.py --no-report $*"
-python3 src/run.py --no-report "$@"
-if [ -f src/agent_run.py ]; then
-  stamp "python3 src/agent_run.py"
-  python3 src/agent_run.py
-  stamp "python3 src/render_email.py | python3 src/send_email.py"
-  python3 src/render_email.py | python3 src/send_email.py
-else
-  stamp "略過寫報告與寄信：src/agent_run.py 還不存在（等 #2）"
-fi
+# --locked：uv.lock 跟 pyproject.toml 對不上就直接失敗，不要在排程裡自己改鎖檔
+stamp "uv run src/run.py --no-report $*"
+uv run --locked src/run.py --no-report "$@"
+stamp "uv run src/agent_run.py"
+# 不用 agent_run | send_email：pipefail 下 agent 失敗時 send_email 也會因讀不到 JSON 而崩，
+# 蓋掉 agent 的 exit code（1～4）並多印一段無關的 traceback。先收進變數，失敗就停在這裡。
+meta=$(uv run --locked src/agent_run.py)
+stamp "uv run src/send_email.py"
+printf '%s\n' "$meta" | uv run --locked src/send_email.py
 stamp "完成"

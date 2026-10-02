@@ -10,6 +10,9 @@
 !/README.md
 !/ISSUES.md
 !/run_daily.sh
+!/pyproject.toml
+!/uv.lock
+!/.python-version
 
 # 部署範本（systemd 單元、cloudflared 設定、env 範本；真正的機密不放這裡）
 !/deploy/*.service
@@ -29,14 +32,13 @@
 # 報告撰寫的 skill
 !/.claude/skills/**
 
-# 人工標記：由報告的 mark 註解收集而來，重建不了，要進版控
-!/state/feedback.jsonl
-
-# 刻意不放行（可重建或每日產出）：
+# 刻意不放行（每日生成物與本機狀態；本 repo 是 public，也不留備份，見 README「資料保存」）：
 #   data/raw、data/curated   每日抓取結果，可重跑
-#   reports/                 每日報告（含尚未收集的 mark，見 README）
+#   reports/                 每日報告
+#   state/feedback.jsonl     人工標記，只是更新 config/interests.md 時參考的中間產物
 #   state/seen.json          去重記憶，本機狀態
 #   logs/                    執行紀錄與 metrics
+#   .venv/                   uv 建的環境
 #   __pycache__/、.DS_Store  由 * 自動忽略
 
 # 放行規則之後再擋一次系統雜物（例如 .claude/skills/** 會連 .DS_Store 一起放行）
