@@ -8,6 +8,7 @@
   python3 src/metrics.py claude [--since ISO] [--until ISO] [--session FILE]
       從 Claude Code 的 session 逐則紀錄（~/.claude/projects/<專案>/<session>.jsonl）
       統計最近一次 news-digest 開始到現在的 token、API 回合數、工具呼叫次數與耗時。
+      由 agent_run.py 呼叫的 session（NEWSLETTER_RUNNER=sdk）用量由它自己記，這裡直接略過。
   python3 src/metrics.py summary [天數] [--all]
       彙整最近幾天的紀錄，每次執行一行；預設只列 label=prod，--all 連測試一起列。
 """
@@ -136,6 +137,9 @@ def claude_usage(path: Path, since: datetime | None = None, until: datetime | No
 
 
 def cmd_claude(argv: list[str]) -> int:
+    if os.environ.get("NEWSLETTER_RUNNER") == "sdk":
+        print("[metrics] 由 agent_run.py 記錄用量，略過", file=sys.stderr)
+        return 0
     args = dict(zip(argv[::2], argv[1::2]))
     path = Path(args["--session"]) if "--session" in args else None
     if path is None:
@@ -169,8 +173,8 @@ def cmd_summary(argv: list[str]) -> int:
     show_all = "--all" in argv
     days = int(next((a for a in argv if a.isdigit()), 7))
     today = datetime.now(TZ).date()
-    header = (f"{'date':10} {'time':5} {'label':5} {'fetch':>7} {'curate':>7} {'claude':>7} {'render':>7} "
-              f"{'in+cache':>10} {'output':>8} {'turns':>5}  top tools")
+    header = (f"{'date':10} {'time':5} {'label':5} {'via':4} {'fetch':>7} {'curate':>7} {'claude':>7} {'render':>7} "
+              f"{'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6}  top tools")
     print(header)
     print("-" * len(header))
     for n in range(days - 1, -1, -1):
@@ -187,10 +191,12 @@ def cmd_summary(argv: list[str]) -> int:
             tok = c.get("tokens", {})
             top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
             sec = lambda s: f"{run[s]['seconds']:.1f}" if s in run else "-"  # noqa: E731
-            print(f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} "
+            via = c.get("runner", "chat") if c else "-"  # sdk＝agent_run.py；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
+            usd = f"{c['total_cost_usd']:.2f}" if c.get("total_cost_usd") is not None else "-"  # 只有 sdk 路線拿得到
+            print(f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} "
                   f"{sec('fetch'):>7} {sec('curate'):>7} {sec('claude'):>7} {sec('render'):>7} "
                   f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
-                  f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5}  {top}")
+                  f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6}  {top}")
     return 0
 
 
