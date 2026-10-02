@@ -17,6 +17,7 @@ src/metrics.py             量測層：debug 開啟時記錄各階段耗時與 C
 src/render_email.py        email 層：條列版報告 Markdown → inline-CSS HTML（reports/<date>.html）
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/feedback.py            回饋層：從報告收集人工標記
+src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl（stdlib，無登入）
 src/run.py                 入口 CLI
 run_daily.sh               cron 包裝
 data/raw/<date>.jsonl      當日原始抓取（append，供回溯）
@@ -40,6 +41,7 @@ python3 src/run.py               # 完整跑一次（含模板版報告）
 python3 src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
 python3 src/run.py --lookback 72 # 放寬時間窗到 72 小時
 python3 src/feedback.py          # 收集報告裡填的標記
+python3 src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 python3 src/render_email.py | python3 src/send_email.py   # 寄出當日 email
 ```
 
@@ -63,6 +65,21 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每�
 
 看完隨手填 `+`（有用）、`-`（沒用）、`++` / `--`（強烈），Markdown 預覽時不會顯示。
 跑 `python3 src/feedback.py` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
+
+### 用網頁標記（取代手改 Markdown）
+
+```bash
+python3 src/web.py               # 開 http://127.0.0.1:8787/
+python3 src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀回
+```
+
+`/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則末尾有 👍／👎，按下即 append 一行到
+`state/feedback.jsonl`（欄位同 `feedback.py`，同一則以最後一筆為準），不必再跑 `feedback.py`。
+
+- 只有兩級：👍 = `+`、👎 = `-`。再按一次同一顆＝取消（寫成 `mark: ""`），按另一顆＝覆蓋。
+- 頁面的標記狀態只看 `feedback.jsonl`；還留在 Markdown 裡、尚未用 `feedback.py` 收集的標記不會顯示。
+- **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`。
+- `POST /feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。

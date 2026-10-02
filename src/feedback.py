@@ -13,6 +13,7 @@
 
 之後跑 `python3 src/feedback.py` 收集到 state/feedback.jsonl。
 同一則重複標記時以最新一次為準（以檔案日期排序）。
+也可以改用 `python3 src/web.py` 在網頁上按 👍／👎，直接寫同一個檔（取消記為 mark ""）。
 """
 from __future__ import annotations
 
@@ -58,6 +59,32 @@ def load_curated_index(curated_dir: Path) -> dict[str, dict]:
     return index
 
 
+def build_row(uid: str, mark: str, report: str, item: dict, collected_at: str | None = None) -> dict:
+    """feedback.jsonl 的一列。web.py 與 collect() 共用，欄位只在這裡定義。"""
+    return {
+        "uid": uid,
+        "mark": mark,
+        "report": report,
+        "collected_at": collected_at or datetime.now(timezone.utc).isoformat(),
+        "title": item.get("title", ""),
+        "source": item.get("source", ""),
+        "topic": item.get("topic", ""),
+        "score": item.get("score"),
+        "matched_keywords": item.get("matched_keywords", []),
+    }
+
+
+def read_feedback(path: Path) -> dict[str, dict]:
+    """讀 feedback.jsonl，同一個 uid 以最後一筆為準（檔案可能是 append 出來的）。"""
+    rows: dict[str, dict] = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                rows[row["uid"]] = row
+    return rows
+
+
 def collect() -> int:
     marks = scan_reports(ROOT / "reports")
     if not marks:
@@ -68,28 +95,12 @@ def collect() -> int:
     out = ROOT / "state" / "feedback.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    existing: dict[str, dict] = {}
-    if out.exists():
-        for line in out.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                existing[row["uid"]] = row
+    existing = read_feedback(out)
 
     now = datetime.now(timezone.utc).isoformat()
     added = updated = 0
     for uid, rec in marks.items():
-        item = index.get(uid, {})
-        row = {
-            "uid": uid,
-            "mark": rec["mark"],
-            "report": rec["report"],
-            "collected_at": now,
-            "title": item.get("title", ""),
-            "source": item.get("source", ""),
-            "topic": item.get("topic", ""),
-            "score": item.get("score"),
-            "matched_keywords": item.get("matched_keywords", []),
-        }
+        row = build_row(uid, rec["mark"], rec["report"], index.get(uid, {}), now)
         prior = existing.get(uid)
         if prior is None:
             added += 1
