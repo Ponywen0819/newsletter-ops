@@ -1,0 +1,2 @@
+# 只有 src/agent_run.py（無人值守執行）需要；抓取、整理、寄信都不依賴第三方套件
+claude-agent-sdk>=0.2.123
