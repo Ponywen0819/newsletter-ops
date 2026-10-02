@@ -5,6 +5,7 @@
 port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
 頁面：/ 當日晨報、/reports 歷史列表、/reports/<date> 單日晨報、POST /feedback。
+樣式與前端腳本在 src/static/（web.css、web.js），由 /static/<檔名> 提供。
 版型沿用 render_email.render_body()；每則 `<!-- mark: uid=... -->` 的位置換成 👍／👎。
 
 回饋規則：只有 `+`（👍）、`-`（👎）兩級；再按一次同一顆＝取消，按另一顆＝覆蓋。
@@ -47,50 +48,11 @@ UID_RE = re.compile(r"[0-9a-f]{16}")
 MARKS = {"+", "-", ""}  # "" ＝ 取消
 MAX_BODY = 4096
 
-CSS = """
-nav{max-width:640px;margin:0 auto 12px;font-size:13px}
-nav a{color:#2563eb;text-decoration:none;margin-right:12px}
-.fb{display:flex;align-items:center;gap:8px;margin:8px 0 2px}
-.fb-btn{font-size:16px;line-height:1;padding:7px 14px;border:1px solid #d1d5db;border-radius:999px;
-  background:#fff;cursor:pointer;filter:grayscale(1);opacity:.55}
-.fb-btn:hover{opacity:1}
-.fb-btn:disabled{cursor:wait}
-.fb-btn[aria-pressed=true]{filter:none;opacity:1;background:#eff6ff;border-color:#2563eb}
-.fb-btn[data-mark="-"][aria-pressed=true]{background:#fef2f2;border-color:#dc2626}
-.fb-msg{font-size:12px;color:#dc2626}
-.reports{list-style:none;margin:0;padding:0}
-.reports li{padding:10px 0;border-bottom:1px solid #e5e7eb;font-size:14px;line-height:1.5}
-.reports a{color:#2563eb;text-decoration:none;font-weight:600;margin-right:10px}
-.reports span{color:#6b7280}
-"""
-
-SCRIPT = """
-document.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('.fb-btn');
-  if (!btn) return;
-  const box = btn.closest('.fb');
-  const msg = box.querySelector('.fb-msg');
-  const buttons = box.querySelectorAll('.fb-btn');
-  // 按已亮起的那顆＝取消；按另一顆＝覆蓋
-  const mark = btn.getAttribute('aria-pressed') === 'true' ? '' : btn.dataset.mark;
-  buttons.forEach((b) => { b.disabled = true; });
-  msg.textContent = '';
-  try {
-    const res = await fetch('/feedback', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({uid: box.dataset.uid, mark}),
-    });
-    if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
-    buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mark === data.mark)));
-  } catch (err) {
-    msg.textContent = '儲存失敗，請重試';
-  } finally {
-    buttons.forEach((b) => { b.disabled = false; });
-  }
-});
-"""
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATIC_TYPES = {  # 白名單：只供這兩個檔，網址不會直接對應檔案路徑
+    "web.css": "text/css; charset=utf-8",
+    "web.js": "text/javascript; charset=utf-8",
+}
 
 
 def level(mark: str) -> str:
@@ -107,14 +69,15 @@ def buttons_html(uid: str, mark: str) -> str:
             f'<span class="fb-msg" role="status"></span></div>')
 
 
-def page_html(title: str, inner: str, script: str = "") -> str:
+def page_html(title: str, inner: str, interactive: bool = False) -> str:
     nav = '<nav><a href="/">今日晨報</a><a href="/reports">歷史晨報</a></nav>'
+    script = '<script src="/static/web.js" defer></script>' if interactive else ""
     return (f'<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>{html.escape(title)}</title><style>{CSS}</style></head>'
+            f'<title>{html.escape(title)}</title>'
+            f'<link rel="stylesheet" href="/static/web.css">{script}</head>'
             f'<body style="{render_email.S["body"]}">{nav}'
-            f'<div style="{render_email.S["card"]}">{inner}</div>'
-            f'{f"<script>{script}</script>" if script else ""}</body></html>')
+            f'<div style="{render_email.S["card"]}">{inner}</div></body></html>')
 
 
 def notice_html(title: str, message: str) -> str:
@@ -163,7 +126,7 @@ class Site:
         marks = self.marks()
         body, _, _ = render_email.render_body(
             path.read_text(encoding="utf-8"), lambda uid: buttons_html(uid, marks.get(uid, "")))
-        return page_html(f"每日晨間簡報 {date}", body, SCRIPT)
+        return page_html(f"每日晨間簡報 {date}", body, interactive=True)
 
     def today_page(self) -> str:
         date = self.today()
@@ -183,7 +146,7 @@ class Site:
             headline = render_email.plain(re.sub(r"^[>\s]*\**今日頭條[：:]\**\s*", "", line))
             rows.append(f'<li><a href="/reports/{date}">{date}</a><span>{html.escape(headline)}</span></li>')
         inner = (f'<h1 style="{render_email.S["h1"]}">歷史晨報</h1>'
-                 f'<ul class="reports" style="margin-top:16px">{"".join(rows) or "<li>目前還沒有任何晨報。</li>"}</ul>')
+                 f'<ul class="reports">{"".join(rows) or "<li>目前還沒有任何晨報。</li>"}</ul>')
         return page_html("歷史晨報", inner)
 
     def _find_report(self, uid: str) -> str | None:
@@ -227,12 +190,13 @@ class Handler(BaseHTTPRequestHandler):
         if not getattr(self.server, "quiet", False):
             super().log_message(format, *args)
 
-    def _send(self, status: int, body: str, ctype: str = "text/html; charset=utf-8") -> None:
+    def _send(self, status: int, body: str, ctype: str = "text/html; charset=utf-8",
+              cache: str = "no-store") -> None:
         data = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")  # 標記狀態會變，不要被瀏覽器快取
+        self.send_header("Cache-Control", cache)  # 頁面的標記狀態會變，預設不快取
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         self.wfile.write(data)
@@ -249,6 +213,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.site.list_page())
             elif m := re.fullmatch(r"/reports/(\d{4}-\d{2}-\d{2})", path):
                 self._send(200, self.site.report_page(m[1]))
+            elif path.startswith("/static/"):
+                name = path[len("/static/"):]
+                if name not in STATIC_TYPES:
+                    raise NotFound(path)
+                # 檔案很小；no-cache ＝ 每次向伺服器確認，改了 CSS／JS 重新整理就生效
+                self._send(200, (STATIC_DIR / name).read_text(encoding="utf-8"), STATIC_TYPES[name], "no-cache")
             else:
                 raise NotFound(path)
         except NotFound:
@@ -374,6 +344,19 @@ def selftest() -> None:
             # 巢狀子項目（"  - 細節"）之後的按鈕要回到最外層 <li>，不能掛在子項目裡
             assert re.search(r"細節</li></ul><div class=\"fb\" data-uid=\"%s\"" % uid_a, page), page
             assert "class=\"fb\"" not in render_email.render(md)[0]
+
+            # CSS／JS 是獨立的靜態檔：頁面只引用、不內嵌；只供白名單裡的檔名
+            assert '<link rel="stylesheet" href="/static/web.css">' in page
+            assert '<script src="/static/web.js" defer></script>' in page
+            assert "<style" not in page and "<script>" not in page
+            for name, ctype, needle in (("web.css", "text/css", ".fb-btn"), ("web.js", "text/javascript", "/feedback")):
+                with urllib.request.urlopen(f"{base}/static/{name}") as resp:
+                    assert resp.status == 200 and resp.headers["Content-Type"].startswith(ctype), resp.headers
+                    assert resp.headers["Cache-Control"] == "no-cache"
+                    assert needle in resp.read().decode("utf-8")
+            assert all(get(f"/static/{n}")[0] == 404 for n in ("nope.css", "web.py", "../web.py", ""))
+            listing = get("/reports")[1]  # 沒有按鈕的頁面只載 CSS，不載 JS
+            assert "/static/web.css" in listing and "web.js" not in listing and "<style" not in listing
 
             # /reports：新到舊、略過非日期檔名、顯示頭條
             status, listing = get("/reports")

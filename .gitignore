@@ -11,8 +11,10 @@
 !/ISSUES.md
 !/run_daily.sh
 
-# 程式
+# 程式（含 web.py 用的 CSS／JS）
 !/src/*.py
+!/src/static/*.css
+!/src/static/*.js
 
 # 設定：主設定、興趣檔、來源清單
 !/config/*.json

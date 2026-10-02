@@ -18,6 +18,7 @@ src/render_email.py        email 層：條列版報告 Markdown → inline-CSS H
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/feedback.py            回饋層：從報告收集人工標記
 src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl（stdlib，無登入）
+src/static/                web.py 用的 CSS／JS（web.css、web.js），由 /static/<檔名> 提供
 src/run.py                 入口 CLI
 run_daily.sh               cron 包裝
 data/raw/<date>.jsonl      當日原始抓取（append，供回溯）
