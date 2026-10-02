@@ -20,7 +20,7 @@ src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest sk
 src/feedback.py            回饋層：從報告收集人工標記
 src/run.py                 入口 CLI
 run_daily.sh               cron 包裝
-requirements.txt           agent_run.py 的依賴（claude-agent-sdk）
+pyproject.toml, uv.lock    Python 版本與依賴，由 uv 管理（.python-version 固定直譯器版本）
 data/raw/<date>.jsonl      當日原始抓取（append，供回溯）
 data/curated/<date>.json   排序後的收錄清單 ← SKILL 的輸入
 reports/<date>.md          最終報告
@@ -34,15 +34,29 @@ logs/<YYYY-MM>.log         cron 執行紀錄
 抓取、去重、排序、arXiv 會議判斷、HTML 版型全部可重現；挑選重點與條列改寫由 Claude
 依 `news-digest` skill 讀 curated JSON 後改寫 `reports/<date>.md`。
 
+## 環境（uv）
+
+Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-version` 固定直譯器（3.11）、`uv.lock` 鎖定依賴。
+安裝 uv 後不必自己建 venv，`uv run` 第一次執行會自動建立 `.venv` 並裝好依賴；沒有該版本的 Python 時 uv 會自動下載。
+
+```bash
+uv sync               # 依 uv.lock 同步環境
+uv add <套件>         # 新增依賴（會更新 pyproject.toml 與 uv.lock，兩個檔案一起 commit）
+uv lock --upgrade     # 升級鎖定的版本
+```
+
+抓取、整理、寄信都只用標準庫，只有 `src/agent_run.py` 需要第三方套件（`claude-agent-sdk`）。
+skill 裡由 agent 呼叫的 `run.py`、`render_email.py` 等因此直接用 `python3`，不依賴 uv 環境。
+
 ## 使用
 
 ```bash
-python3 src/run.py --dry-run     # 只測來源連通性
-python3 src/run.py               # 完整跑一次（含模板版報告）
-python3 src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
-python3 src/run.py --lookback 72 # 放寬時間窗到 72 小時
-python3 src/feedback.py          # 收集報告裡填的標記
-python3 src/render_email.py | python3 src/send_email.py   # 寄出當日 email
+uv run src/run.py --dry-run     # 只測來源連通性
+uv run src/run.py               # 完整跑一次（含模板版報告）
+uv run src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
+uv run src/run.py --lookback 72 # 放寬時間窗到 72 小時
+uv run src/feedback.py          # 收集報告裡填的標記
+uv run src/render_email.py | uv run src/send_email.py   # 寄出當日 email
 ```
 
 `send_email.py` 讀環境變數 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（Google 帳號的應用程式密碼，需先開兩步驟驗證）、
@@ -64,7 +78,7 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每�
 ```
 
 看完隨手填 `+`（有用）、`-`（沒用）、`++` / `--`（強烈），Markdown 預覽時不會顯示。
-跑 `python3 src/feedback.py` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
+跑 `uv run src/feedback.py` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
@@ -77,10 +91,12 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每�
 0 8 * * * /Users/pony/project/newssletter-ops/run_daily.sh --no-report
 ```
 
+`run_daily.sh` 內部用 `uv run --locked` 執行，並替 cron 精簡的 PATH 補上 uv 常見的安裝位置（`~/.local/bin`、`~/.cargo/bin`、Homebrew）。`--locked` 讓鎖檔與 `pyproject.toml` 對不上時直接失敗，不會在排程裡自己改鎖檔。
+
 macOS 的 cron 需要「完整磁碟取用權」，或改用 launchd。抓完之後在 Claude 對話中
 執行 `/news-digest`，讀當日 curated JSON 寫出條列版晨間簡報，並用 `render_email.py` 產出 email HTML。
 
-arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`，自我檢查：`python3 src/curate.py`、`python3 src/render_email.py --selftest`。
+arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`，自我檢查：`uv run src/curate.py`、`uv run src/render_email.py --selftest`。
 
 ## 無人值守（Claude Agent SDK）
 
@@ -88,11 +104,11 @@ arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解
 `.claude/skills/news-digest/SKILL.md`，與在對話裡打 `/news-digest` 並存、結果一致。
 
 ```bash
-pip install -r requirements.txt           # 或 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+uv sync                                   # 依 uv.lock 建立 .venv 並裝好依賴（uv run 也會自動做）
 export ANTHROPIC_API_KEY=sk-ant-...       # 按 token 計費
-python3 src/agent_run.py                  # 抓取 → 寫報告 → render_email.py，約數分鐘
-python3 src/agent_run.py --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
-python3 src/agent_run.py | python3 src/send_email.py   # stdout 是 render_email.py 的那行 JSON，可直接寄信
+uv run src/agent_run.py                  # 抓取 → 寫報告 → render_email.py，約數分鐘
+uv run src/agent_run.py --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
+uv run src/agent_run.py | uv run src/send_email.py   # stdout 是 render_email.py 的那行 JSON，可直接寄信
 ```
 
 - **認證與計費**：SDK 底層是隨套件附帶的 claude CLI。有 `ANTHROPIC_API_KEY` 就按 token 計費；沒設會退回本機
@@ -115,23 +131,23 @@ python3 src/agent_run.py | python3 src/send_email.py   # stdout 是 render_email
   `usd` 欄只有 `sdk` 路線有值。跑幾天後用它調整 `--max-turns` 與評估成本：
 
   ```bash
-  NEWSLETTER_DEBUG=1 python3 src/agent_run.py
-  python3 src/metrics.py summary 14
+  NEWSLETTER_DEBUG=1 uv run src/agent_run.py
+  uv run src/metrics.py summary 14
   ```
 
 - 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
-- 自我檢查：`python3 src/agent_run.py --selftest`。
+- 自我檢查：`uv run src/agent_run.py --selftest`。
 
 ## 量測（debug）
 
-`config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 python3 src/run.py ...`），每個階段會寫一行到
+`config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run src/run.py ...`），每個階段會寫一行到
 `logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`render`，
-以及 news-digest 跑完後由 `python3 src/metrics.py claude` 從 Claude Code session 紀錄統計的 token 與工具耗時。
+以及 news-digest 跑完後由 `python3 src/metrics.py claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
 
 ```bash
-python3 src/metrics.py summary 14         # 最近 14 天，每次正式執行一行
-python3 src/metrics.py summary 14 --all   # 連測試執行一起列
-NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test python3 src/run.py --no-report   # 測試執行，紀錄標 test
+uv run src/metrics.py summary 14         # 最近 14 天，每次正式執行一行
+uv run src/metrics.py summary 14 --all   # 連測試執行一起列
+NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run src/run.py --no-report   # 測試執行，紀錄標 test
 ```
 
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
@@ -168,7 +184,7 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test python3 src/run.py --no-report   # 
 weight，錯誤訊息會指出是哪個檔的哪個來源，程式以 exit code 2 結束。
 
 ```bash
-python3 src/run.py --list-sources   # 不連網，列出載入結果與停用項目
+uv run src/run.py --list-sources   # 不連網，列出載入結果與停用項目
 ```
 
 改 `interests.md` 時順手看一次 `keywords`——前者是判讀用的自然語言，後者是評分用的
@@ -217,7 +233,7 @@ python3 src/run.py --list-sources   # 不連網，列出載入結果與停用項
 Hugging Face / Google Research 給 1.2。數量由配額控制。
 
 ```bash
-python3 src/run.py --list-sources   # 不連網，列出載入結果與停用項目
+uv run src/run.py --list-sources   # 不連網，列出載入結果與停用項目
 ```
 
 改 `interests.md` 時順手看一次 `keywords`——前者是判讀用的自然語言，後者是評分用的

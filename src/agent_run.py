@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """無人值守入口：用 Claude Agent SDK 跑同一份 news-digest skill，不必開 Claude app。
 
-用法：python3 src/agent_run.py [--max-turns N]
-      python3 src/agent_run.py --selftest
+用法：uv run src/agent_run.py [--max-turns N]
+      uv run src/agent_run.py --selftest
 
 抓取、寫報告、render_email.py 都由 agent 依 SKILL.md 完成；本程式負責啟動、記錄用量、驗收產出。
 stdout 只印 render_email.py 那行 JSON（subject / headline / html_path），可直接接 send_email.py，
@@ -161,7 +161,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
     if sdk is None:
-        print("缺 claude-agent-sdk：pip install -r requirements.txt", file=sys.stderr)
+        print("缺 claude-agent-sdk：請用 `uv run src/agent_run.py` 執行（或先 `uv sync`）", file=sys.stderr)
         return 2
     if args.selftest:
         selftest()
