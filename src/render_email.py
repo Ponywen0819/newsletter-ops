@@ -16,12 +16,15 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 import metrics  # noqa: E402
+from feedback import MARK_RE  # noqa: E402
+
 FONT = ("-apple-system,BlinkMacSystemFont,'PingFang TC','Noto Sans TC',"
         "'Microsoft JhengHei','Helvetica Neue',Arial,sans-serif")
 S = {
@@ -57,8 +60,12 @@ def plain(text: str) -> str:
     return re.sub(r"\*\*|`", "", LINK.sub(r"\1", text)).strip()
 
 
-def render(markdown: str) -> tuple[str, str, str]:
-    """回傳 (html, subject 短語, 今日頭條)。格式不符時 raise ValueError。"""
+def render_body(markdown: str, mark_html: Callable[[str], str] | None = None) -> tuple[str, str, str]:
+    """回傳 (卡片內文 html, subject 短語, 今日頭條)。格式不符時 raise ValueError。
+
+    mark_html 給 web.py 用：傳入的話，每個 `<!-- mark: ... uid=... -->` 的位置會換成
+    mark_html(uid) 回傳的 html（email 不傳，註解照舊整行略過）。
+    """
     body: list[str] = []
     links: list[tuple[str, str]] = []
     subject = headline = ""
@@ -75,7 +82,11 @@ def render(markdown: str) -> tuple[str, str, str]:
         if comment:
             if comment[1].strip().startswith("subject:"):
                 subject = comment[1].strip()[len("subject:"):].strip()
-            continue  # mark 等註解不進 email，也不打斷清單
+            mark = MARK_RE.search(line) if mark_html else None
+            if mark:
+                close_lists(1)  # 按鈕掛在該則最外層那個 <li> 裡，不要掛進巢狀的子項目
+                body.append(mark_html(mark[2]))
+            continue  # 其餘註解不進頁面，也不打斷清單
         bullet = re.match(r"^( *)[-*] (.+)$", line)
         if bullet:
             level = len(bullet[1]) // 2 + 1
@@ -122,9 +133,15 @@ def render(markdown: str) -> tuple[str, str, str]:
                  f'{html.escape(t)}</a></li>' for t, u in sources]
         body.append("</ol>")
 
+    return "".join(body), subject, headline
+
+
+def render(markdown: str) -> tuple[str, str, str]:
+    """回傳 (完整 email html, subject 短語, 今日頭條)。格式不符時 raise ValueError。"""
+    body, subject, headline = render_body(markdown)
     page = (f'<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
-            f'<body style="{S["body"]}"><div style="{S["card"]}">{"".join(body)}</div></body></html>')
+            f'<body style="{S["body"]}"><div style="{S["card"]}">{body}</div></body></html>')
     return page, subject, headline
 
 

@@ -18,6 +18,8 @@ src/render_email.py        email 層：條列版報告 Markdown → inline-CSS H
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 src/feedback.py            回饋層：從報告收集人工標記
+src/web.py                 Web 層：瀏覽晨報、每則 👍／👎 直接寫進 feedback.jsonl（stdlib，無登入）
+src/static/                web.py 用的 CSS／JS（web.css、web.js），由 /static/<檔名> 提供
 src/run.py                 入口 CLI
 run_daily.sh               cron 包裝
 pyproject.toml, uv.lock    Python 版本與依賴，由 uv 管理（.python-version 固定直譯器版本）
@@ -56,6 +58,7 @@ uv run src/run.py               # 完整跑一次（含模板版報告）
 uv run src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run src/run.py --lookback 72 # 放寬時間窗到 72 小時
 uv run src/feedback.py          # 收集報告裡填的標記
+uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 uv run src/render_email.py | uv run src/send_email.py   # 寄出當日 email
 ```
 
@@ -79,6 +82,24 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每�
 
 看完隨手填 `+`（有用）、`-`（沒用）、`++` / `--`（強烈），Markdown 預覽時不會顯示。
 跑 `uv run src/feedback.py` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
+報告裡的標記只匯入 `feedback.jsonl` 還沒有紀錄的那一則；已有紀錄的（含網頁標的）以 jsonl 為準，不會被覆蓋。
+
+### 用網頁標記（取代手改 Markdown）
+
+```bash
+uv run src/web.py               # 開 http://127.0.0.1:8787/
+uv run src/web.py --selftest    # 按鈕插入、寫入／覆蓋／取消的讀回
+```
+
+`/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則末尾有 👍／👎，按下即 append 一行到
+`state/feedback.jsonl`（欄位同 `feedback.py`，同一則以最後一筆為準），不必再跑 `feedback.py`。
+
+- 只有兩級：👍 = `+`、👎 = `-`。再按一次同一顆＝取消（寫成 `mark: ""`），按另一顆＝覆蓋。
+- 頁面的標記狀態只看 `feedback.jsonl`；還留在 Markdown 裡、尚未用 `feedback.py` 收集的標記不會顯示，先跑一次 `feedback.py` 匯入即可。
+- 網頁與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊。
+  `uv run src/feedback.py --selftest` 涵蓋這部分（含併發 append）。
+- **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`。
+- `POST /feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
