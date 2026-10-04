@@ -4,13 +4,18 @@
 用法：python3 src/render_email.py [YYYY-MM-DD] [--selftest]
 stdout 印一行 JSON：{"subject", "headline", "html_path"}，給排程 prompt 寄信用。
 
-環境變數 NEWSLETTER_BASE_URL（對外網址，如 https://news.example.com）有設的話，每則（有 mark 註解的）
+環境變數 NEWSLETTER_BASE_URL（對外網址，如 https://news.example.com）有設的話，每則主要新聞（有 mark 註解的）
 底下加 👍／👎 兩個連結，指向 <base>/feedback/<uid>?v=…。連結只開確認頁，按了確認才寫入（信箱的安全掃描會自動開連結）。
 沒設就不加按鈕，本機測試不受影響。
 
+與網頁一致：只有主要新聞（標題段落＋清單）放連結，「其餘收錄」那種沒有標題段落的整張單行清單不放；
+併了多篇文章的新聞會連著好幾行 mark 註解（每篇一個 uid），只放一組連結，uid 用逗號接起來：
+<base>/feedback/<uid>,<uid>?v=…，確認頁一次對每個 uid 各投一票。
+
 版型寫死在這裡而不是讓 Claude 每天手寫 HTML：每天長得一樣、不花 token。
 email client 會剝掉 <style>，所以 CSS 全部 inline。
-只認 SKILL.md 規定的 Markdown 子集（# / ## / > / - / 兩格縮排的 - / 粗體 / 連結 / <!-- -->）。
+Markdown 不在這裡解析：報告交給 report_data.parse_report（網頁也用同一份結構），這裡只負責把結構排成 inline-CSS HTML。
+內容規則（哪些條目可以投票、併了多篇的新聞有幾個 uid）都在那一份結構裡，版型改動只動這個檔案與網頁的 CSS。
 """
 from __future__ import annotations
 
@@ -28,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 import metrics  # noqa: E402
-from feedback import MARK_RE  # noqa: E402
+from report_data import parse_report  # noqa: E402
 
 BASE_URL_ENV = "NEWSLETTER_BASE_URL"
 
@@ -54,112 +59,87 @@ S = {
                "border-radius:16px;background:#f9fafb;font-size:13px;line-height:1.4;color:#374151;"
                "text-decoration:none;"),
 }
-LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
-COMMENT = re.compile(r"^\s*<!--(.*?)-->\s*$")
 
 
-def inline(text: str, links: list[tuple[str, str]]) -> str:
-    for title, url in LINK.findall(text):
-        links.append((title.strip("*"), url))
-    out = html.escape(text, quote=False)
-    # 網址在上一行已被 escape 過一次；先還原再 escape，href 才不會變成 &amp;amp;
-    out = LINK.sub(lambda m: f'<a href="{html.escape(html.unescape(m[2]))}" style="{S["a"]}">{m[1]}</a>', out)
-    out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
-    return re.sub(r"`([^`]+)`", lambda m: f'<code style="{S["code"]}">{m[1]}</code>', out)
+def inline(nodes: list[dict]) -> str:
+    """report_data 的 inline 節點 → HTML。文字 escape 一次；網址在 href 裡 escape（& → &amp;）。"""
+    out: list[str] = []
+    for node in nodes:
+        kind = node["type"]
+        if kind == "text":
+            out.append(html.escape(node["text"], quote=False))
+        elif kind == "code":
+            out.append(f'<code style="{S["code"]}">{html.escape(node["text"], quote=False)}</code>')
+        elif kind == "strong":
+            out.append(f"<strong>{inline(node['children'])}</strong>")
+        else:  # link
+            out.append(f'<a href="{html.escape(node["href"])}" style="{S["a"]}">{inline(node["children"])}</a>')
+    return "".join(out)
 
 
-def plain(text: str) -> str:
-    return re.sub(r"\*\*|`", "", LINK.sub(r"\1", text)).strip()
+def feedback_buttons(uids: list[str], base_url: str) -> str:
+    """👍／👎 連結。v 的 + 要寫成 %2B，否則 query 會把它當成空白。
+    uids 有好幾個＝併了多篇文章的新聞：路徑用逗號接起來，確認頁對每個 uid 各投一票。"""
+    path = quote(",".join(uids), safe=",")
 
-
-def feedback_buttons(uid: str, base_url: str) -> str:
-    """👍／👎 連結。v 的 + 要寫成 %2B，否則 query 會把它當成空白。"""
     def link(vote: str, label: str) -> str:
-        href = html.escape(f"{base_url}/feedback/{uid}?v={quote(vote)}")
+        href = html.escape(f"{base_url}/feedback/{path}?v={quote(vote)}")
         return f'<a href="{href}" style="{S["fb_btn"]}">{label}</a>'
     return f'<div style="{S["fb"]}">{link("+", "👍 有用")}{link("-", "👎 沒用")}</div>'
 
 
-def render_body(markdown: str, base_url: str = "") -> tuple[str, str, str]:
-    """回傳 (卡片內文 html, subject 短語, 今日頭條)。格式不符時 raise ValueError。
+def list_html(items: list[dict], votable: bool, base_url: str) -> str:
+    """巢狀清單。按鈕放在項目的巢狀子清單之後、仍在這個 <li> 裡（與網頁一致）。
+    base_url 空（本機測試）或這張清單不可投票（votable，見 report_data）就不放。"""
+    out = [f'<ul style="{S["ul"]}">']
+    for item in items:
+        out.append(f'<li style="{S["li"]}">{inline(item["inline"])}')
+        if item.get("children"):
+            out.append(list_html(item["children"], votable, base_url))
+        if votable and base_url and item.get("uids"):
+            out.append(feedback_buttons(list(dict.fromkeys(item["uids"])), base_url))  # 重複的 uid 只算一次
+        out.append("</li>")
+    out.append("</ul>")
+    return "".join(out)
+
+
+def block_html(block: dict, base_url: str) -> str:
+    kind = block["type"]
+    if kind == "title":
+        out = f'<h1 style="{S["h1"]}">{html.escape(block["title"])}</h1>'
+        if block["date"]:
+            out += f'<p style="{S["date"]}">{block["date"].replace("-", "/")}</p>'
+        return out
+    if kind == "heading":
+        return f'<h2 style="{S["h2"]}">{inline(block["inline"])}</h2>'
+    if kind == "callout":
+        return f'<div style="{S["callout"]}">{inline(block["inline"])}</div>'
+    if kind == "paragraph":
+        return f'<p style="{S["p"]}">{inline(block["inline"])}</p>'
+    if kind == "list":
+        return list_html(block["items"], block["votable"], base_url)
+    # mark：沒掛在任何清單項目底下的獨立 mark
+    return feedback_buttons([block["uid"]], base_url) if block["votable"] and base_url else ""
+
+
+def render_report(report: dict, base_url: str = "") -> tuple[str, str, str]:
+    """report_data.parse_report 的結構 → (完整 email html, subject 短語, 今日頭條)。
     base_url 非空才加 👍／👎 連結（要是 http(s):// 開頭、結尾不帶斜線）。"""
-    body: list[str] = []
-    links: list[tuple[str, str]] = []
-    subject = headline = ""
-    depth = 0  # 目前開著幾層 <ul>
-
-    def close_lists(to: int = 0) -> None:
-        nonlocal depth
-        while depth > to:
-            body.append("</li></ul>")
-            depth -= 1
-
-    for line in markdown.splitlines():
-        comment = COMMENT.match(line)
-        if comment:
-            if comment[1].strip().startswith("subject:"):
-                subject = comment[1].strip()[len("subject:"):].strip()
-            mark = MARK_RE.search(line)
-            if mark and base_url:
-                close_lists(1)  # 按鈕放在最外層項目的巢狀子項目之後（與 report_data 的 uids 一致）
-                body.append(feedback_buttons(mark[2], base_url))
-            continue  # 其餘註解不進頁面，也不打斷清單
-        bullet = re.match(r"^( *)[-*] (.+)$", line)
-        if bullet:
-            level = len(bullet[1]) // 2 + 1
-            if level > depth:
-                body.append(f'<ul style="{S["ul"]}">' * (level - depth))
-                depth = level
-            else:
-                close_lists(level)
-                body.append("</li>")
-            body.append(f'<li style="{S["li"]}">{inline(bullet[2], links)}')
-            continue
-        close_lists()
-        if not line.strip():
-            continue
-        if line.startswith("# "):
-            title = line[2:].strip()
-            date = re.search(r"\d{4}-\d{2}-\d{2}$", title)
-            if date:
-                title = title[:date.start()].strip()
-            body.append(f'<h1 style="{S["h1"]}">{html.escape(title)}</h1>')
-            if date:
-                body.append(f'<p style="{S["date"]}">{date[0].replace("-", "/")}</p>')
-        elif line.startswith("## "):
-            body.append(f'<h2 style="{S["h2"]}">{inline(line[3:].strip(), links)}</h2>')
-        elif line.startswith(">"):
-            text = line.lstrip("> ").strip()
-            if "今日頭條" in text:
-                headline = plain(re.sub(r"^\**今日頭條[：:]\**\s*", "", text))
-            body.append(f'<div style="{S["callout"]}">{inline(text, links)}</div>')
-        else:
-            body.append(f'<p style="{S["p"]}">{inline(line.strip(), links)}</p>')
-    close_lists()
-
-    if not headline:
-        raise ValueError("找不到「> **今日頭條：** …」那一行")
-    if not subject:
-        raise ValueError("找不到 <!-- subject: … --> 註解")
-
-    seen: set[str] = set()
-    sources = [(t, u) for t, u in links if not (u in seen or seen.add(u))]
-    if sources:
+    body = [block_html(block, base_url) for block in report["blocks"]]
+    if report["sources"]:
         body.append(f'<h2 style="{S["h2"]}">資料來源</h2><ol style="{S["ul"]}">')
-        body += [f'<li style="{S["src_li"]}"><a href="{html.escape(u)}" style="{S["a"]}">'
-                 f'{html.escape(t)}</a></li>' for t, u in sources]
+        body += [f'<li style="{S["src_li"]}"><a href="{html.escape(src["url"])}" style="{S["a"]}">'
+                 f'{html.escape(src["title"])}</a></li>' for src in report["sources"]]
         body.append("</ol>")
-
-    return "".join(body), subject, headline
+    page = (f'<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+            f'<body style="{S["body"]}"><div style="{S["card"]}">{"".join(body)}</div></body></html>')
+    return page, report["subject"], report["headline"]
 
 
 def render(markdown: str, base_url: str = "") -> tuple[str, str, str]:
-    """回傳 (完整 email html, subject 短語, 今日頭條)。格式不符時 raise ValueError。"""
-    body, subject, headline = render_body(markdown, base_url)
-    page = (f'<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">'
-            f'<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
-            f'<body style="{S["body"]}"><div style="{S["card"]}">{body}</div></body></html>')
-    return page, subject, headline
+    """Markdown → (完整 email html, subject 短語, 今日頭條)。格式不符時 raise ValueError（parse_report）。"""
+    return render_report(parse_report(markdown), base_url)
 
 
 def selftest() -> None:
@@ -198,19 +178,44 @@ def selftest() -> None:
     except ValueError:
         pass
 
-    # 回饋連結：沒設 base_url 就沒有；有設的話每個 mark 一組，按鈕在巢狀子項目之後、仍在最外層項目裡
+    # 回饋連結：沒設 base_url 就沒有；有設的話每則主要新聞一組，按鈕在巢狀子項目之後、仍在最外層項目裡
     assert "/feedback/" not in page
     page, _, _ = render(md, "https://news.example.com")
-    assert page.count("/feedback/") == 4 and page.count("<ul") == page.count("</ul>") == 3
-    for uid in ("0123456789abcdef", "0123456789abcdee"):
-        assert f"https://news.example.com/feedback/{uid}?v=%2B" in page and f"/feedback/{uid}?v=-" in page
+    assert page.count("/feedback/") == 2 and page.count("<ul") == page.count("</ul>") == 3
+    uid = "0123456789abcdef"
+    assert f"https://news.example.com/feedback/{uid}?v=%2B" in page and f"/feedback/{uid}?v=-" in page
     assert "👍 有用" in page and "mark:" not in page
     assert re.search(r"背景：B<div[^>]*><a [^>]*0123456789abcdef.*?</div></li></ul>", page), page
-    assert re.search(r"半句<div[^>]*><a [^>]*0123456789abcdee.*?</div></li><li[^>]*><strong>", page), page
+    # 「其餘收錄」（緊接在 ## 後面的整張單行清單）不放連結（與網頁一致），但 mark 註解不能漏進頁面
+    assert "0123456789abcdee" not in page and re.search(r"半句</li><li[^>]*><strong>", page), page
     # mark 直接接在巢狀項目後：巢狀清單先收掉，按鈕仍在最外層項目裡
     nested, _, _ = render(md.replace("- 背景：B\n", "").replace("  - 細節\n", "  - 細節\n  - 更深\n"), "https://n.example")
     assert re.search(r"更深</li></ul><div[^>]*><a [^>]*0123456789abcdef.*?</div></li></ul>", nested), nested
     assert nested.count("<ul") == nested.count("</ul>") and nested.count("<li") == nested.count("</li>")
+
+    # 併了多篇文章的新聞：連著好幾行 mark（含重複的 uid、夾著別的註解），只放一組連結，uid 用逗號接；
+    # 其餘收錄不放；其餘收錄之後的主要新聞照樣放（不能被前面的狀態帶壞）
+    merged_md = md.replace(
+        "<!-- mark:    uid=0123456789abcdef -->\n",
+        "<!-- mark:    uid=0123456789abcdef -->\n<!-- 別的註解 -->\n<!-- mark:    uid=1111111111111111 -->\n"
+        "<!-- mark:    uid=0123456789abcdef -->\n",
+    ) + """
+## 商業與市場
+
+**[另一則](https://a.example/3)**
+
+- 背景：C
+<!-- mark:    uid=2222222222222222 -->
+"""
+    merged, _, _ = render(merged_md, "https://news.example.com")
+    base = "https://news.example.com/feedback/"
+    assert merged.count("/feedback/") == 4, merged  # 併過的一組（👍＋👎）＋另一則一組
+    assert merged.count(f"{base}0123456789abcdef,1111111111111111?v=%2B") == 1
+    assert merged.count(f"{base}0123456789abcdef,1111111111111111?v=-") == 1
+    assert merged.count(f"{base}2222222222222222?v=%2B") == 1 and "0123456789abcdee" not in merged
+    assert re.search(r"背景：B<div[^>]*><a [^>]*0123456789abcdef,1111111111111111.*?</div></li></ul>", merged), merged
+    assert merged.count("<ul") == merged.count("</ul>") == 4 and merged.count("<li") == merged.count("</li>")
+    assert "/feedback/" not in render(merged_md)[0] and "mark:" not in merged
     print("ok")
 
 

@@ -18,7 +18,7 @@ API（都是 JSON；前端的型別在 web/src/types.ts）：
   POST /api/feedback          {uid, mark}             👍／👎
   GET  /api/auth              {state, ...}            OAuth token 的狀態（只限本機）
   POST /api/auth/token|test|revoke                    貼上、測試、刪除 OAuth token（只限本機）
-晨報的 Markdown 由 report_data.py 解析成結構，版型由前端負責；email 版型仍由 render_email.py 產生，兩者互不影響。
+晨報的 Markdown 由 report_data.py 解析成結構（網頁與 email 共用同一份），版型由前端負責；email 版型由 render_email.py 排版，兩者互不影響。
 
 email 裡的 👍／👎 連結（render_email.py，需設 NEWSLETTER_BASE_URL）指向 /feedback/<uid>?v=…：
 GET 只畫確認頁（信箱的安全掃描會自動開連結，所以 GET 絕不寫入），頁面上再按一次才 POST /api/feedback。
@@ -69,7 +69,6 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import auth_store  # noqa: E402
 import feedback  # noqa: E402
-import render_email  # noqa: E402
 import report_data  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
@@ -257,7 +256,7 @@ class Site:
         for date in self.report_dates():
             text = self._report_path(date).read_text(encoding="utf-8")
             line = next((ln for ln in text.splitlines() if "今日頭條" in ln), "")
-            headline = render_email.plain(re.sub(r"^[>\s]*\**今日頭條[：:]\**\s*", "", line))
+            headline = report_data.plain(re.sub(r"^[>\s]*\**今日頭條[：:]\**\s*", "", line))
             rows.append({"date": date, "headline": headline})
         return {"reports": rows}
 
