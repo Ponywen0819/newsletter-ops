@@ -1,0 +1,27 @@
+name: selftest
+
+# 各模組的自我檢查都只用標準庫、不連網，所以不裝任何套件。
+# agent_run.py 的自我檢查需要 claude-agent-sdk、前端要 npm test，不在這裡跑。
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - run: python3 src/curate.py
+      - run: python3 src/fetch.py
+      - run: python3 src/metrics.py --selftest
+      - run: python3 src/render_email.py --selftest
+      - run: python3 src/send_email.py --selftest
+      - run: python3 src/feedback.py --selftest
+      - run: python3 src/auth_store.py --selftest
+      - run: python3 src/report_data.py --selftest
+      - run: python3 src/web.py --selftest
+      - run: python3 src/run.py --list-sources

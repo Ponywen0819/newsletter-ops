@@ -236,6 +236,7 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
 - 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
 - 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`、
   `python3 src/report_data.py --selftest`；前端 `cd web && npm test`。
+  push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
 
 ## 部署到家用 host（Docker + Cloudflare Tunnel + Access）
 

@@ -45,6 +45,9 @@
 # 報告撰寫的 skill
 !/.claude/skills/**
 
+# GitHub Actions（push 時跑自我檢查）
+!/.github/**
+
 # 刻意不放行（每日生成物與本機狀態；本 repo 是 public，也不留備份，見 README「資料保存」）：
 #   web/dist/                前端建置產物，`cd web && npm run build` 重建
 #   web/node_modules/        套件，`npm install` 重建
