@@ -120,7 +120,7 @@
 - [x] V-GOLD（同 T4 的 `new` 覆寫）六項全部相同
 - [x] V-DOCKER：建置成功；容器內 `python src/web.py --selftest` 通過（CMD 仍是舊路徑，靠 venv 的 python 能 import 新套件）
 - [x] `git log --follow` 抽查兩個被搬的檔案追得到歷史
-- [ ] **使用者審閱後才繼續**
+- [x] **使用者審閱後才繼續**（使用者回「繼續 T7」）
 
 ## Phase 2：反轉
 
@@ -205,12 +205,12 @@
 
 ### ◆ Checkpoint B：核心流程完成
 
-- [ ] `src/` 只剩 `web.py`；V-CI 全綠；`check_boundaries.py` 通過，**反向驗證一次**（暫時讓 notify import agent → 必須失敗，再還原）
-- [ ] V-GOLD 六項全部相同（`RENDER`／`FETCH` 用最終指令，`WEB` 此時仍是 `uv run --locked src/web.py`）
-- [ ] V-DOCKER：建置成功；`docker run … newsletter-render --selftest`、`newsletter-fetch --list-sources` 成功
-- [ ] 假 `uv` 驗證 `run_daily.sh`：四步用的是最終指令名稱（`newsletter-fetch`／`newsletter-agent`／`newsletter-render`／`newsletter-send`）
-- [ ] 實際抓取煙霧測試一次（`NEWSLETTER_RUN_LABEL=test`，工作區的 `data/`、`state/`；對真實 RSS 唯讀請求）：`data/curated/<date>.json` 的頂層欄位與 `items[]` 欄位與舊程式同一天的結果相同（只比結構，不比內容）；`state/seen.json` 寫在 `ROOT/state/`
-- [ ] **使用者審閱後才繼續**
+- [x] `src/` 只剩 `web.py`；V-CI 全綠；`check_boundaries.py` 通過，**反向驗證一次**（暫時讓 notify import agent → 必須失敗，再還原）
+- [x] V-GOLD 六項全部相同（`RENDER`／`FETCH` 用最終指令，`WEB` 此時仍是 `uv run --locked src/web.py`）
+- [x] V-DOCKER：建置成功；`docker run … newsletter-render --selftest`、`newsletter-fetch --list-sources` 成功
+- [x] 假 `uv` 驗證 `run_daily.sh`：四步用的是最終指令名稱（`newsletter-fetch`／`newsletter-agent`／`newsletter-render`／`newsletter-send`）
+- [x] 實際抓取煙霧測試一次（`NEWSLETTER_RUN_LABEL=test`，工作區的 `data/`、`state/`；對真實 RSS 唯讀請求）：`data/curated/<date>.json` 的頂層欄位與 `items[]` 欄位與舊程式同一天的結果相同（只比結構，不比內容）；`state/seen.json` 寫在 `ROOT/state/`
+- [x] **使用者審閱後才繼續**（使用者指示「直接全部做完」，略過這個停點）
 
 ## Phase 4：web
 
