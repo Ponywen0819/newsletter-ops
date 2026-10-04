@@ -19,7 +19,7 @@ src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 src/auth_store.py          認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
-src/report_data.py         報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
+shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
 src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
 web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
 src/run.py                 入口 CLI
@@ -145,7 +145,7 @@ npm run typecheck
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
 - 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時**只改 `report_data.py`**：網頁與 email 共用同一個解析器。哪些條目可以投票
   （`list`／`mark` 區塊的 `votable`：主要新聞才有、「其餘收錄」沒有）也在那裡決定，兩邊版型只負責照畫。
-  `python3 src/report_data.py --selftest` 驗證解析與 `votable`，`python3 src/render_email.py --selftest` 驗證 email 輸出。
+  `uv run python -m newsletter_shared.report_data --selftest` 驗證解析與 `votable`，`python3 src/render_email.py --selftest` 驗證 email 輸出。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
@@ -247,7 +247,7 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
 
 - 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
 - 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`、
-  `python3 src/report_data.py --selftest`；前端 `cd web && npm test`。
+  `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web && npm test`。
   push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
 
 ## 部署到家用 host（Docker + Cloudflare Tunnel + Access）

@@ -74,17 +74,17 @@
   - Files：（搬）`feedback.py`；（改）`src/report.py`、`src/report_data.py`、`src/auth_store.py`、`src/web.py`、`shared/pyproject.toml`、`selftest.yml`、`SKILL.md`、`README.md`
   - Scope：M（1 搬 ＋ 多個一行 import 改動）
 
-- [ ] **T4：`report_data` 搬進 `shared` ＋ 新增 `newsletter-report-check`**
+- [x] **T4：`report_data` 搬進 `shared` ＋ 新增 `newsletter-report-check`**
   - Description：報告格式的唯一解析與驗證者搬進 shared，並提供 CLI，讓 agent 之後能自我修正報告（取代「跑 render 看有沒有報錯」）。
   - Acceptance：
-    - [ ] `src/report_data.py` → `shared/.../report_data.py`；importer 改：`src/render_email.py`、`src/web.py`
-    - [ ] `newsletter-report-check [YYYY-MM-DD]`：讀 `ROOT/reports/<date>.md`（預設今天），成功 exit 0；`ValueError` → 訊息到 stderr、exit 1。`[project.scripts]`、`--selftest` 保留
-    - [ ] selftest 新增：缺 `<!-- subject: … -->`、缺「今日頭條」兩種報告各自 exit 1
-    - [ ] `parse_report` 對 fixture 的輸出與基準完全相同
+    - [x] `src/report_data.py` → `shared/.../report_data.py`；importer 改：`src/render_email.py`、`src/web.py`
+    - [x] `newsletter-report-check [YYYY-MM-DD]`：讀 `ROOT/reports/<date>.md`（預設今天），成功 exit 0；`ValueError` → 訊息到 stderr、exit 1。`[project.scripts]`、`--selftest` 保留
+    - [x] selftest 新增：缺 `<!-- subject: … -->`、缺「今日頭條」兩種報告各自 exit 1
+    - [x] `parse_report` 對 fixture 的輸出與基準完全相同
   - Verification：
-    - [ ] V-GOLD（`new` 用 `RENDER="uv run --locked src/render_email.py" WEB="uv run --locked src/web.py" FETCH="uv run --locked src/run.py"`）：`parse.json`、`render*.html`、`api.json` 與 old 相同
-    - [ ] `uv run --locked newsletter-report-check 2026-10-04` → 0；對刪掉 subject／頭條的複本 → 1
-    - [ ] V-CI、`check_boundaries.py`
+    - [x] V-GOLD（`new` 用 `RENDER="uv run --locked src/render_email.py" WEB="uv run --locked src/web.py" FETCH="uv run --locked src/run.py"`）：`parse.json`、`render*.html`、`api.json` 與 old 相同
+    - [x] `uv run --locked newsletter-report-check 2026-10-04` → 0；對刪掉 subject／頭條的複本 → 1
+    - [x] V-CI、`check_boundaries.py`
   - Dependencies：T3
   - Files：（搬）`report_data.py`；（改）`src/render_email.py`、`src/web.py`、`shared/pyproject.toml`、`selftest.yml`、`README.md`
   - Scope：M

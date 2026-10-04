@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """報告資料層：reports/<date>.md → 結構化資料（給 web 前端用）。
 
-用法：python3 src/report_data.py [--selftest]
+用法：uv run newsletter-report-check [YYYY-MM-DD]      # 驗證 reports/<date>.md 的格式（預設今天），agent 寫完報告後用它自我修正
+      uv run python -m newsletter_shared.report_data --selftest
 
 晨報只有這一個解析器：web 前端（web/，Vite + React）拿這裡解析好的結構自己排版，
 email（render_email.py）也吃同一份結構、排成 inline-CSS HTML，所以格式（SKILL.md 規定的 Markdown 子集）或內容規則
@@ -32,8 +33,12 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from newsletter_shared.feedback import MARK_RE
+from newsletter_shared.paths import ROOT
 
 LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 COMMENT = re.compile(r"^\s*<!--(.*?)-->\s*$")
@@ -201,6 +206,23 @@ def iter_items(report: dict):
             yield from walk(block["items"])
 
 
+def check(argv: list[str] | None = None, root: Path = ROOT) -> int:
+    """newsletter-report-check：報告格式正確 exit 0；找不到檔或格式不符 exit 1，原因印到 stderr。"""
+    args = sys.argv[1:] if argv is None else argv
+    stamp = args[0] if args else f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}"
+    src = root / "reports" / f"{stamp}.md"
+    if not src.exists():
+        print(f"找不到 {src}", file=sys.stderr)
+        return 1
+    try:
+        parse_report(src.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        print(f"{src.name} 格式不符：{exc}", file=sys.stderr)
+        return 1
+    print(f"{src.name} 格式正確")
+    return 0
+
+
 def selftest() -> None:
     # inline：連結、粗體、行內碼、跳脫；網址的 & 保持原樣（跳脫交給前端框架）
     def flat(nodes: list[dict]) -> str:
@@ -297,6 +319,24 @@ def selftest() -> None:
     # 併了多篇文章：連著好幾行 mark，掛在同一個項目的 uids 上（每篇一個）
     merged = parse_report(head + "**[標題](https://a.example/1)**\n- a\n<!-- mark:    uid=%s -->\n<!-- mark:    uid=%s -->\n" % (uid_a, uid_b))
     assert merged["blocks"][-1]["items"][-1]["uids"] == [uid_a, uid_b] and merged["blocks"][-1]["votable"] is True
+
+    # newsletter-report-check：好報告 0；缺 subject、缺今日頭條、沒有檔案都是 1 並說明原因
+    import contextlib, io, tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "reports").mkdir()
+        good = "> **今日頭條：** x\n<!-- subject: s -->\n"
+        for name, text in {"good": good, "no_subject": good.replace("<!-- subject: s -->\n", ""),
+                           "no_headline": good.replace("> **今日頭條：** x\n", "")}.items():
+            (root / "reports" / f"{name}.md").write_text(text, encoding="utf-8")
+        def run(name: str) -> tuple[int, str]:
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                return check([name], root), err.getvalue()
+        assert run("good") == (0, "")
+        assert run("no_subject")[0] == 1 and "subject" in run("no_subject")[1]
+        assert run("no_headline")[0] == 1 and "今日頭條" in run("no_headline")[1]
+        assert run("missing")[0] == 1 and "找不到" in run("missing")[1]
     print("ok")
 
 
@@ -304,5 +344,5 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
     else:
-        print("用法：python3 src/report_data.py --selftest", file=sys.stderr)
+        print("用法：python -m newsletter_shared.report_data --selftest（驗證報告請用 newsletter-report-check）", file=sys.stderr)
         raise SystemExit(2)

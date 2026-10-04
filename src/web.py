@@ -69,7 +69,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import auth_store  # noqa: E402
 from newsletter_shared import feedback  # noqa: E402
-import report_data  # noqa: E402
+from newsletter_shared import report_data  # noqa: E402
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
