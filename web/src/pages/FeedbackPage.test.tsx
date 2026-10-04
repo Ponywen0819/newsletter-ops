@@ -30,50 +30,50 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
   it('只是開頁面不會寫入：顯示標題與確認鈕，沒有任何 POST', async () => {
     const net = open('?v=%2B')
     expect(await screen.findByText('「重點新聞」')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '確認標為 👍 有用' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '確認標為 有用' })).toBeEnabled()
     expect(posts(net)).toEqual([])
   })
 
   it('按確認才 POST；成功後改顯示已記下，按鈕消失', async () => {
     const net = open('?v=%2B', { 'POST /api/feedback': () => ({ json: { uid: UID, mark: '+' } }) })
-    await userEvent.click(await screen.findByRole('button', { name: '確認標為 👍 有用' }))
-    expect(await screen.findByText('已記下 👍 有用。')).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 有用' }))
+    expect(await screen.findByText('已記下 有用。')).toBeInTheDocument()
     expect(posts(net).map((c) => c.body)).toEqual([{ uid: UID, mark: '+' }])
     expect(screen.queryByRole('button', { name: /確認標為/ })).toBeNull()
     expect(screen.getByRole('link', { name: '回 2026-09-28 晨報' })).toHaveAttribute('href', '/reports/2026-09-28')
   })
 
-  it('v=- 是 👎；手打的 ?v=+（被解成空白）當 👍', async () => {
+  it('v=- 是沒用；手打的 ?v=+（被解成空白）當有用', async () => {
     open('?v=-')
-    expect(await screen.findByRole('button', { name: '確認標為 👎 沒用' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '確認標為 沒用' })).toBeInTheDocument()
     document.body.innerHTML = ''
     open('?v=+')
-    expect(await screen.findByRole('button', { name: '確認標為 👍 有用' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '確認標為 有用' })).toBeInTheDocument()
   })
 
   it('已經是同一個標記：只顯示已記下，沒有按鈕；不同的標記：說明會覆蓋', async () => {
     const same = open('?v=%2B', { [`GET /api/feedback/${UID}`]: () => ({ json: target('+') }) })
-    expect(await screen.findByText('已記下 👍 有用。')).toBeInTheDocument()
+    expect(await screen.findByText('已記下 有用。')).toBeInTheDocument()
     expect(screen.queryByRole('button')).toBeNull()
     expect(posts(same)).toEqual([])
   })
 
-  it('目前是 👎、信裡按 👍：說明會改成 👍，確認後送 +', async () => {
+  it('目前是沒用、信裡按有用：說明會改成有用，確認後送 +', async () => {
     const net = open('?v=%2B', {
       [`GET /api/feedback/${UID}`]: () => ({ json: target('-') }),
       'POST /api/feedback': () => ({ json: { uid: UID, mark: '+' } }),
     })
-    expect(await screen.findByText('目前標記是 👎 沒用，確認後會改成 👍 有用。')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '確認標為 👍 有用' }))
-    expect(await screen.findByText('已記下 👍 有用。')).toBeInTheDocument()
+    expect(await screen.findByText('目前標記是 沒用，確認後會改成 有用。')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '確認標為 有用' }))
+    expect(await screen.findByText('已記下 有用。')).toBeInTheDocument()
     expect(posts(net)[0].body).toEqual({ uid: UID, mark: '+' })
   })
 
   it('寫入失敗：顯示錯誤、按鈕還在可以重試，不會假裝成功', async () => {
     open('?v=%2B', { 'POST /api/feedback': () => ({ status: 500, json: { error: 'server error' } }) })
-    await userEvent.click(await screen.findByRole('button', { name: '確認標為 👍 有用' }))
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 有用' }))
     expect(await screen.findByText(/儲存失敗/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '確認標為 👍 有用' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '確認標為 有用' })).toBeEnabled()
     expect(screen.queryByText(/已記下/)).toBeNull()
   })
 

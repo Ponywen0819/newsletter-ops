@@ -2,9 +2,10 @@ import { useState } from 'react'
 import { api } from '../api'
 import type { Mark } from '../types'
 
-const BUTTONS: { mark: '+' | '-'; emoji: string; label: string }[] = [
-  { mark: '+', emoji: '👍', label: '有用' },
-  { mark: '-', emoji: '👎', label: '沒用' },
+// 24×24 viewBox 的 chevron：向上＝有用、向下＝沒用。顏色吃 currentColor，亮不亮只靠 CSS 切換
+const BUTTONS: { mark: '+' | '-'; icon: string; label: string }[] = [
+  { mark: '+', icon: 'M6 15l6-6 6 6', label: '有用' },
+  { mark: '-', icon: 'M6 9l6 6 6-6', label: '沒用' },
 ]
 
 interface Props {
@@ -15,7 +16,7 @@ interface Props {
 }
 
 /**
- * 每則的 👍／👎。按已亮起的那顆＝取消（送 mark ""）；按另一顆＝覆蓋。
+ * 每則的有用／沒用（上／下箭頭圖示）。按已亮起的那顆＝取消（送 mark ""）；按另一顆＝覆蓋。
  * 亮不亮以伺服器回傳的 mark 為準，所以寫入失敗時畫面不會假裝成功。
  */
 export function FeedbackButtons({ uid, mark, onChange }: Props) {
@@ -38,7 +39,7 @@ export function FeedbackButtons({ uid, mark, onChange }: Props) {
 
   return (
     <div className="fb">
-      {BUTTONS.map(({ mark: value, emoji, label }) => (
+      {BUTTONS.map(({ mark: value, icon, label }) => (
         <button
           key={value}
           type="button"
@@ -50,7 +51,20 @@ export function FeedbackButtons({ uid, mark, onChange }: Props) {
           disabled={busy}
           onClick={() => press(value)}
         >
-          {emoji}
+          <svg
+            viewBox="0 0 24 24"
+            width="18"
+            height="18"
+            aria-hidden="true"
+            focusable="false"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d={icon} />
+          </svg>
         </button>
       ))}
       <span className="fb-msg" role="status">

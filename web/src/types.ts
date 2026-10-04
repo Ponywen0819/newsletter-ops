@@ -11,7 +11,7 @@ export type InlineNode =
 export interface ListItem {
   inline: InlineNode[]
   children?: ListItem[]
-  /** 掛在這個項目底下的 mark 註解（👍／👎 的對象） */
+  /** 掛在這個項目底下的 mark 註解（有用／沒用 的對象） */
   uids?: string[]
 }
 

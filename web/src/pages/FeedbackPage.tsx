@@ -5,10 +5,10 @@ import { Loading, Notice } from '../components/Notice'
 import { useDocumentTitle, useFetch } from '../hooks'
 import type { Mark } from '../types'
 
-const LABEL = { '+': '👍 有用', '-': '👎 沒用' } as const
+const LABEL = { '+': '有用', '-': '沒用' } as const
 
 /**
- * email 裡 👍／👎 連結（/feedback/<uid>?v=…）的落地頁。信箱的安全掃描會自動開連結，
+ * email 裡 有用／沒用 連結（/feedback/<uid>?v=…）的落地頁。信箱的安全掃描會自動開連結，
  * 所以開頁面只讀；要按下「確認」才 POST，與晨報頁的按鈕走同一支 API。
  */
 export function FeedbackPage() {
@@ -21,7 +21,7 @@ export function FeedbackPage() {
   const [failed, setFailed] = useState(false)
   useDocumentTitle('回饋')
 
-  if (!vote) return <Notice title="連結不完整">缺少 👍／👎 的選擇，請回信件再按一次。</Notice>
+  if (!vote) return <Notice title="連結不完整">缺少「有用／沒用」的選擇，請回信件再按一次。</Notice>
   if (error instanceof ApiError && error.status === 404) {
     return (
       <Notice title="找不到這則新聞">

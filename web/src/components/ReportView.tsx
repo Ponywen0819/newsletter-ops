@@ -21,7 +21,7 @@ function Items({ items, marks, onMark }: { items: ListItem[]; marks: Marks; onMa
   )
 }
 
-/** 晨報本體：版型沿用 email（render_email.py）的樣子，每則的 mark 位置換成 👍／👎。 */
+/** 晨報本體：內容結構沿用 email（render_email.py），每則的 mark 位置換成有用／沒用按鈕；版面由 styles.css 自適應。 */
 export function ReportView({ report, marks, onMark }: { report: Report; marks: Marks; onMark: OnMark }) {
   return (
     <article className="report">
@@ -74,7 +74,7 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
   )
 }
 
-/** 晨報加上它自己的標記狀態：按了 👍／👎 以伺服器回傳的結果更新畫面，不必重新載入整頁。 */
+/** 晨報加上它自己的標記狀態：按了有用／沒用以伺服器回傳的結果更新畫面，不必重新載入整頁。 */
 export function ReportPanel({ report, marks: initial }: { report: Report; marks: Marks }) {
   const [marks, setMarks] = useState(initial)
   const onMark: OnMark = (uid, mark) => setMarks((current) => ({ ...current, [uid]: mark }))

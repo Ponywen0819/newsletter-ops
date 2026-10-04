@@ -23,7 +23,15 @@ describe('FeedbackButtons', () => {
     expect(up()).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('沒標過 → 按 👍 送 +，畫面以伺服器回傳的為準', async () => {
+  it('按鈕是 aria-hidden 的 SVG 圖示、沒有文字（名稱靠 aria-label）', () => {
+    setup('')
+    for (const button of [up(), down()]) {
+      expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+      expect(button.textContent).toBe('')
+    }
+  })
+
+  it('沒標過 → 按「有用」送 +，畫面以伺服器回傳的為準', async () => {
     const { net, onChange } = setup('')
     await userEvent.click(up())
     expect(net.calls).toHaveLength(1)
