@@ -1,6 +1,6 @@
 ---
 name: "news-digest"
-description: "把 newsletter-ops pipeline 抓好的當日新聞 curated JSON 改寫成條列式晨間簡報（Markdown + email HTML）。當使用者說要產新聞報告、newsletter、每日科技摘要時使用。"
+description: "把 newsletter-ops pipeline 抓好的當日新聞 curated JSON 改寫成條列式晨間簡報（Markdown）。當使用者說要產新聞報告、newsletter、每日科技摘要時使用。"
 ---
 
 # 新聞摘要報告撰寫
@@ -86,7 +86,7 @@ curated JSON 的 `topic` 對應到簡報的五個段落：
 ### 4. 寫報告
 
 覆寫 `ROOT/reports/<YYYY-MM-DD>.md`。**全部用條列，不寫散文段落**；每個 bullet 一句話。
-這份 Markdown 會被 `src/render_email.py` 轉成 email，所以格式要照下面的寫法，不要自創結構：
+這份 Markdown 的格式由 `newsletter_shared.report_data` 解析（email 與網頁都吃同一份結構），所以要照下面的寫法，不要自創結構：
 
 ```markdown
 # 每日晨間簡報 YYYY-MM-DD
@@ -148,16 +148,16 @@ curated JSON 的 `topic` 對應到簡報的五個段落：
 - 每則只出現一次，不要在段落和「其餘收錄」重複。
 - 不要複製 `summary` 原文貼上，用自己的話壓縮。
 - 不誇大：沒讀原文就不要斷言論文的效能數字；「來源評級」只寫查證到的，查不到就照實寫「未見審查／機構資訊，僅供參考」。
-- 資料來源清單不用寫，`render_email.py` 會從標題連結自動產生。
+- 資料來源清單不用寫，解析報告時（`report_data`）會從標題連結自動產生。
 
-### 5. 產出 email HTML 並收尾
+### 5. 驗證報告格式並收尾
 
 ```bash
-cd ROOT && uv run --locked src/render_email.py
+cd ROOT && uv run --locked newsletter-report-check
 ```
 
-它讀當日 `reports/<date>.md`，寫出 `reports/<date>.html`，並在 stdout 印一行 JSON：`{"subject", "headline", "html_path"}`。
-exit code 非 0 代表 Markdown 格式不符（例如缺 `subject` 或今日頭條），照錯誤訊息修正報告後重跑。
+它讀當日 `reports/<date>.md`，格式正確就 exit 0。exit code 非 0 代表格式不符（例如缺 `subject` 或今日頭條）或找不到報告，
+原因印在 stderr，照訊息修正報告後重跑，直到通過。轉成 email 與寄出是呼叫端的事，這個 skill 不做。
 
 若 `config/config.json` 的 `debug` 為 `true`（或環境變數 `NEWSLETTER_DEBUG=1`），最後再跑：
 
@@ -177,8 +177,8 @@ cd ROOT && uv run --locked newsletter-metrics claude
 `uv run --locked src/agent_run.py` 會以 Claude Agent SDK 跑本 skill，沒有人可以回答問題，也看不到對話。這時：
 
 - 不要停下來問，不確定的地方照上面的規則自行判斷。
-- 中途無法完成（例如 `run.py` exit 3、`render_email.py` 修不好）就停止，**不要留下殘缺或空的報告**，
-  最後一則回覆寫清楚原因。agent_run 會檢查 `reports/<date>.md` 有沒有在這次執行更新、`render_email.py` 是否成功，
+- 中途無法完成（例如 `run.py` exit 3、`newsletter-report-check` 修不好）就停止，**不要留下殘缺或空的報告**，
+  最後一則回覆寫清楚原因。agent_run 會檢查 `reports/<date>.md` 有沒有在這次執行更新、格式是否正確，
   不成功就以非 0 結束，讓 cron 看得出來；你的最後一則回覆會進 cron 的 log。
 - 互動與無人值守用同一份流程，不要為了其中一邊改變報告格式。
 

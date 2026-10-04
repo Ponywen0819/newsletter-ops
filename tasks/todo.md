@@ -124,19 +124,19 @@
 
 ## Phase 2：反轉
 
-- [ ] **T7：agent 不碰 email（唯一的行為變更）**
+- [x] **T7：agent 不碰 email（唯一的行為變更）**
   - Description：照 [SPEC-agent.md](../SPEC-agent.md) 的反轉表修改。此時 `agent_run.py`、`render_email.py` 都還在 `src/`，所以 diff 只含行為變更，不夾雜搬檔。
   - Acceptance：
-    - [ ] `agent_run.py`：刪除 `render_email()` 與 `NEWSLETTER_DEBUG=0` 抑制手法；`verify()` 讀報告後呼叫 `parse_report`，`ValueError` → exit 4（`reason` 帶 ValueError 訊息，metrics 的 status 由 `render_failed` 改名為 `bad_format`）；stdout 為空（`--auth-check` 例外，仍印 JSON）；docstring 的 exit code 表更新（4＝報告格式不符），0–3、5、6 不變
-    - [ ] `agent_run` selftest：新增「格式不符 → verify 回傳原因／main exit 4」；移除 render 相關斷言
-    - [ ] `run_daily.sh`：四步 `fetch → agent → meta=$(render) → printf | send`；render 與 send 此時仍是 `uv run --locked src/render_email.py`、`src/send_email.py`；`exec >> "$LOG"` ＋ `ERR trap`、env 檔 600 檢查、`"$@"` 轉給 fetch 全部沿用
-    - [ ] skill：第 5 步改成「驗證報告格式」，指令 `uv run --locked newsletter-report-check`，失敗依訊息修正後重跑；`render_email`／email HTML 的敘述全部移除；「這份 Markdown 會被 `src/render_email.py` 轉成 email」改為「格式由 `newsletter_shared.report_data` 定義，email 與網頁都吃同一份」
-    - [ ] README：每日流程、exit code 表、「互動使用不再自動產出 html」的說明
+    - [x] `agent_run.py`：刪除 `render_email()` 與 `NEWSLETTER_DEBUG=0` 抑制手法；`verify()` 讀報告後呼叫 `parse_report`，`ValueError` → exit 4（`reason` 帶 ValueError 訊息，metrics 的 status 由 `render_failed` 改名為 `bad_format`）；stdout 為空（`--auth-check` 例外，仍印 JSON）；docstring 的 exit code 表更新（4＝報告格式不符），0–3、5、6 不變
+    - [x] `agent_run` selftest：新增「格式不符 → verify 回傳原因／main exit 4」；移除 render 相關斷言
+    - [x] `run_daily.sh`：四步 `fetch → agent → meta=$(render) → printf | send`；render 與 send 此時仍是 `uv run --locked src/render_email.py`、`src/send_email.py`；`exec >> "$LOG"` ＋ `ERR trap`、env 檔 600 檢查、`"$@"` 轉給 fetch 全部沿用
+    - [x] skill：第 5 步改成「驗證報告格式」，指令 `uv run --locked newsletter-report-check`，失敗依訊息修正後重跑；`render_email`／email HTML 的敘述全部移除；「這份 Markdown 會被 `src/render_email.py` 轉成 email」改為「格式由 `newsletter_shared.report_data` 定義，email 與網頁都吃同一份」
+    - [x] README：每日流程、exit code 表、「互動使用不再自動產出 html」的說明
   - Verification：
-    - [ ] `uv run --locked python src/agent_run.py --selftest`（本機有 SDK）通過
-    - [ ] `bash -n run_daily.sh`；用 scratchpad 的假 `uv`（記錄 argv、可指定某步 exit 非 0、render 那步印一行 JSON）把 `run_daily.sh` 複製到暫存目錄執行：步驟順序為 fetch→agent→render→send、`meta` 確實餵給 send、render 失敗時 send 不執行且 exit code 等於 render 的
-    - [ ] `grep -nE 'render_email|render_failed' src/agent_run.py .claude/skills/news-digest/SKILL.md` 無結果
-    - [ ] V-CI、`check_boundaries.py`
+    - [x] `uv run --locked python src/agent_run.py --selftest`（本機有 SDK）通過
+    - [x] `bash -n run_daily.sh`；用 scratchpad 的假 `uv`（記錄 argv、可指定某步 exit 非 0、render 那步印一行 JSON）把 `run_daily.sh` 複製到暫存目錄執行：步驟順序為 fetch→agent→render→send、`meta` 確實餵給 send、render 失敗時 send 不執行且 exit code 等於 render 的
+    - [x] `grep -nE 'render_email|render_failed' src/agent_run.py .claude/skills/news-digest/SKILL.md` 無結果
+    - [x] V-CI、`check_boundaries.py`
   - Dependencies：T4、T5、T6
   - Files：`src/agent_run.py`、`run_daily.sh`、`.claude/skills/news-digest/SKILL.md`、`README.md`
   - Scope：M（行為變更，單獨成 commit 以利審閱）

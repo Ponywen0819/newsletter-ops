@@ -23,7 +23,7 @@ shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown �
 src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
 web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
 src/run.py                 入口 CLI
-run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → 寄信，失敗留 log、exit 非 0
+run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → render_email.py → send_email.py，失敗留 log、exit 非 0
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume（見「部署到家用 host」）
 deploy/                    不用 Docker 時的範本：systemd 單元、cloudflared 設定、env 範本
 pyproject.toml, uv.lock    Python 版本與依賴，由 uv 管理（.python-version 固定直譯器版本）
@@ -53,7 +53,7 @@ uv lock --upgrade     # 升級鎖定的版本
 ```
 
 抓取、整理、寄信都只用標準庫，只有 `src/agent_run.py` 需要第三方套件（`claude-agent-sdk`）。
-skill 裡由 agent 呼叫的 `run.py`、`render_email.py` 等因此直接用 `python3`，不依賴 uv 環境。
+skill 裡由 agent 呼叫的指令都是 `uv run --locked …`，要在 repo 根目錄、有 uv 的環境下執行。
 
 ## 使用
 
@@ -67,6 +67,9 @@ uv run newsletter-feedback      # 收集報告裡填的標記
 uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 uv run src/render_email.py | uv run src/send_email.py   # 寄出當日 email
 ```
+
+agent（`agent_run.py`，或在對話裡手動跑 skill）只負責寫 `reports/<date>.md` 並驗證格式，**不產 email HTML、也不寄信**；
+要 email 就跑上面那行（排程由 `run_daily.sh` 代勞）。
 
 `send_email.py` 讀環境變數 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（Google 帳號的應用程式密碼，需先開兩步驟驗證）、
 `NEWSLETTER_MAIL_TO`（逗號分隔，沒設就寄給自己）。加 `--dry-run` 只印標頭不寄。
@@ -160,8 +163,8 @@ npm run typecheck
 0 8 * * * $HOME/newsletter-ops/run_daily.sh
 ```
 
-它依序跑 `run.py --no-report` → `agent_run.py` → `send_email.py`（`agent_run.py` 的 stdout 就是 `render_email.py` 那行 JSON，
-直接餵給 `send_email.py`）。任一步失敗就停下、以該步的 exit code 結束（`agent_run.py` 的 1～4 見下節），
+它依序跑 `run.py --no-report` → `agent_run.py` → `render_email.py` → `send_email.py`（`render_email.py` 的 stdout 是一行 JSON，
+先收進變數再餵給 `send_email.py`）。任一步失敗就停下、以該步的 exit code 結束（`agent_run.py` 的 1～6 見下節），
 並在 `logs/<YYYY-MM>.log` 留一行失敗紀錄。額外參數（如 `--lookback 72`）轉給 `run.py`。
 先由 `run.py` 抓好當日 curated JSON，agent 讀到的就是今天的檔，不必自己再抓一次。
 
@@ -183,9 +186,9 @@ arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解
 ```bash
 uv sync                                   # 依 uv.lock 建立 .venv 並裝好依賴（uv run 也會自動做）
 uv run src/web.py                        # 第一次：開 http://127.0.0.1:8787/auth 貼上 OAuth token（見下方「認證」）
-uv run src/agent_run.py                  # 抓取 → 寫報告 → render_email.py，約數分鐘
+uv run src/agent_run.py                  # 依 skill 寫報告並驗收（有更新、格式正確），約數分鐘
 uv run src/agent_run.py --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
-uv run src/agent_run.py | uv run src/send_email.py   # stdout 是 render_email.py 的那行 JSON，可直接寄信
+uv run src/render_email.py | uv run src/send_email.py   # 報告寫好之後：轉成 email 並寄出
 uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼叫），不跑晨報
 ```
 
@@ -229,7 +232,7 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
   | 1 | agent 失敗：API 錯誤、超過 `--max-turns`、SDK 例外 |
   | 2 | 環境問題：沒裝 `claude-agent-sdk`，或沒有可用的 OAuth token |
   | 3 | 報告沒產出：`reports/<date>.md` 沒在這次執行更新，或當天 curated 沒有收錄項目（抓取全失敗） |
-  | 4 | `render_email.py` 失敗（報告格式不符） |
+  | 4 | 報告格式不符：shared 的 `parse_report` 拒絕（缺 `subject` 註解或今日頭條），原因在 stderr |
   | 5 | **授權失敗**：token 無效或已過期，到 `/auth` 重新貼上新的 token |
   | 6 | **額度用完**：訂閱的使用額度或帳務問題；不會改用別的認證，等額度恢復再跑 |
 
@@ -321,7 +324,7 @@ Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理�
 ```bash
 docker compose logs -f scheduler                  # 排程輸出；run_daily.sh 失敗時會附上 logs/ 的最後 20 行
 docker compose exec web ls reports                # volume 裡的報告
-docker compose run --rm scheduler ./run_daily.sh  # 手動跑一次完整流程（抓取 → agent → 寄信）
+docker compose run --rm scheduler ./run_daily.sh  # 手動跑一次完整流程（抓取 → agent → render → 寄信）
 docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test scheduler uv run src/agent_run.py   # 只產報告、不寄信
 git pull && docker compose up -d --build          # 更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
