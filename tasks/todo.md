@@ -27,20 +27,20 @@
 
 ## Phase 1：shared
 
-- [ ] **T1：workspace 骨架 ＋ `shared` 空殼 ＋ Docker 能建**（本計畫風險最高的一項，所以最早）
+- [x] **T1：workspace 骨架 ＋ `shared` 空殼 ＋ Docker 能建**（本計畫風險最高的一項，所以最早）
   - Description：根 `pyproject.toml` 保留 `[project]` 並加上 workspace 與 `newsletter-shared` 依賴；建立只有 `paths.py` 的 `shared` 套件；Dockerfile 支援 workspace 並升級 uv 釘選。沒有任何既有程式被改動。
   - Acceptance：
-    - [ ] 根 `[tool.uv.workspace] members = ["shared"]`；根 `dependencies` 含 `claude-agent-sdk>=0.2.123` 與 `newsletter-shared`（`{ workspace = true }`）；`package = false` 保留
-    - [ ] `shared/pyproject.toml`（uv_build `>=0.11.13,<0.12`）、`newsletter_shared/__init__.py`、`paths.py`（`ROOT = Path(__file__).resolve().parents[3]`）；`python -m newsletter_shared.paths` 跑 selftest：斷言 `ROOT/"uv.lock"` 存在且 `ROOT/"config"` 是目錄
-    - [ ] Dockerfile：`ghcr.io/astral-sh/uv:0.11.13`；先 `COPY` 根與成員的 `pyproject.toml`、`uv sync --locked --no-install-workspace`（依賴層），再 `COPY shared`、`uv sync --locked`；其餘不變
-    - [ ] `.gitignore`／`.dockerignore` 放行 `shared/pyproject.toml`、`shared/src/**/*.py`
-    - [ ] `uv.lock` 裡 `claude-agent-sdk` 版本與 T0 時相同
+    - [x] 根 `[tool.uv.workspace] members = ["shared"]`；根 `dependencies` 含 `claude-agent-sdk>=0.2.123` 與 `newsletter-shared`（`{ workspace = true }`）；`package = false` 保留
+    - [x] `shared/pyproject.toml`（uv_build `>=0.11.13,<0.12`）、`newsletter_shared/__init__.py`、`paths.py`（`ROOT = Path(__file__).resolve().parents[3]`）；`python -m newsletter_shared.paths` 跑 selftest：斷言 `ROOT/"uv.lock"` 存在且 `ROOT/"config"` 是目錄
+    - [x] Dockerfile：`ghcr.io/astral-sh/uv:0.11.13`；先 `COPY` 根與成員的 `pyproject.toml`、`uv sync --locked --no-install-workspace`（依賴層），再 `COPY shared`、`uv sync --locked`；其餘不變
+    - [x] `.gitignore`／`.dockerignore` 放行 `shared/pyproject.toml`、`shared/src/**/*.py`
+    - [x] `uv.lock` 裡 `claude-agent-sdk` 版本與 T0 時相同
   - Verification：
-    - [ ] `uv lock --check && uv sync --locked && uv run --locked python -m newsletter_shared.paths`
-    - [ ] `git diff HEAD -- uv.lock | grep -B1 -A2 'claude-agent-sdk'` 沒有版本變動
-    - [ ] V-DOCKER（建置成功；`docker run … python -c "import newsletter_shared"` 成功；web 容器 `/api/reports` 回 200）
-    - [ ] V-CI（CI 檔此任務不改，仍是裸 `python3 src/…`，應仍綠）
-    - [ ] V-GIT
+    - [x] `uv lock --check && uv sync --locked && uv run --locked python -m newsletter_shared.paths`
+    - [x] `git diff HEAD -- uv.lock | grep -B1 -A2 'claude-agent-sdk'` 沒有版本變動
+    - [x] V-DOCKER（建置成功；`docker run … python -c "import newsletter_shared"` 成功；web 容器 `/api/reports` 回 200）
+    - [x] V-CI（CI 檔此任務不改，仍是裸 `python3 src/…`，應仍綠）
+    - [x] V-GIT
   - Dependencies：T0
   - Files：`pyproject.toml`、`uv.lock`、`shared/pyproject.toml`、`shared/src/newsletter_shared/{__init__,paths}.py`、`Dockerfile`、`.dockerignore`、`.gitignore`
   - Scope：M（配置為主，3 個小檔；這些無法拆開而不讓 Docker 或 CI 變紅）

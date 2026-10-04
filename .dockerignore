@@ -6,6 +6,8 @@
 !.python-version
 !run_daily.sh
 !src
+!shared/pyproject.toml
+!shared/src
 !web/index.html
 !web/package.json
 !web/package-lock.json

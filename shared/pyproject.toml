@@ -1,0 +1,11 @@
+[project]
+name = "newsletter-shared"
+version = "0.1.0"
+description = "newsletter-ops 的共用底層：repo 路徑、報告格式、回饋標記、metrics、OAuth token 儲存"
+requires-python = ">=3.10"
+# 純標準庫，不得依賴其他 newsletter-* 成員（deploy/check_boundaries.py 會檢查）
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12"]
+build-backend = "uv_build"

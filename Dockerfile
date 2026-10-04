@@ -14,8 +14,9 @@ RUN npm run build
 
 FROM python:3.11-slim-bookworm
 
-# uv 版本與本機開發用的一致。Python 直接用這個映像的 3.11（對應 .python-version），不讓 uv 另外下載。
-COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
+# uv 版本與本機開發、CI 用的一致（成員的 build-system 是 uv_build>=0.11.13,<0.12）。
+# Python 直接用這個映像的 3.11（對應 .python-version），不讓 uv 另外下載。
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /usr/local/bin/
 
 # 生成物（報告、抓取結果、回饋、log）集中放 /var/lib/newsletter，這是唯一需要 volume 的路徑。
 # 非 root 使用者（uid 1000）擁有它；named volume 第一次掛上時會沿用這裡的內容與擁有者。
@@ -33,8 +34,12 @@ ENV TZ=Asia/Taipei \
 USER app
 WORKDIR /app
 
-# 依賴先裝：只動程式碼時這一層走快取
+# 依賴先裝：只動程式碼時這一層走快取。workspace 成員的 pyproject.toml 也要先到位，
+# --no-install-workspace 只裝第三方依賴；成員（editable）在複製原始碼之後才安裝，ROOT 因此是 /app。
 COPY --chown=app:app pyproject.toml uv.lock .python-version ./
+COPY --chown=app:app shared/pyproject.toml ./shared/pyproject.toml
+RUN uv sync --locked --no-install-workspace
+COPY --chown=app:app shared ./shared
 RUN uv sync --locked
 
 COPY --chown=app:app run_daily.sh ./
