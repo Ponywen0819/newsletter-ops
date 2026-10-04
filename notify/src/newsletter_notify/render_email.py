@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """email 層：reports/<date>.md（news-digest 的條列版）→ reports/<date>.html。
 
-用法：python3 src/render_email.py [YYYY-MM-DD] [--selftest]
-stdout 印一行 JSON：{"subject", "headline", "html_path"}，給排程 prompt 寄信用。
+用法：uv run newsletter-render [YYYY-MM-DD] [--selftest]
+stdout 印一行 JSON：{"subject", "headline", "html_path"}，給 send_email 寄信用。
 
 環境變數 NEWSLETTER_BASE_URL（對外網址，如 https://news.example.com）有設的話，每則主要新聞（有 mark 註解的）
 底下加 👍／👎 兩個連結，指向 <base>/feedback/<uid>?v=…。連結只開確認頁，按了確認才寫入（信箱的安全掃描會自動開連結）。
@@ -25,15 +25,12 @@ import os
 import re
 import sys
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-import metrics  # noqa: E402
-from report_data import parse_report  # noqa: E402
+from newsletter_shared import metrics
+from newsletter_shared.paths import ROOT
+from newsletter_shared.report_data import parse_report
 
 BASE_URL_ENV = "NEWSLETTER_BASE_URL"
 
@@ -219,7 +216,8 @@ def selftest() -> None:
     print("ok")
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     if "--selftest" in argv:
         selftest()
         return 0
@@ -247,4 +245,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

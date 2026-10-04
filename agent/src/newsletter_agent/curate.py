@@ -22,9 +22,10 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
-from pathlib import Path
 
-STATE = Path(__file__).resolve().parent.parent / "state" / "seen.json"
+from newsletter_shared.paths import ROOT
+
+STATE = ROOT / "state" / "seen.json"
 STOP = re.compile(r"[^\w一-鿿]+")
 _ASCII_KW = re.compile(r"^[\x00-\x7f]+$")
 _PATTERN_CACHE: dict[str, re.Pattern | None] = {}
@@ -258,7 +259,8 @@ def curate(items: list[dict], config: dict) -> tuple[list[dict], dict]:
     return ranked, stats
 
 
-if __name__ == "__main__":  # 自我檢查：python3 src/curate.py
+if __name__ == "__main__":  # 自我檢查：uv run python -m newsletter_agent.curate
+    assert STATE == ROOT / "state" / "seen.json" and (ROOT / "state").parent == ROOT, STATE  # 去重記憶寫在 repo 根的 state/，不是套件目錄
     V = {"conference": ["NeurIPS", "ICLR", "ACL", "EMNLP", "COLM"], "journal": ["Nature", "TMLR"],
          "minor_tracks": ["Workshop", "Findings", "Industry Track"]}
     def st(note):

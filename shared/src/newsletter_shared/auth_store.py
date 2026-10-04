@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """OAuth token 的儲存與認證來源解析：web.py（貼上、驗證、狀態）與 agent_run.py（執行時取用）共用。
 
-用法：python3 src/auth_store.py --selftest
+用法：uv run python -m newsletter_shared.auth_store --selftest
 
 只用 OAuth（`claude setup-token` 產生、效期一年的 token），**刻意不支援 API key**：不想為了這個專案額外付費。
 token 由 web.py 的 /auth 頁面（只服務本機）貼上；也可以直接設環境變數 CLAUDE_CODE_OAUTH_TOKEN，不經過網頁。
@@ -30,10 +30,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, MutableMapping
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-import feedback  # noqa: E402  只借用 feedback.locked（跨程序檔案鎖）
+from newsletter_shared import feedback  # 只借用 feedback.locked（跨程序檔案鎖）
+from newsletter_shared.paths import ROOT
 
 TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 TOKEN_FILE_ENV = "NEWSLETTER_TOKEN_FILE"
@@ -243,5 +241,5 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
     else:
-        print("用法：python3 src/auth_store.py --selftest", file=sys.stderr)
+        print("用法：python -m newsletter_shared.auth_store --selftest", file=sys.stderr)
         raise SystemExit(2)

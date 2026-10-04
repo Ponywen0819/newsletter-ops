@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
 
-import metrics
+from newsletter_shared import metrics
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 NS = {
@@ -238,7 +238,7 @@ def fetch_all(config: dict) -> tuple[list[Item], list[str]]:
     return items, errors
 
 
-if __name__ == "__main__":  # 自我檢查：python3 src/fetch.py
+if __name__ == "__main__":  # 自我檢查：uv run python -m newsletter_agent.fetch
     cfg = {"delay_seconds": 1.0, "domain_delay_seconds": {"export.arxiv.org": 3.0}}
     assert source_host({"type": "arxiv", "query": "cat:cs.LG"}) == "export.arxiv.org"
     assert source_host({"type": "rss", "url": "https://Feeds.BBCI.co.uk/news/rss.xml"}) == "feeds.bbci.co.uk"

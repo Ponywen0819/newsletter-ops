@@ -5,11 +5,11 @@
 關閉時 record() / timed() 什麼都不做，對正常執行沒有影響。
 測試執行設 NEWSLETTER_RUN_LABEL=test，紀錄會標上 label 以便區分；紀錄一律保留，不刪。
 
-  python3 src/metrics.py claude [--since ISO] [--until ISO] [--session FILE]
+  uv run newsletter-metrics claude [--since ISO] [--until ISO] [--session FILE]
       從 Claude Code 的 session 逐則紀錄（~/.claude/projects/<專案>/<session>.jsonl）
       統計最近一次 news-digest 開始到現在的 token、API 回合數、工具呼叫次數與耗時。
       由 agent_run.py 呼叫的 session（NEWSLETTER_RUNNER=sdk）用量由它自己記，這裡直接略過。
-  python3 src/metrics.py summary [天數] [--all]
+  uv run newsletter-metrics summary [天數] [--all]
       彙整最近幾天的紀錄，每次執行一行；預設只列 label=prod，--all 連測試一起列。
 """
 from __future__ import annotations
@@ -25,7 +25,8 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
+from newsletter_shared.paths import ROOT
+
 METRICS_DIR = ROOT / "logs" / "metrics"
 TZ = ZoneInfo("Asia/Taipei")
 TRANSCRIPTS = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ROOT))
@@ -201,6 +202,10 @@ def cmd_summary(argv: list[str]) -> int:
 
 
 def selftest() -> None:
+    # 路徑都從 paths.ROOT 推算：紀錄在 ROOT/logs/metrics，Claude session 紀錄的位置由 cwd（＝ROOT）決定，debug 旗標讀 ROOT/config/config.json
+    assert METRICS_DIR == ROOT / "logs" / "metrics"
+    assert TRANSCRIPTS.name == re.sub(r"[^A-Za-z0-9]", "-", str(ROOT)), TRANSCRIPTS
+    assert (ROOT / "config" / "config.json").is_file()
     rows = [
         {"type": "user", "timestamp": "2026-01-01T00:00:00Z", "message": {"content": "hi"}},
         {"type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "message": {"id": "m0", "model": "x",
@@ -234,9 +239,13 @@ def selftest() -> None:
     print("ok")
 
 
-if __name__ == "__main__":
+def main() -> int:
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("summary", [])
     if cmd == "--selftest":
         selftest()
-        raise SystemExit(0)
-    raise SystemExit({"claude": cmd_claude, "summary": cmd_summary}[cmd](rest))
+        return 0
+    return {"claude": cmd_claude, "summary": cmd_summary}[cmd](rest)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

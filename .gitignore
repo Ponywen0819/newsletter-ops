@@ -25,17 +25,25 @@
 !/deploy/*.service
 !/deploy/*.timer
 !/deploy/*.example
+!/deploy/*.py
 
-# 程式
-!/src/*.py
+# Python 成員（uv workspace）：只放行 pyproject.toml 與 src/<套件>/ 底下的 .py
+!/shared/pyproject.toml
+!/shared/src/**/*.py
+!/agent/pyproject.toml
+!/agent/src/**/*.py
+!/notify/pyproject.toml
+!/notify/src/**/*.py
+!/web/server/pyproject.toml
+!/web/server/src/**/*.py
 
 # Web 前端（Vite + React）：只放行原始碼、設定與鎖檔
-!/web/index.html
-!/web/package.json
-!/web/package-lock.json
-!/web/tsconfig.json
-!/web/vite.config.ts
-!/web/src/**
+!/web/ui/index.html
+!/web/ui/package.json
+!/web/ui/package-lock.json
+!/web/ui/tsconfig.json
+!/web/ui/vite.config.ts
+!/web/ui/src/**
 
 # 設定：主設定、興趣檔、來源清單
 !/config/*.json
@@ -49,8 +57,8 @@
 !/.github/**
 
 # 刻意不放行（每日生成物與本機狀態；本 repo 是 public，也不留備份，見 README「資料保存」）：
-#   web/dist/                前端建置產物，`cd web && npm run build` 重建
-#   web/node_modules/        套件，`npm install` 重建
+#   web/ui/dist/             前端建置產物，`cd web/ui && npm run build` 重建
+#   web/ui/node_modules/     套件，`npm install` 重建
 #   data/raw、data/curated   每日抓取結果，可重跑
 #   reports/                 每日報告
 #   state/feedback.jsonl     人工標記，只是更新 config/interests.md 時參考的中間產物
@@ -60,8 +68,8 @@
 #   __pycache__/、.DS_Store  由 * 自動忽略
 
 # 讓 git 不必走進這兩個目錄（上面的 !*/ 會讓它逐檔檢查 node_modules）
-/web/node_modules/
-/web/dist/
+/web/ui/node_modules/
+/web/ui/dist/
 
 # 放行規則之後再擋一次系統雜物（例如 .claude/skills/** 會連 .DS_Store 一起放行）
 .DS_Store

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """無人值守入口：用 Claude Agent SDK 跑同一份 news-digest skill，不必開 Claude app。
 
-用法：uv run src/agent_run.py [--max-turns N]
-      uv run src/agent_run.py --auth-check [--token-from-env]
-      uv run src/agent_run.py --selftest
+用法：uv run newsletter-agent [--max-turns N]
+      uv run newsletter-agent --auth-check [--token-from-env]
+      uv run python -m newsletter_agent.agent_run --selftest
 
-抓取、寫報告、render_email.py 都由 agent 依 SKILL.md 完成；本程式負責啟動、記錄用量、驗收產出。
-stdout 只印 render_email.py 那行 JSON（subject / headline / html_path），可直接接 send_email.py，
-其餘訊息一律走 stderr（cron 會收進 logs）。
+抓取、寫報告都由 agent 依 SKILL.md 完成，寫完用 newsletter-report-check 驗證格式；本程式負責啟動、記錄用量、
+驗收產出（報告有更新、格式正確）。轉成 email 與寄出不是這裡的事，由 run_daily.sh 接著處理。
+stdout 保持空，所有訊息一律走 stderr（cron 會收進 logs）；--auth-check 例外，它的結果是 stdout 的一行 JSON。
 
 exit code：0 成功
            1 agent 失敗（回報錯誤、超過 max_turns、SDK 例外）
            2 環境問題（沒裝 claude-agent-sdk、沒有可用的 OAuth token）
            3 報告沒產出（沒更新 reports/<date>.md，或 curated 沒有收錄項目）
-           4 render_email.py 失敗
+           4 報告格式不符（shared 的 parse_report 拒絕：缺 subject 註解或今日頭條）
            5 授權失敗（token 無效或已過期）：到 web.py 的 /auth 重新貼上 `claude setup-token` 的 token
            6 額度用完（訂閱的使用額度或帳務問題）：不會自動換成別的認證方式，等額度恢復再跑
 
@@ -32,7 +32,6 @@ import argparse
 import asyncio
 import json
 import os
-import subprocess
 import sys
 import tempfile
 import traceback
@@ -40,11 +39,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-import auth_store  # noqa: E402
-import metrics  # noqa: E402
+from newsletter_shared import auth_store, metrics
+from newsletter_shared.paths import ROOT
+from newsletter_shared.report_data import parse_report
 
 try:
     import claude_agent_sdk as sdk
@@ -142,7 +139,7 @@ def agent_env(token: str) -> dict[str, str]:
     """傳給 claude CLI 的環境（疊在行程環境上；要移除的變數得先 scrub_environ，這裡只能新增／覆寫）。"""
     return {
         auth_store.TOKEN_ENV: token,
-        "NEWSLETTER_RUNNER": "sdk",  # metrics.py claude 看到這個就略過，用量由本程式記錄
+        "NEWSLETTER_RUNNER": "sdk",  # newsletter-metrics claude 看到這個就略過，用量由本程式記錄
     }
 
 
@@ -242,15 +239,16 @@ def verify(root: Path, stamp: str, started: float) -> str | None:
     return None
 
 
-def render_email(root: Path, stamp: str) -> tuple[int, str, str]:
-    # agent 照 skill 已經跑過一次並記了 render；這裡只驗收，關掉 metrics 避免多出一筆 render 把一次執行切成兩列
-    env = {**os.environ, "NEWSLETTER_DEBUG": "0"}
-    p = subprocess.run([sys.executable, str(root / "src" / "render_email.py"), stamp],
-                       cwd=root, env=env, capture_output=True, text=True)
-    return p.returncode, p.stdout.strip(), p.stderr.strip()
+def check_format(root: Path, stamp: str) -> str | None:
+    """回傳格式不符的原因（shared 的 parse_report 拒絕）；None 表示格式正確。呼叫前 verify() 已確認檔案存在。"""
+    try:
+        parse_report((root / "reports" / f"{stamp}.md").read_text(encoding="utf-8"))
+    except ValueError as exc:
+        return f"{stamp}.md 格式不符：{exc}"
+    return None
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS)
     ap.add_argument("--selftest", action="store_true")
@@ -259,7 +257,7 @@ def main(argv: list[str]) -> int:
                     help=f"搭配 --auth-check：只用環境變數 {auth_store.TOKEN_ENV}（驗證尚未儲存的 token）")
     args = ap.parse_args(argv)
     if sdk is None:
-        print("缺 claude-agent-sdk：請用 `uv run src/agent_run.py` 執行（或先 `uv sync`）", file=sys.stderr)
+        print("缺 claude-agent-sdk：請用 `uv run newsletter-agent` 執行（或先 `uv sync`）", file=sys.stderr)
         return 2
     if args.selftest:
         selftest()
@@ -283,7 +281,7 @@ def main(argv: list[str]) -> int:
             traceback.print_exc()
     wall = time.monotonic() - t0
 
-    r, code, status, reason, meta = usage.result, 0, "ok", None, ""
+    r, code, status, reason = usage.result, 0, "ok", None
     if r is None:
         code, status, reason = 1, "agent_failed", f"沒有收到結果（{sdk_error or '串流意外中止'}）"
     elif r.is_error or r.subtype != "success":
@@ -298,10 +296,8 @@ def main(argv: list[str]) -> int:
             reason = f"額度用完：{usage.error_text or reason}。不會改用別的認證方式，等訂閱額度恢復再跑"
     elif (reason := verify(ROOT, stamp, started)) is not None:
         code, status = 3, "no_report"
-    else:
-        rc, meta, err = render_email(ROOT, stamp)
-        if rc != 0:
-            code, status, reason = 4, "render_failed", err or f"render_email.py exit {rc}"
+    elif (reason := check_format(ROOT, stamp)) is not None:
+        code, status = 4, "bad_format"
 
     if r is not None:
         rec = usage.record(wall)
@@ -315,8 +311,6 @@ def main(argv: list[str]) -> int:
             print(f"[agent] 最後回覆：{r.result[:500]}", file=sys.stderr)
     if code:
         print(f"[agent] 失敗（exit {code}）：{reason}", file=sys.stderr)
-    else:
-        print(meta)
     return code
 
 
@@ -350,8 +344,12 @@ def selftest() -> None:
         assert "舊檔" in verify(root, stamp, now)
         os.utime(report, (now + 1, now + 1))
         assert verify(root, stamp, now) is None
+        assert "格式不符" in check_format(root, stamp)  # "# 報告" 沒有 subject 註解，也沒有今日頭條
+        report.write_text("> **今日頭條：** x\n<!-- subject: s -->\n")
+        assert check_format(root, stamp) is None
 
     selftest_auth()
+    selftest_main()
     print("ok")
 
 
@@ -452,5 +450,47 @@ def selftest_auth() -> None:
     assert res == {"ok": False, "kind": "other", "message": "RuntimeError: spawn failed"}, res
 
 
+def selftest_main() -> None:
+    """main() 在 agent 成功之後依序驗收：報告有更新（exit 3）、格式正確（exit 4）；stdout 一律是空的。"""
+    import contextlib
+    import io
+    from unittest import mock
+
+    this = sys.modules[__name__]
+    secret = "sk-ant-oat01-" + "Qw7" * 12
+    good = "> **今日頭條：** x\n<!-- subject: s -->\n"
+    result = sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1,
+                               session_id="s", total_cost_usd=0.1, result="ok",
+                               usage={"input_tokens": 1, "output_tokens": 1})
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        stamp = f"{datetime.now(metrics.TZ):%Y-%m-%d}"
+        (root / "data" / "curated").mkdir(parents=True)
+        (root / "reports").mkdir()
+        (root / "data" / "curated" / f"{stamp}.json").write_text('{"items": [{"uid": "x"}]}')
+        report = root / "reports" / f"{stamp}.md"
+
+        def run(written: str | None) -> tuple[int, str, str]:
+            async def fake_agent(prompt, max_turns, usage, token):  # 取代真正呼叫 SDK 的那一步
+                if written is not None:
+                    report.write_text(written, encoding="utf-8")
+                usage.feed(result)
+            env = {auth_store.TOKEN_ENV: secret, auth_store.TOKEN_FILE_ENV: str(root / "oauth_token.json")}
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(this, "ROOT", root), \
+                    mock.patch.object(this, "run_agent", fake_agent), mock.patch.object(metrics, "record"), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = main([])
+            return code, out.getvalue(), err.getvalue()
+
+        code, out, err = run(good)
+        assert (code, out) == (0, ""), (code, out, err)
+        code, out, err = run("# 沒有 subject 也沒有今日頭條\n")
+        assert (code, out) == (4, "") and "格式不符" in err, (code, out, err)
+        report.unlink()
+        code, out, err = run(None)  # agent 回報成功，卻沒寫報告
+        assert (code, out) == (3, "") and "沒有產出" in err, (code, out, err)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

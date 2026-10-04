@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """寄信層：把 render_email.py 產出的 HTML 用 Gmail SMTP 寄出，不依賴 Claude 的 Gmail connector。
 
-用法：python3 src/render_email.py | python3 src/send_email.py [--dry-run]
-      python3 src/send_email.py --selftest
+用法：uv run newsletter-render | uv run newsletter-send [--dry-run]
+      uv run newsletter-send --selftest
 stdin 是 render_email.py 印的那行 JSON（subject / headline / html_path）。
 
 環境變數：
@@ -31,7 +31,8 @@ def build(meta: dict, sender: str, to: list[str]) -> EmailMessage:
     return msg
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
     if "--selftest" in argv:
         selftest()
         return 0
@@ -72,4 +73,4 @@ def selftest() -> None:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

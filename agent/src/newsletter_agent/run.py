@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""入口：python3 src/run.py [--dry-run] [--no-report] [--lookback 48] [--list-sources]"""
+"""入口：uv run newsletter-fetch [--dry-run] [--no-report] [--lookback 48] [--list-sources]"""
 from __future__ import annotations
 
 import argparse
@@ -10,14 +10,12 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-import curate as curate_mod  # noqa: E402
-import fetch as fetch_mod  # noqa: E402
-import metrics  # noqa: E402
-import report as report_mod  # noqa: E402
-import sources as sources_mod  # noqa: E402
+from newsletter_agent import curate as curate_mod
+from newsletter_agent import fetch as fetch_mod
+from newsletter_agent import report as report_mod
+from newsletter_agent import sources as sources_mod
+from newsletter_shared import metrics
+from newsletter_shared.paths import ROOT
 
 
 INTERESTS = ROOT / "config" / "interests.md"

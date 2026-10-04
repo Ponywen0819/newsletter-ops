@@ -8,7 +8,7 @@ import { ReportListPage } from './pages/ReportListPage'
 import { ReportPage } from './pages/ReportPage'
 import { TodayPage } from './pages/TodayPage'
 
-// 這幾條路由要和 src/web.py 的 SPA_ROUTES 一致：後端對它們回 index.html，其他路徑回 404 的 index.html。
+// 這幾條路由要和 web/server 的 SPA_ROUTES 一致：後端對它們回 index.html，其他路徑回 404 的 index.html。
 export function App() {
   return (
     <SessionProvider>

@@ -22,7 +22,7 @@ services:
     # 不載入任何機密：網頁程序拿不到 Gmail／OAuth token
     # 注意：web.py 的 /auth（貼 OAuth token）只服務「來源是 loopback、沒有代理標頭」的請求，容器網路裡的請求一律 404，
     # 所以 Docker 部署不用那一頁，token 改放 .env 的 CLAUDE_CODE_OAUTH_TOKEN。
-    command: ["python", "src/web.py", "--host", "0.0.0.0", "--port", "8787"]
+    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)"]
       interval: 30s

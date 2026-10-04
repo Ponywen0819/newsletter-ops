@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Web 層：JSON API ＋ 提供前端（web/，Vite + React）的建置結果。晨報每則旁邊按 👍／👎，直接寫進 state/feedback.jsonl。
 
-用法：python3 src/web.py [--host 127.0.0.1] [--port 8787] [--selftest]
+用法：uv run newsletter-web [--host 127.0.0.1] [--port 8787] [--selftest]
 port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
-前端是 web/ 底下的 Vite + React 專案，要先建置：`cd web && npm install && npm run build`，
-這裡把 web/dist 當靜態檔提供（/assets/* 帶 hash，長期快取；index.html 每次確認）。
+前端是 web/ui/ 底下的 Vite + React 專案，要先建置：`cd web/ui && npm install && npm run build`，
+這裡把 web/ui/dist 當靜態檔提供（/assets/* 帶 hash，長期快取；index.html 每次確認）。
 前端的路由（/、/reports、/reports/<date>、/feedback/<uid>、/auth）一律回 index.html，由前端自己畫；沒建置過時回 503 並說明怎麼建置。
-開發前端用 `cd web && npm run dev`（Vite dev server，把 /api 代理到這裡），不必每次重新建置。
+開發前端用 `cd web/ui && npm run dev`（Vite dev server，把 /api 代理到這裡），不必每次重新建置。
 
-API（都是 JSON；前端的型別在 web/src/types.ts）：
+API（都是 JSON；前端的型別在 web/ui/src/types.ts）：
   GET  /api/session           {local}                 這個請求是不是從本機來（前端據此決定要不要顯示「Claude 授權」）
   GET  /api/today             {date, latest, report, marks}   當日晨報；還沒產出時 report 是 null、latest 是最新一份的日期
   GET  /api/reports           {reports: [{date, headline}]}   歷史列表，新到舊
@@ -41,8 +41,8 @@ HTML 回應帶 Content-Security-Policy（只許同源的腳本與樣式），前
 cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以光看來源位址擋不住 Tunnel，要靠 2、3。
 遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth，
 或直接在 host 上設環境變數 CLAUDE_CODE_OAUTH_TOKEN。
-貼上的 token 先交給 `agent_run.py --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
-token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK，請用 `uv run src/web.py` 啟動。
+貼上的 token 先交給 `newsletter-agent --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
+token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK（由 newsletter-agent 帶進來），用 `uv run newsletter-web` 啟動就有。
 """
 from __future__ import annotations
 
@@ -64,12 +64,8 @@ from typing import Callable, Iterator, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-import auth_store  # noqa: E402
-import feedback  # noqa: E402
-import report_data  # noqa: E402
+from newsletter_shared import auth_store, feedback, report_data
+from newsletter_shared.paths import ROOT
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -79,9 +75,9 @@ MARKS = {"+", "-", ""}  # "" ＝ 取消
 MAX_BODY = 4096
 CHECK_TIMEOUT = 90  # 秒；驗證 token 的子程序最多等這麼久（無效 token 約 2 秒，有效的幾秒；卡住要放棄）
 
-# 前端的路由（web/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
+# 前端的路由（web/ui/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
 SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
-BUILD_COMMAND = "cd web && npm install && npm run build"
+BUILD_COMMAND = "cd web/ui && npm install && npm run build"
 STATIC_TYPES = {  # 副檔名白名單：dist 裡只有這些會被提供
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -141,9 +137,9 @@ def is_local_request(client_ip: str, headers: Mapping[str, str]) -> bool:
 
 
 def run_auth_check(token: str) -> dict:
-    """用 `agent_run.py --auth-check` 實際呼叫一次來驗證 token。回傳 {ok, kind, message}。
+    """用 `newsletter-agent --auth-check` 實際呼叫一次來驗證 token。回傳 {ok, kind, message}。
     token 只放在子程序的環境變數（不上命令列，ps 看不到）；子程序自己會移除環境裡的 API key 等。"""
-    cmd = [sys.executable, str(ROOT / "src" / "agent_run.py"), "--auth-check", "--token-from-env"]
+    cmd = [sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]
     env = {**os.environ, auth_store.TOKEN_ENV: token}
     try:
         p = subprocess.run(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -160,8 +156,8 @@ def run_auth_check(token: str) -> dict:
         if isinstance(result, dict) and isinstance(result.get("ok"), bool):
             return {"ok": result["ok"], "kind": str(result.get("kind", "other")),
                     "message": str(result.get("message", "")).replace(token, "***")}
-    if p.returncode == 2:  # agent_run.py 在沒有 SDK 時、還沒走到驗證就以 2 結束
-        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run src/web.py` 啟動"}
+    if p.returncode == 2:  # agent_run 在沒有 SDK 時、還沒走到驗證就以 2 結束
+        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run newsletter-web` 啟動"}
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
 
 
@@ -183,7 +179,7 @@ class Site:
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
                  checker: Callable[[str], dict] | None = None):
         self.root = root
-        self.dist = root / "web" / "dist"
+        self.dist = root / "web" / "ui" / "dist"
         self.today = today or (lambda: f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}")
         self.feedback_path = root / "state" / "feedback.jsonl"
         self.token_path = auth_store.token_path(root)
@@ -383,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
         index = self.site.index_html()
         if index is None:
             hint = (f"<!DOCTYPE html><meta charset=\"utf-8\"><title>前端尚未建置</title>"
-                    f"<p>找不到 <code>web/dist</code>。先建置前端：<code>{BUILD_COMMAND}</code></p>")
+                    f"<p>找不到 <code>web/ui/dist</code>。先建置前端：<code>{BUILD_COMMAND}</code></p>")
             self._send(HTTPStatus.SERVICE_UNAVAILABLE, hint, "text/html; charset=utf-8")
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
@@ -543,13 +539,13 @@ def selftest() -> None:
             {"items": [{"uid": uid_a, "title": "重點", "source": "S1", "topic": "ai-industry",
                         "matched_keywords": ["llm"]}]}, ensure_ascii=False), encoding="utf-8")
         # 前端的建置結果（假的）；dist 之外放一個檔案，確認拿不到
-        (root / "web" / "dist" / "assets").mkdir(parents=True)
+        (root / "web" / "ui" / "dist" / "assets").mkdir(parents=True)
         shell = '<!doctype html><div id="root"></div><script type="module" src="/assets/app-abc123.js"></script>'
-        (root / "web" / "dist" / "index.html").write_text(shell, encoding="utf-8")
-        (root / "web" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
-        (root / "web" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
-        (root / "web" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
-        (root / "web" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "index.html").write_text(shell, encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
         (root / "web" / "secret.txt").write_text("dist 之外", encoding="utf-8")  # 一層 .. 就到
         (root / "secret.txt").write_text("dist 之外", encoding="utf-8")          # 三層 .. 才到
         site = Site(root, today=lambda: "2026-09-28")
@@ -746,6 +742,7 @@ def selftest_auth() -> None:
     assert res == {"ok": False, "kind": "auth", "message": "bad ***"}, res
     cmd, kw = calls[0]
     assert secret not in " ".join(cmd) and "--auth-check" in cmd and "--token-from-env" in cmd
+    assert cmd[1:3] == ["-m", "newsletter_agent.agent_run"] and kw["cwd"] == ROOT, cmd  # 以模組呼叫、cwd 是 repo 根
     assert kw["env"][auth_store.TOKEN_ENV] == secret and kw["timeout"] == CHECK_TIMEOUT and kw["stdin"] == sp.DEVNULL
     run, _ = fake_run('{"ok": true, "kind": "ok", "message": "驗證通過", "source": "env-token"}\n')
     with mock.patch.object(sp, "run", run):
@@ -780,8 +777,8 @@ def selftest_auth() -> None:
         (root / "reports" / "2026-09-28.md").write_text(
             f"# 每日晨間簡報 2026-09-28\n\n<!-- subject: x -->\n\n> **今日頭條：** y\n\n## 科技\n\n"
             f"**[t](https://a.example/1)**\n\n- a\n<!-- mark:    uid={uid} -->\n", encoding="utf-8")
-        (root / "web" / "dist").mkdir(parents=True)
-        (root / "web" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+        (root / "web" / "ui" / "dist").mkdir(parents=True)
+        (root / "web" / "ui" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
         site = Site(root, today=lambda: "2026-09-28", checker=checker)
 
         with served(site) as raw_req:
@@ -891,7 +888,7 @@ def selftest_auth() -> None:
             assert uid in (root / "state" / "feedback.jsonl").read_text(encoding="utf-8")
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="晨報瀏覽與 👍／👎 回饋")
     ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}，不要綁到對外位址（沒有登入）")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WEB_PORT", DEFAULT_PORT)))
@@ -904,7 +901,7 @@ def main(argv: list[str]) -> int:
         print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
     site = Site()
     if site.index_html() is None:
-        print(f"[web] 找不到 web/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
+        print(f"[web] 找不到 web/ui/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
     server = make_server(site, args.host, args.port)
     print(f"[web] http://{args.host}:{server.server_address[1]}/  （Ctrl-C 結束）", file=sys.stderr)
     try:
@@ -917,4 +914,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

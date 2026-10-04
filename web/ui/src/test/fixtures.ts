@@ -4,7 +4,7 @@ export const UID_A = '0123456789abcdef'
 export const UID_B = '1111111111111111'
 export const UID_C = '2222222222222222'
 
-/** 與 src/report_data.py selftest 的 Markdown 解析結果同形：巢狀清單、mark 掛在最外層最後一項、獨立的 mark。 */
+/** 與 shared 的 report_data.py selftest 的 Markdown 解析結果同形：巢狀清單、mark 掛在最外層最後一項、獨立的 mark。 */
 export const report: Report = {
   title: '每日晨間簡報',
   subject: '測試頭條',

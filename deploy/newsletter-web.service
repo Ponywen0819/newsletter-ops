@@ -6,7 +6,7 @@ Description=newsletter-ops web (127.0.0.1:8787)
 WorkingDirectory=%h/newsletter-ops
 # --host 寫死 127.0.0.1：web.py 沒有登入，對外只能走 cloudflared + Access
 # 用 uv 跑，直譯器版本與 run_daily.sh 一致；systemd 的 PATH 很精簡，補上 uv 常見的安裝位置
-ExecStart=/usr/bin/env uv run --locked src/web.py --host 127.0.0.1 --port 8787
+ExecStart=/usr/bin/env uv run --locked newsletter-web --host 127.0.0.1 --port 8787
 Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure

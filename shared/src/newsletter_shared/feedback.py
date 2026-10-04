@@ -11,9 +11,9 @@
     ++  很重要
     --  完全不該出現
 
-之後跑 `python3 src/feedback.py` 收集到 state/feedback.jsonl。
+之後跑 `uv run newsletter-feedback` 收集到 state/feedback.jsonl。
 同一則重複標記時以最新一次為準（以檔案日期排序）。
-也可以改用 `python3 src/web.py` 在網頁上按 👍／👎，直接寫同一個檔（取消記為 mark ""）。
+也可以改用 `uv run newsletter-web` 在網頁上按 👍／👎，直接寫同一個檔（取消記為 mark ""）。
 
 兩條路徑共用 state/feedback.jsonl，都只往後 append、不改寫舊內容，並用同一把檔案鎖排隊，
 所以可以同時跑。為了不和網頁打架：報告裡的標記只匯入「feedback.jsonl 還沒有紀錄」的那一則；
@@ -30,7 +30,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from newsletter_shared.paths import ROOT
+
 MARK_RE = re.compile(r"<!--\s*mark:\s*([+-]{0,2})\s*uid=([0-9a-f]{16})\s*-->")
 VALID_MARKS = {"+", "-", "++", "--"}
 
@@ -248,5 +249,12 @@ def selftest() -> None:
     print("ok")
 
 
+def main() -> int:
+    if "--selftest" in sys.argv[1:]:
+        selftest()
+        return 0
+    return collect()
+
+
 if __name__ == "__main__":
-    raise SystemExit(selftest() if "--selftest" in sys.argv[1:] else collect())
+    raise SystemExit(main())
