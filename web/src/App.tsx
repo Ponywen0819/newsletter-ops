@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { SessionProvider } from './session'
 import { AuthPage } from './pages/AuthPage'
+import { FeedbackPage } from './pages/FeedbackPage'
 import { NotFoundPage } from './pages/NotFoundPage'
 import { ReportListPage } from './pages/ReportListPage'
 import { ReportPage } from './pages/ReportPage'
@@ -16,6 +17,7 @@ export function App() {
           <Route index element={<TodayPage />} />
           <Route path="reports" element={<ReportListPage />} />
           <Route path="reports/:date" element={<ReportPage />} />
+          <Route path="feedback/:uid" element={<FeedbackPage />} />
           <Route path="auth" element={<AuthPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
