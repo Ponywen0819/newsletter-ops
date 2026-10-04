@@ -2,6 +2,7 @@ import type { Block, InlineNode, Report } from './types'
 
 type TitleBlock = Extract<Block, { type: 'title' }>
 type HeadingBlock = Extract<Block, { type: 'heading' }>
+type CalloutBlock = Extract<Block, { type: 'callout' }>
 
 /** 閱讀單位：筆電閱讀器右欄一次顯示一個。 */
 export interface Unit {
@@ -9,7 +10,7 @@ export interface Unit {
   id: string
   /** 左清單上的文字 */
   label: string
-  /** callout＝今日頭條；story＝段落＋緊接的清單；list＝沒有前導段落的整張清單；paragraph＝後面不接清單的段落 */
+  /** story＝段落＋緊接的清單；list＝沒有前導段落的整張清單；paragraph＝後面不接清單的段落；callout＝第二個以後的 callout（第一個是 Grouped.callout） */
   kind: 'callout' | 'story' | 'list' | 'paragraph' | 'sources'
   blocks: Block[]
 }
@@ -23,6 +24,8 @@ export interface Group {
 
 export interface Grouped {
   title: TitleBlock | null
+  /** 今日頭條：固定顯示在最上面，不是閱讀單位——不在 units 裡，左清單不列、不參與上一則／下一則 */
+  callout: CalloutBlock | null
   groups: Group[]
   /** 沒有資料來源就是 null */
   sources: Unit | null
@@ -36,12 +39,13 @@ export function plainText(nodes: InlineNode[]): string {
 
 /**
  * 把晨報的 blocks 切成「分類組 → 閱讀單位」。後端 JSON 不動，這裡只重新分組：
- * 每個區塊恰好出現一次（title、heading 在 Grouped 與 Group 上，其餘都在某個 unit 裡），不遺失也不重複。
+ * 每個區塊恰好出現一次（title、callout 在 Grouped 上，heading 在 Group 上，其餘都在某個 unit 裡），不遺失也不重複。
  * 「其餘收錄」那種每條自帶回饋鈕的單行清單沒有前導段落，整張清單算一個 unit，標籤用分類名。
  */
 export function groupReport(report: Report): Grouped {
   const groups: Group[] = []
   let title: TitleBlock | null = null
+  let callout: CalloutBlock | null = null
   let current: Group = { heading: null, label: '', units: [] }
 
   const flush = () => {
@@ -63,7 +67,8 @@ export function groupReport(report: Report): Grouped {
         current = { heading: block, label: plainText(block.inline), units: [] }
         break
       case 'callout':
-        add(i, 'callout', '今日頭條', [block])
+        if (!callout) callout = block
+        else add(i, 'callout', plainText(block.inline).slice(0, 30), [block]) // 理論上只有一個；多的不能丟，當一般單位
         break
       case 'paragraph': {
         const next = blocks[i + 1]
@@ -92,5 +97,5 @@ export function groupReport(report: Report): Grouped {
   const sources: Unit | null = report.sources.length ? { id: 's-sources', kind: 'sources', label: '資料來源', blocks: [] } : null
   const units = groups.flatMap((g) => g.units)
   if (sources) units.push(sources)
-  return { title, groups, sources, units }
+  return { title, callout, groups, sources, units }
 }

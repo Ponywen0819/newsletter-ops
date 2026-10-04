@@ -595,6 +595,10 @@ header nav a[aria-current='page'] {
   .reader .unit > :first-child {
     margin-top: 0;
   }
+  /* 今日頭條固定在右欄最上面（不是閱讀單位）：與下面切換的那一則隔開一段 */
+  .reader-body > .callout {
+    margin-bottom: 24px;
+  }
 
   .reader-pager {
     display: flex;

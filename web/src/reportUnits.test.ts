@@ -31,26 +31,39 @@ const real = make(
 )
 
 describe('groupReport', () => {
-  it('頭條、新聞、整張清單、資料來源各成一個單位，標籤與 id 如預期', () => {
+  it('新聞、整張清單、資料來源各成一個單位；今日頭條不是單位，獨立放在 callout', () => {
     const g = groupReport(real)
     expect(g.title).toMatchObject({ type: 'title', title: '每日晨間簡報' })
-    expect(g.groups.map((x) => x.label)).toEqual(['', '科技與 AI', '其餘收錄', '本期備註'])
-    expect(g.groups[0]!.heading).toBeNull()
+    expect(g.callout).toMatchObject({ type: 'callout' })
+    expect(g.groups.map((x) => x.label)).toEqual(['科技與 AI', '其餘收錄', '本期備註']) // 沒有分類標題、也沒有單位的開頭那組不留
     expect(g.units.map((u) => [u.id, u.kind, u.label])).toEqual([
-      ['s-1', 'callout', '今日頭條'],
       ['s-3', 'story', '馬斯克證實與台積電洽談'],
       ['s-5', 'story', '加州檢察長傳喚 OpenAI'],
       ['s-8', 'list', '其餘收錄'], // 沒有前導段落的清單：標籤用分類名
       ['s-10', 'list', '本期備註'],
       ['s-sources', 'sources', '資料來源'],
     ])
+    expect(g.units.some((u) => u.blocks.includes(g.callout!))).toBe(false)
     expect(g.sources).toBe(g.units.at(-1))
+  })
+
+  it('第二個以後的 callout 不能丟，當一般單位（標籤取內文前 30 字）', () => {
+    const second: Block = { type: 'callout', inline: t('提醒：' + '很長'.repeat(30)) }
+    const g = groupReport(make([{ type: 'callout', inline: t('今日頭條：A') }, heading('H'), second]))
+    expect(g.callout).toMatchObject({ inline: t('今日頭條：A') })
+    expect(g.units).toHaveLength(1)
+    expect(g.units[0]).toMatchObject({ kind: 'callout', blocks: [second] })
+    expect(g.units[0]!.label).toHaveLength(30)
   })
 
   it('每個區塊恰好出現一次：不遺失、不重複', () => {
     for (const r of [real, fixture]) {
       const g = groupReport(r)
-      const seen = [...(g.title ? [g.title] : []), ...g.groups.flatMap((x) => [...(x.heading ? [x.heading] : []), ...x.units.flatMap((u) => u.blocks)])]
+      const seen = [
+        ...(g.title ? [g.title] : []),
+        ...(g.callout ? [g.callout] : []),
+        ...g.groups.flatMap((x) => [...(x.heading ? [x.heading] : []), ...x.units.flatMap((u) => u.blocks)]),
+      ]
       expect(seen).toHaveLength(r.blocks.length)
       expect(new Set(seen)).toEqual(new Set(r.blocks)) // 同一份物件參照，沒有被複製或漏掉
     }
@@ -74,7 +87,7 @@ describe('groupReport', () => {
   })
 
   it('邊界：空 blocks、沒有分類標題、沒有資料來源都不會丟例外', () => {
-    expect(groupReport(make([]))).toEqual({ title: null, groups: [], sources: null, units: [] })
+    expect(groupReport(make([]))).toEqual({ title: null, callout: null, groups: [], sources: null, units: [] })
 
     const flat = groupReport(make([para('舊格式標題'), list({ text: 'a' }), list({ text: 'b' })]))
     expect(flat.groups).toHaveLength(1)
@@ -89,7 +102,7 @@ describe('groupReport', () => {
   it('邊界：孤兒 mark、空標題、多個 title 都不會遺失區塊', () => {
     const blocks: Block[] = [{ type: 'mark', uid: UID_A }, { type: 'title', title: 'A', date: null }, { type: 'title', title: 'B', date: null }, para('')]
     const g = groupReport(make(blocks))
-    const count = (g.title ? 1 : 0) + g.units.reduce((n, u) => n + u.blocks.length, 0)
+    const count = (g.title ? 1 : 0) + (g.callout ? 1 : 0) + g.units.reduce((n, u) => n + u.blocks.length, 0)
     expect(count).toBe(blocks.length)
     expect(g.units.every((u) => u.label.length > 0)).toBe(true)
   })

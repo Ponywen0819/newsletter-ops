@@ -74,7 +74,8 @@ describe('ReportPanel', () => {
   })
 })
 
-// fixture 的單位：s-1 今日頭條、s-3 重點 <標題>（段落＋清單）、s-6 其餘收錄（清單＋獨立 mark）、s-sources 資料來源
+// fixture 的單位：s-3 重點 <標題>（段落＋清單）、s-6 其餘收錄（清單＋獨立 mark）、s-sources 資料來源。
+// 今日頭條不是單位，固定在最上面
 describe('ReportView 筆電閱讀器', () => {
   afterEach(() => {
     window.history.replaceState(null, '', '/')
@@ -88,20 +89,31 @@ describe('ReportView 筆電閱讀器', () => {
   const current = () => list().getByRole('link', { current: true }).textContent
   const counter = () => document.querySelector('.reader-pager span')!.textContent
 
-  it('所有單位都在 DOM 裡（窄螢幕才會依序全部顯示），只有一個是 active，預設第一個', () => {
+  it('所有單位都在 DOM 裡（窄螢幕才會依序全部顯示），只有一個是 active，預設第一則新聞', () => {
     setup()
-    expect([...document.querySelectorAll<HTMLElement>('.unit')].map((u) => u.dataset.unit)).toEqual(['s-1', 's-3', 's-6', 's-sources'])
+    expect([...document.querySelectorAll<HTMLElement>('.unit')].map((u) => u.dataset.unit)).toEqual(['s-3', 's-6', 's-sources'])
     expect(document.querySelectorAll('.unit[data-active]')).toHaveLength(1)
-    expect(activeUnit()).toBe('s-1')
-    expect(current()).toBe('今日頭條')
-    expect(counter()).toBe('1 / 4')
+    expect(activeUnit()).toBe('s-3')
+    expect(current()).toBe('重點 <標題>')
+    expect(counter()).toBe('1 / 3')
     expect(document.querySelectorAll('.fb')).toHaveLength(3) // 分組沒有弄丟任何一組回饋鈕
+  })
+
+  it('今日頭條固定在最上面：不是單位、不在左清單、不隨切換消失', async () => {
+    setup()
+    const callout = screen.getByText('今日頭條：').closest('.callout')!
+    expect(callout.closest('.unit')).toBeNull()
+    expect(callout.parentElement).toHaveClass('reader-body')
+    expect(callout).toBe(document.querySelector('.reader-body')!.firstElementChild) // 在所有單位與分類標題之前
+    expect(list().queryByRole('link', { name: /今日頭條/ })).toBeNull()
+    await userEvent.keyboard('j')
+    expect(activeUnit()).toBe('s-6')
+    expect(callout).toBeInTheDocument()
   })
 
   it('左清單：分類成組，資料來源在最後；項目是連到 #id 的連結', () => {
     setup()
     expect(list().getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
-      ['今日頭條', '#s-1'],
       ['重點 <標題>', '#s-3'],
       ['其餘收錄', '#s-6'],
       ['資料來源', '#s-sources'],
@@ -113,12 +125,12 @@ describe('ReportView 筆電閱讀器', () => {
     const state = { usr: null, key: 'abc', idx: 0 }
     window.history.replaceState(state, '', '/')
     setup()
-    await userEvent.click(list().getByRole('link', { name: '重點 <標題>' }))
-    expect(activeUnit()).toBe('s-3')
-    expect(current()).toBe('重點 <標題>')
-    expect(window.location.hash).toBe('#s-3')
+    await userEvent.click(list().getByRole('link', { name: '其餘收錄' }))
+    expect(activeUnit()).toBe('s-6')
+    expect(current()).toBe('其餘收錄')
+    expect(window.location.hash).toBe('#s-6')
     expect(window.history.state).toEqual(state)
-    expect(counter()).toBe('2 / 4')
+    expect(counter()).toBe('2 / 3')
   })
 
   it('網址 hash 指到哪一則就是哪一則；認不得的 hash 退回第一則；hashchange 會跟著切', () => {
@@ -128,7 +140,7 @@ describe('ReportView 筆電閱讀器', () => {
     cleanup()
     window.history.replaceState(null, '', '/#nope')
     setup()
-    expect(activeUnit()).toBe('s-1')
+    expect(activeUnit()).toBe('s-3')
     window.history.replaceState(null, '', '/#s-sources')
     act(() => void window.dispatchEvent(new HashChangeEvent('hashchange')))
     expect(activeUnit()).toBe('s-sources')
@@ -137,13 +149,13 @@ describe('ReportView 筆電閱讀器', () => {
   it('j／k 與 ↓／↑ 切換上一則下一則；頭尾不會壞', async () => {
     setup()
     await userEvent.keyboard('k') // 第一則再往上：不動
-    expect(activeUnit()).toBe('s-1')
+    expect(activeUnit()).toBe('s-3')
     await userEvent.keyboard('j')
-    expect(activeUnit()).toBe('s-3')
-    await userEvent.keyboard('{ArrowDown}')
     expect(activeUnit()).toBe('s-6')
+    await userEvent.keyboard('{ArrowDown}')
+    expect(activeUnit()).toBe('s-sources')
     await userEvent.keyboard('{ArrowUp}')
-    expect(activeUnit()).toBe('s-3')
+    expect(activeUnit()).toBe('s-6')
     await userEvent.keyboard('jjj') // 走到最後一則之後不再往下
     expect(activeUnit()).toBe('s-sources')
     expect(window.location.hash).toBe('#s-sources')
@@ -153,9 +165,9 @@ describe('ReportView 筆電閱讀器', () => {
     setup()
     Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: 5000 }) // 往下還能捲
     await userEvent.keyboard('{ArrowDown}')
-    expect(activeUnit()).toBe('s-1')
-    await userEvent.keyboard('j')
     expect(activeUnit()).toBe('s-3')
+    await userEvent.keyboard('j')
+    expect(activeUnit()).toBe('s-6')
   })
 
   it('不攔截：輸入框裡打字、Ctrl／⌘／Alt 組合鍵、窄螢幕（matchMedia 不符）', async () => {
@@ -163,21 +175,22 @@ describe('ReportView 筆電閱讀器', () => {
     const input = document.body.appendChild(document.createElement('input'))
     input.focus()
     await userEvent.keyboard('jjj')
-    expect(activeUnit()).toBe('s-1')
+    expect(activeUnit()).toBe('s-3')
     input.remove()
     await userEvent.keyboard('{Control>}j{/Control}{Meta>}j{/Meta}{Alt>}j{/Alt}')
-    expect(activeUnit()).toBe('s-1')
+    expect(activeUnit()).toBe('s-3')
     window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
     await userEvent.keyboard('j')
-    expect(activeUnit()).toBe('s-1')
+    expect(activeUnit()).toBe('s-3')
   })
 
   it('焦點停在回饋鈕時 j 照樣切換（按完有用／沒用直接看下一則）', async () => {
     setup()
     await userEvent.keyboard('j')
+    expect(activeUnit()).toBe('s-6')
     document.querySelector<HTMLButtonElement>('.unit[data-active] .fb-btn')!.focus()
     await userEvent.keyboard('j')
-    expect(activeUnit()).toBe('s-6')
+    expect(activeUnit()).toBe('s-sources')
   })
 
   it('上一則／下一則按鈕：切換、頭尾 disabled', async () => {
@@ -186,9 +199,8 @@ describe('ReportView 筆電閱讀器', () => {
     const next = screen.getByRole('button', { name: '下一則' })
     expect(prev).toBeDisabled()
     await userEvent.click(next)
-    expect(activeUnit()).toBe('s-3')
+    expect(activeUnit()).toBe('s-6')
     expect(prev).toBeEnabled()
-    await userEvent.click(next)
     await userEvent.click(next)
     expect(activeUnit()).toBe('s-sources')
     expect(next).toBeDisabled()

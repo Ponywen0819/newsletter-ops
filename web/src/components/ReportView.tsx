@@ -177,6 +177,8 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
         </nav>
       </div>
       <div className="reader-body">
+        {/* 今日頭條不是閱讀單位：永遠固定在最上面，切換新聞時不會跟著消失 */}
+        {grouped.callout && <BlockView block={grouped.callout} marks={marks} onMark={onMark} />}
         {grouped.groups.map((group, gi) => (
           <div key={gi} className="group">
             {group.heading && (
