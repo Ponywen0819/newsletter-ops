@@ -20,8 +20,9 @@ export type Block =
   | { type: 'heading'; inline: InlineNode[] }
   | { type: 'callout'; inline: InlineNode[] }
   | { type: 'paragraph'; inline: InlineNode[] }
-  | { type: 'list'; items: ListItem[] }
-  | { type: 'mark'; uid: string }
+  /** votable：這張清單（或獨立 mark）要不要放有用／沒用。規則在後端 report_data.py，網頁與 email 都只讀這個旗標 */
+  | { type: 'list'; items: ListItem[]; votable: boolean }
+  | { type: 'mark'; uid: string; votable: boolean }
 
 export interface Report {
   title: string

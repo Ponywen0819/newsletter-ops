@@ -12,18 +12,16 @@ const isWide = () => window.matchMedia?.('(min-width: 1100px)').matches ?? true
 interface Votes {
   marks: Marks
   onMark: OnMark
-  /** 這一段要不要畫有用／沒用。「其餘收錄」那種整張單行清單不畫，只有主要新聞才有 */
-  votable: boolean
 }
 
-function Items({ items, votes }: { items: ListItem[]; votes: Votes }) {
+function Items({ items, votable, votes }: { items: ListItem[]; votable: boolean; votes: Votes }) {
   return (
     <ul>
       {items.map((item, i) => (
         <li key={i}>
           <Inline nodes={item.inline} />
-          {item.children && <Items items={item.children} votes={votes} />}
-          {votes.votable && item.uids?.length ? <FeedbackButtons uids={item.uids} marks={votes.marks} onChange={votes.onMark} /> : null}
+          {item.children && <Items items={item.children} votable={votable} votes={votes} />}
+          {votable && item.uids?.length ? <FeedbackButtons uids={item.uids} marks={votes.marks} onChange={votes.onMark} /> : null}
         </li>
       ))}
     </ul>
@@ -58,15 +56,15 @@ function BlockView({ block, votes }: { block: Block; votes: Votes }) {
         </p>
       )
     case 'list':
-      return <Items items={block.items} votes={votes} />
+      return <Items items={block.items} votable={block.votable} votes={votes} />
     case 'mark':
-      return votes.votable ? <FeedbackButtons uids={[block.uid]} marks={votes.marks} onChange={votes.onMark} /> : null
+      return block.votable ? <FeedbackButtons uids={[block.uid]} marks={votes.marks} onChange={votes.onMark} /> : null
   }
 }
 
 function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Report['sources']; marks: Marks; onMark: OnMark }) {
-  // 沒有前導段落的整張清單（「其餘收錄」）不放有用／沒用：只有主要新聞（段落＋清單）需要回饋
-  const votes: Votes = { marks, onMark, votable: unit.kind !== 'list' }
+  // 哪些清單可以投票（votable）由後端決定，這裡只照畫
+  const votes: Votes = { marks, onMark }
   // data-unit 而不是 id：網址帶 #s-6 時由 ReportView 自己捲過去（要避開 sticky 標頭），不讓瀏覽器預設的錨點跳轉搶先
   return (
     <section className="unit" data-unit={unit.id}>
@@ -202,7 +200,7 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
   return (
     <article ref={articleRef} className="report reader">
       <div className="reader-side">
-        {grouped.title && <BlockView block={grouped.title} votes={{ marks, onMark, votable: false }} />}
+        {grouped.title && <BlockView block={grouped.title} votes={{ marks, onMark }} />}
         <nav ref={navRef} className="reader-nav" aria-label="新聞目錄">
           {navGroups.map((group, gi) => (
             <div key={gi}>
@@ -230,7 +228,7 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
         </nav>
       </div>
       <div className="reader-body">
-        {grouped.callout && <BlockView block={grouped.callout} votes={{ marks, onMark, votable: false }} />}
+        {grouped.callout && <BlockView block={grouped.callout} votes={{ marks, onMark }} />}
         {grouped.groups.map((group, gi) => (
           <div key={gi} className="group">
             {group.heading && (

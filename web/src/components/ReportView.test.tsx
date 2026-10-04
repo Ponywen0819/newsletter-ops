@@ -16,13 +16,13 @@ const stories: Report = {
   blocks: [
     { type: 'heading', inline: t('科技') },
     { type: 'paragraph', inline: t('第一則') },
-    { type: 'list', items: [{ inline: t('發生什麼：'), children: [{ inline: t('細節') }] }, { inline: t('背景：B'), uids: [UID_A] }] },
+    { type: 'list', votable: true, items: [{ inline: t('發生什麼：'), children: [{ inline: t('細節') }] }, { inline: t('背景：B'), uids: [UID_A] }] },
     { type: 'paragraph', inline: t('第二則') },
-    { type: 'list', items: [{ inline: t('其他'), children: [{ inline: t('補充') }], uids: [UID_B] }] },
-    { type: 'mark', uid: UID_C },
+    { type: 'list', votable: true, items: [{ inline: t('其他'), children: [{ inline: t('補充') }], uids: [UID_B] }] },
+    { type: 'mark', uid: UID_C, votable: true },
     { type: 'heading', inline: t('其餘收錄') },
-    { type: 'list', items: [{ inline: t('單行 X'), uids: [UID_D] }] },
-    { type: 'mark', uid: UID_E },
+    { type: 'list', votable: false, items: [{ inline: t('單行 X'), uids: [UID_D] }] },
+    { type: 'mark', uid: UID_E, votable: false },
   ],
   sources: [],
 }
@@ -62,6 +62,14 @@ describe('ReportView', () => {
     const rest = screen.getByText('單行 X').closest('.unit')!
     expect(rest.querySelector('.fb, button')).toBeNull()
     expect(document.querySelectorAll('.unit .fb')).toHaveLength(3) // 其餘都在主要新聞裡
+  })
+
+  it('可不可以投票完全看後端給的 votable，前端不自己判斷：旗標反過來，畫面就跟著反過來', () => {
+    const flipped: Report = { ...stories, blocks: stories.blocks.map((b) => (b.type === 'list' || b.type === 'mark' ? { ...b, votable: !b.votable } : b)) }
+    render(<ReportView report={flipped} marks={{}} onMark={() => {}} />)
+    const rest = screen.getByText('單行 X').closest('.unit')!
+    expect(rest.querySelectorAll('.fb')).toHaveLength(2) // 其餘收錄：單行 X（D）與後面的獨立 mark（E）
+    expect(document.querySelectorAll('.fb')).toHaveLength(2) // 原本可投票的主要新聞反而一組都沒有
   })
 
   it('每組按鈕亮的是自己那則的標記', () => {
@@ -288,7 +296,7 @@ describe('一則新聞掛兩個 uid（併了兩篇文章）', () => {
     blocks: [
       { type: 'heading', inline: [{ type: 'text', text: '商業' }] },
       { type: 'paragraph', inline: [{ type: 'text', text: '併了兩篇的新聞' }] },
-      { type: 'list', items: [{ inline: [{ type: 'text', text: '後續觀察：…' }], uids: [UID_A, UID_B] }] },
+      { type: 'list', votable: true, items: [{ inline: [{ type: 'text', text: '後續觀察：…' }], uids: [UID_A, UID_B] }] },
     ],
     sources: [],
   }
