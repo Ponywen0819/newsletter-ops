@@ -91,7 +91,7 @@ header {
     z-index: 10;
   }
 }
-nav {
+header nav {
   display: flex;
   flex-wrap: wrap; /* 窄到 375px 也放不下時（例如 320px）寧可換行，也不要撐出水平捲軸 */
   align-items: center;
@@ -107,7 +107,7 @@ nav {
   font-weight: 700;
   color: var(--heading);
 }
-nav a {
+header nav a {
   display: inline-flex;
   align-items: center;
   /* 觸控目標至少 44px 高；水平 padding 讓相鄰連結的點擊區不互相擠壓 */
@@ -116,7 +116,7 @@ nav a {
   color: var(--link);
   text-decoration: none;
 }
-nav a[aria-current='page'] {
+header nav a[aria-current='page'] {
   font-weight: 600;
 }
 
@@ -495,5 +495,132 @@ nav a[aria-current='page'] {
   }
   .auth-actions {
     gap: 12px;
+  }
+}
+
+/*
+ * 筆電閱讀器：左側新聞清單＋右側一次一則（≥1100px）。
+ * <1100px 完全是單欄長頁：清單與上一則／下一則隱藏，所有單位依序顯示（.unit、.group 只是沒有樣式的包裝）。
+ */
+.reader-nav,
+.reader-pager {
+  display: none;
+}
+@media (min-width: 1100px) {
+  /* 卡片在這一頁只是容器：寬度放到「左欄 280 ＋ 間距 24 ＋ 右欄 720」，白底改由右欄承擔 */
+  main.card:has(> .reader) {
+    max-width: 1024px;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+  }
+  /* 標頭內容跟著放寬、貼齊左欄左緣，不然站名與連結會縮在中間 720px 那一欄 */
+  header:has(~ .page .reader) nav {
+    max-width: 1024px;
+    padding: 0;
+  }
+  .reader {
+    --header-h: 45px; /* 標頭列高度（44px 連結＋1px 底線）：左欄 sticky 要閃開它 */
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    column-gap: 24px;
+    align-items: start;
+  }
+
+  /* 左欄：標題＋清單。跟著捲動停在標頭下面；清單比視窗長就自己捲 */
+  .reader-side {
+    position: sticky;
+    top: calc(var(--header-h) + 16px);
+    display: flex;
+    flex-direction: column;
+    /* 扣掉標頭與上下留白，整頁高度才不會超過視窗：一則短新聞時頁面不該還能捲動 */
+    max-height: calc(100vh - var(--header-h) - 2 * var(--page-pad-y) - 8px);
+  }
+  .reader-nav {
+    display: block;
+    min-height: 0;
+    margin-top: 16px;
+    overflow-y: auto;
+  }
+  .reader-nav ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .reader-nav-title {
+    margin: 16px 0 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .reader-nav a {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--text);
+    text-decoration: none;
+  }
+  /* 標題常有 40–60 字：最多 2 行，全文在 title 屬性裡 */
+  .reader-nav a > span {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .reader-nav a:hover {
+    background: var(--rule);
+  }
+  .reader-nav a[aria-current='true'] {
+    background: var(--card);
+    box-shadow: inset 3px 0 0 var(--link);
+    font-weight: 600;
+    color: var(--link);
+  }
+
+  /* 右欄：一次只顯示選到的那一則（連同它所屬分類的標題）。min-height 讓切換時卡片高度不要跳來跳去 */
+  .reader-body {
+    box-sizing: border-box;
+    min-height: 70vh;
+    padding: var(--card-pad-y) var(--gutter);
+    background: var(--card);
+    border-radius: var(--card-radius);
+  }
+  .reader .unit:not([data-active]),
+  .reader .group:not(:has(> .unit[data-active])) {
+    display: none;
+  }
+  .reader .group-title,
+  .reader .unit > :first-child {
+    margin-top: 0;
+  }
+
+  .reader-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 28px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule);
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .pager-btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: #fff;
+    font: inherit;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .pager-btn:hover:not(:disabled) {
+    border-color: var(--link);
+    color: var(--link);
+  }
+  .pager-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 }
