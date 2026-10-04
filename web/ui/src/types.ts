@@ -1,4 +1,4 @@
-// 後端 JSON 的型別。結構定義在 src/report_data.py（晨報）與 src/web.py（API）、src/auth_store.py（授權狀態）。
+// 後端 JSON 的型別。結構定義在 shared 的 report_data.py（晨報）、auth_store.py（授權狀態）與 src/web.py（API）。
 
 export type Mark = '+' | '-' | ''
 

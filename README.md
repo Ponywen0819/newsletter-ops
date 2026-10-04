@@ -20,8 +20,8 @@ agent/src/newsletter_agent/agent_run.py  無人值守層：Claude Agent SDK 跑 
 shared/src/newsletter_shared/auth_store.py  認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
 shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
-src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
-web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
+src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/ui/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
+web/ui/                    Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/ui/dist 不進版控
 agent/src/newsletter_agent/newsletter-fetch  入口 CLI（newsletter-fetch）
 run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → render_email.py → send_email.py，失敗留 log、exit 非 0
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume（見「部署到家用 host」）
@@ -63,7 +63,7 @@ uv run newsletter-fetch               # 完整跑一次（含模板版報告）
 uv run newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run newsletter-fetch --lookback 72 # 放寬時間窗到 72 小時
 uv run newsletter-feedback      # 收集報告裡填的標記
-(cd web && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
+(cd web/ui && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
 uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 uv run newsletter-render | uv run newsletter-send   # 寄出當日 email
 ```
@@ -96,7 +96,7 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-f
 ### 用網頁標記（取代手改 Markdown）
 
 ```bash
-(cd web && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
+(cd web/ui && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
 uv run src/web.py               # 開 http://127.0.0.1:8787/
 uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制
 ```
@@ -118,7 +118,7 @@ uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的�
   `render_email.py` 會在每則**主要新聞**底下加兩個連結，指向 `<base>/feedback/<uid>?v=%2B`（有用）／`?v=-`（沒用），手機看信也能回饋。
   與網頁一致：「其餘收錄」那種沒有標題段落的整張單行清單不放連結；併了多篇文章的新聞（報告裡連著好幾行 mark，每篇一個 uid）只放一組，
   uid 用逗號接起來 `<base>/feedback/<uid>,<uid>?v=…`，確認頁一次對每個 uid 各投一票（單一 uid 的舊連結照常可用）。
-  **連結不會一點就寫入**：信箱的安全掃描會自動開連結，所以 GET 只顯示「確認標為 有用」的頁面（`web/src/pages/FeedbackPage.tsx`，
+  **連結不會一點就寫入**：信箱的安全掃描會自動開連結，所以 GET 只顯示「確認標為 有用」的頁面（`web/ui/src/pages/FeedbackPage.tsx`，
   資料來自 `GET /api/feedback/<uid>`，純讀取），按了確認才 `POST /api/feedback`。已經是同一個標記就只顯示「已記下」；
   標記不同則說明會覆蓋。沒設 `NEWSLETTER_BASE_URL`（本機測試）就不加按鈕；格式不對會在 stderr 警告並不加。
   網址要是 Tunnel + Access 保護的那個網域：點連結時 Access 會先要求登入，掃描器看到的只是登入頁。
@@ -128,12 +128,12 @@ uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的�
 
 Vite + React + TypeScript。後端 `src/web.py` 只出 JSON，頁面全由前端畫；晨報不再是後端組好的 HTML，
 而是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
-版面是自適應的（手機單欄、筆電左側目錄＋內文，樣式在 `web/src/styles.css`）；email 吃同一份結構，由 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
+版面是自適應的（手機單欄、筆電左側目錄＋內文，樣式在 `web/ui/src/styles.css`）；email 吃同一份結構，由 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
-cd web
+cd web/ui
 npm install          # 第一次；需要 Node ^20.19 或 >=22.12
-npm run build        # 型別檢查 + 建置到 web/dist，src/web.py 直接提供
+npm run build        # 型別檢查 + 建置到 web/ui/dist，src/web.py 直接提供
 npm run dev          # 開發：Vite 在 :5173，/api 代理到 src/web.py（需另外用 uv run src/web.py 開後端）
 npm test             # Vitest + Testing Library：元件與路由
 npm run typecheck
@@ -141,7 +141,7 @@ npm run typecheck
 
 - 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機）。後端對這幾條回 `index.html`，
   其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`src/web.py` 的 `SPA_ROUTES` 要同步。
-- API（細節見 `src/web.py` 開頭的說明、型別見 `web/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
+- API（細節見 `src/web.py` 開頭的說明、型別見 `web/ui/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
   `/api/reports/<date>`、`/api/feedback/<uid>`、`/api/auth`；`POST /api/feedback`、`/api/auth/token|test|revoke`。
 - 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
@@ -250,7 +250,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
 
 - 用 `agent_run.py` 時，skill 裡的 `newsletter-metrics claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
 - 自我檢查：`uv run python -m newsletter_agent.agent_run --selftest`、`uv run python -m newsletter_shared.auth_store --selftest`、`uv run src/web.py --selftest`、
-  `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web && npm test`。
+  `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web/ui && npm test`。
   push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
 
 ## 部署到家用 host（Docker + Cloudflare Tunnel + Access）
@@ -265,7 +265,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。
 ```
 
 - `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`web/`），
-  只把 `web/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼要放行才進得了 build context。
+  只把 `web/ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。compose 沒有 `ports:`，host 不會開任何 port；
@@ -355,7 +355,7 @@ git pull && docker compose up -d --build          # 更新（interests.md、conf
 ```bash
 git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops
 cd ~/newsletter-ops && uv sync --locked      # 建 .venv、裝 claude-agent-sdk；沒有 Python 3.11 時 uv 會自己下載
-(cd web && npm ci && npm run build)          # 建置網頁前端到 web/dist；沒做的話 web service 的頁面都回 503
+(cd web/ui && npm ci && npm run build)          # 建置網頁前端到 web/ui/dist；沒做的話 web service 的頁面都回 503
 uv run newsletter-fetch --list-sources             # 不連網，確認設定可用
 ```
 
@@ -385,7 +385,7 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行，開機自動�
 - 手動跑一次排程：`systemctl --user start newsletter-daily.service`（會真的呼叫 Claude 並寄信，約數分鐘、有 API 費用），
   失敗時 `systemctl --user status newsletter-daily` 會顯示 failed，原因在 `logs/<YYYY-MM>.log`。
 - 更新（`interests.md`、`config/`、程式等被追蹤的檔案）：
-  `git -C ~/newsletter-ops pull && (cd ~/newsletter-ops && uv sync --locked && cd web && npm ci && npm run build) && systemctl --user restart newsletter-web`。
+  `git -C ~/newsletter-ops pull && (cd ~/newsletter-ops && uv sync --locked && cd web/ui && npm ci && npm run build) && systemctl --user restart newsletter-web`。
   （前端沒變動時，`npm ci && npm run build` 可以省略。）排程每次都重新讀檔，不必重啟。
 
 **4. cloudflared Tunnel**

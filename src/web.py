@@ -4,12 +4,12 @@
 用法：python3 src/web.py [--host 127.0.0.1] [--port 8787] [--selftest]
 port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
-前端是 web/ 底下的 Vite + React 專案，要先建置：`cd web && npm install && npm run build`，
-這裡把 web/dist 當靜態檔提供（/assets/* 帶 hash，長期快取；index.html 每次確認）。
+前端是 web/ui/ 底下的 Vite + React 專案，要先建置：`cd web/ui && npm install && npm run build`，
+這裡把 web/ui/dist 當靜態檔提供（/assets/* 帶 hash，長期快取；index.html 每次確認）。
 前端的路由（/、/reports、/reports/<date>、/feedback/<uid>、/auth）一律回 index.html，由前端自己畫；沒建置過時回 503 並說明怎麼建置。
-開發前端用 `cd web && npm run dev`（Vite dev server，把 /api 代理到這裡），不必每次重新建置。
+開發前端用 `cd web/ui && npm run dev`（Vite dev server，把 /api 代理到這裡），不必每次重新建置。
 
-API（都是 JSON；前端的型別在 web/src/types.ts）：
+API（都是 JSON；前端的型別在 web/ui/src/types.ts）：
   GET  /api/session           {local}                 這個請求是不是從本機來（前端據此決定要不要顯示「Claude 授權」）
   GET  /api/today             {date, latest, report, marks}   當日晨報；還沒產出時 report 是 null、latest 是最新一份的日期
   GET  /api/reports           {reports: [{date, headline}]}   歷史列表，新到舊
@@ -76,9 +76,9 @@ MARKS = {"+", "-", ""}  # "" ＝ 取消
 MAX_BODY = 4096
 CHECK_TIMEOUT = 90  # 秒；驗證 token 的子程序最多等這麼久（無效 token 約 2 秒，有效的幾秒；卡住要放棄）
 
-# 前端的路由（web/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
+# 前端的路由（web/ui/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
 SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
-BUILD_COMMAND = "cd web && npm install && npm run build"
+BUILD_COMMAND = "cd web/ui && npm install && npm run build"
 STATIC_TYPES = {  # 副檔名白名單：dist 裡只有這些會被提供
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -180,7 +180,7 @@ class Site:
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
                  checker: Callable[[str], dict] | None = None):
         self.root = root
-        self.dist = root / "web" / "dist"
+        self.dist = root / "web" / "ui" / "dist"
         self.today = today or (lambda: f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}")
         self.feedback_path = root / "state" / "feedback.jsonl"
         self.token_path = auth_store.token_path(root)
@@ -380,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
         index = self.site.index_html()
         if index is None:
             hint = (f"<!DOCTYPE html><meta charset=\"utf-8\"><title>前端尚未建置</title>"
-                    f"<p>找不到 <code>web/dist</code>。先建置前端：<code>{BUILD_COMMAND}</code></p>")
+                    f"<p>找不到 <code>web/ui/dist</code>。先建置前端：<code>{BUILD_COMMAND}</code></p>")
             self._send(HTTPStatus.SERVICE_UNAVAILABLE, hint, "text/html; charset=utf-8")
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
@@ -540,13 +540,13 @@ def selftest() -> None:
             {"items": [{"uid": uid_a, "title": "重點", "source": "S1", "topic": "ai-industry",
                         "matched_keywords": ["llm"]}]}, ensure_ascii=False), encoding="utf-8")
         # 前端的建置結果（假的）；dist 之外放一個檔案，確認拿不到
-        (root / "web" / "dist" / "assets").mkdir(parents=True)
+        (root / "web" / "ui" / "dist" / "assets").mkdir(parents=True)
         shell = '<!doctype html><div id="root"></div><script type="module" src="/assets/app-abc123.js"></script>'
-        (root / "web" / "dist" / "index.html").write_text(shell, encoding="utf-8")
-        (root / "web" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
-        (root / "web" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
-        (root / "web" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
-        (root / "web" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "index.html").write_text(shell, encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
         (root / "web" / "secret.txt").write_text("dist 之外", encoding="utf-8")  # 一層 .. 就到
         (root / "secret.txt").write_text("dist 之外", encoding="utf-8")          # 三層 .. 才到
         site = Site(root, today=lambda: "2026-09-28")
@@ -778,8 +778,8 @@ def selftest_auth() -> None:
         (root / "reports" / "2026-09-28.md").write_text(
             f"# 每日晨間簡報 2026-09-28\n\n<!-- subject: x -->\n\n> **今日頭條：** y\n\n## 科技\n\n"
             f"**[t](https://a.example/1)**\n\n- a\n<!-- mark:    uid={uid} -->\n", encoding="utf-8")
-        (root / "web" / "dist").mkdir(parents=True)
-        (root / "web" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+        (root / "web" / "ui" / "dist").mkdir(parents=True)
+        (root / "web" / "ui" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
         site = Site(root, today=lambda: "2026-09-28", checker=checker)
 
         with served(site) as raw_req:
@@ -902,7 +902,7 @@ def main(argv: list[str]) -> int:
         print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
     site = Site()
     if site.index_html() is None:
-        print(f"[web] 找不到 web/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
+        print(f"[web] 找不到 web/ui/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
     server = make_server(site, args.host, args.port)
     print(f"[web] http://{args.host}:{server.server_address[1]}/  （Ctrl-C 結束）", file=sys.stderr)
     try:

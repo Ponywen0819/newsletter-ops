@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "晨報網頁（Vite + React）。後端是 ../src/web.py 的 JSON API。",
+  "description": "晨報網頁（Vite + React）。後端是 ../../src/web.py 的 JSON API。",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },

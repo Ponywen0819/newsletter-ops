@@ -214,17 +214,17 @@
 
 ## Phase 4：web
 
-- [ ] **T12：前端搬到 `web/ui/`**（先把 main 再合一次，降低前端衝突）
+- [x] **T12：前端搬到 `web/ui/`**（先把 main 再合一次，降低前端衝突）
   - Description：整包 `web/` 內容搬進 `web/ui/`；後端（此時仍是 `src/web.py`）改讀 `web/ui/dist`。
   - Acceptance：
-    - [ ] `git mv web/{index.html,package.json,package-lock.json,tsconfig.json,vite.config.ts,src} web/ui/`
-    - [ ] `src/web.py`：`self.dist`、selftest 的假 dist、`BUILD_COMMAND`（`npm --prefix web/ui install && npm --prefix web/ui run build`）、503 頁說明與 docstring 全部指向 `web/ui`；`SPA_ROUTES`、`is_local_request`、CSP、API 路徑與欄位一律不動
-    - [ ] Dockerfile node 階段改 `web/ui/…`，最終映像 `COPY --from=web /web/dist ./web/ui/dist`；`.dockerignore`、`.gitignore`（含 `/web/ui/node_modules/`、`/web/ui/dist/`）更新；README 的 Web 前端段落
-    - [ ] 本機 `.claude/launch.json`（未追蹤）若需要也更新
+    - [x] `git mv web/{index.html,package.json,package-lock.json,tsconfig.json,vite.config.ts,src} web/ui/`
+    - [x] `src/web.py`：`self.dist`、selftest 的假 dist、`BUILD_COMMAND`（`npm --prefix web/ui install && npm --prefix web/ui run build`）、503 頁說明與 docstring 全部指向 `web/ui`；`SPA_ROUTES`、`is_local_request`、CSP、API 路徑與欄位一律不動
+    - [x] Dockerfile node 階段改 `web/ui/…`，最終映像 `COPY --from=web /web/dist ./web/ui/dist`；`.dockerignore`、`.gitignore`（含 `/web/ui/node_modules/`、`/web/ui/dist/`）更新；README 的 Web 前端段落
+    - [x] 本機 `.claude/launch.json`（未追蹤）若需要也更新
   - Verification：
-    - [ ] `npm --prefix web/ui ci && npm --prefix web/ui run typecheck && npm --prefix web/ui test && npm --prefix web/ui run build`
-    - [ ] `uv run --locked python src/web.py --selftest`；建置後 `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/` 為 200
-    - [ ] V-DOCKER（映像內有 `/app/web/ui/dist/index.html`）；V-CI、V-GIT
+    - [x] `npm --prefix web/ui ci && npm --prefix web/ui run typecheck && npm --prefix web/ui test && npm --prefix web/ui run build`
+    - [x] `uv run --locked python src/web.py --selftest`；建置後 `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/` 為 200
+    - [x] V-DOCKER（映像內有 `/app/web/ui/dist/index.html`）；V-CI、V-GIT
   - Dependencies：T11
   - Files：（搬）`web/` 前端整包；（改）`src/web.py`、`Dockerfile`、`.dockerignore`、`.gitignore`、`README.md`
   - Scope：M（一次目錄搬移 ＋ 5 個小改動）
