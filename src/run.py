@@ -13,11 +13,11 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-import curate as curate_mod  # noqa: E402
-import fetch as fetch_mod  # noqa: E402
+from newsletter_agent import curate as curate_mod  # noqa: E402
+from newsletter_agent import fetch as fetch_mod  # noqa: E402
 from newsletter_shared import metrics  # noqa: E402
 import report as report_mod  # noqa: E402
-import sources as sources_mod  # noqa: E402
+from newsletter_agent import sources as sources_mod  # noqa: E402
 
 
 INTERESTS = ROOT / "config" / "interests.md"

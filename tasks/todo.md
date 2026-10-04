@@ -144,17 +144,17 @@
 
 ## Phase 3：agent 與 notify
 
-- [ ] **T8：agent 函式庫——`sources`、`fetch`、`curate` 進 `agent` 套件**
+- [x] **T8：agent 函式庫——`sources`、`fetch`、`curate` 進 `agent` 套件**
   - Description：建立 `agent` 套件，先搬三個不含 CLI 的函式庫；`run.py`（還在 `src/`）改 import 新套件。
   - Acceptance：
-    - [ ] 三檔 → `agent/src/newsletter_agent/`；`agent/pyproject.toml`（依賴 `newsletter-shared`，此時不含 SDK）；根 `members`／`dependencies` 加 `agent`；`uv.lock` 重生且 SDK 版本不變
-    - [ ] **`curate.STATE` 改為 `ROOT/"state"/"seen.json"`**（原本是 `Path(__file__).parent.parent`，搬後會指進套件目錄）；curate 的 selftest 斷言實際路徑
-    - [ ] `src/run.py` 的 `import curate as curate_mod` 等改 `from newsletter_agent import …`
-    - [ ] Dockerfile、`.dockerignore`、`.gitignore`、CI（`python -m newsletter_agent.curate`、`.fetch`）更新
+    - [x] 三檔 → `agent/src/newsletter_agent/`；`agent/pyproject.toml`（依賴 `newsletter-shared`，此時不含 SDK）；根 `members`／`dependencies` 加 `agent`；`uv.lock` 重生且 SDK 版本不變
+    - [x] **`curate.STATE` 改為 `ROOT/"state"/"seen.json"`**（原本是 `Path(__file__).parent.parent`，搬後會指進套件目錄）；curate 的 selftest 斷言實際路徑
+    - [x] `src/run.py` 的 `import curate as curate_mod` 等改 `from newsletter_agent import …`
+    - [x] Dockerfile、`.dockerignore`、`.gitignore`、CI（`python -m newsletter_agent.curate`、`.fetch`）更新
   - Verification：
-    - [ ] V-CI；`check_boundaries.py`（agent 只 import shared）；V-GREP；V-GIT
-    - [ ] `uv run --locked src/run.py --list-sources` 與 `old.sources.txt` 相同
-    - [ ] V-DOCKER（建置成功、`docker run … python -c "import newsletter_agent.curate"`）
+    - [x] V-CI；`check_boundaries.py`（agent 只 import shared）；V-GREP；V-GIT
+    - [x] `uv run --locked src/run.py --list-sources` 與 `old.sources.txt` 相同
+    - [x] V-DOCKER（建置成功、`docker run … python -c "import newsletter_agent.curate"`）
   - Dependencies：T7
   - Files：（搬）`sources.py`、`fetch.py`、`curate.py`；（改）`src/run.py`、`agent/pyproject.toml`、根 `pyproject.toml`、`uv.lock`、`Dockerfile`、`.dockerignore`、`.gitignore`、`selftest.yml`
   - Scope：M-L（搬 3 ＋配置；配置改動各只有幾行）

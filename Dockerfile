@@ -38,8 +38,10 @@ WORKDIR /app
 # --no-install-workspace 只裝第三方依賴；成員（editable）在複製原始碼之後才安裝，ROOT 因此是 /app。
 COPY --chown=app:app pyproject.toml uv.lock .python-version ./
 COPY --chown=app:app shared/pyproject.toml ./shared/pyproject.toml
+COPY --chown=app:app agent/pyproject.toml ./agent/pyproject.toml
 RUN uv sync --locked --no-install-workspace
 COPY --chown=app:app shared ./shared
+COPY --chown=app:app agent ./agent
 RUN uv sync --locked
 
 COPY --chown=app:app run_daily.sh ./

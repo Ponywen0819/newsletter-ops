@@ -35,6 +35,8 @@
 # Python 成員（uv workspace）：只放行 pyproject.toml 與 src/<套件>/ 底下的 .py
 !/shared/pyproject.toml
 !/shared/src/**/*.py
+!/agent/pyproject.toml
+!/agent/src/**/*.py
 
 # Web 前端（Vite + React）：只放行原始碼、設定與鎖檔
 !/web/index.html

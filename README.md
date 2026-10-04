@@ -9,9 +9,9 @@ ISSUES.md                  已知問題與限制（先看這裡）
 config/interests.md        關注範圍（自然語言），報告判讀的依據
 config/config.json         執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json    來源清單，一個主題一個檔
-src/sources.py             來源載入層：掃 sources.d、驗證欄位、去重、處理停用
-src/fetch.py               抓取層：RSS 2.0 / Atom / arXiv API（零第三方依賴）
-src/curate.py              整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
+agent/src/newsletter_agent/sources.py  來源載入層：掃 sources.d、驗證欄位、去重、處理停用
+agent/src/newsletter_agent/fetch.py  抓取層：RSS 2.0 / Atom / arXiv API（零第三方依賴）
+agent/src/newsletter_agent/curate.py  整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
 src/report.py              輸出層：模板版 Markdown（無 LLM 保底）
 shared/src/newsletter_shared/metrics.py  量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
 src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
@@ -176,7 +176,7 @@ npm run typecheck
 排程需要 OAuth token（環境變數 `CLAUDE_CODE_OAUTH_TOKEN`，或 `/auth` 頁面存的檔，見「無人值守」的「認證」）；兩者都沒有時 `agent_run.py` 直接 exit 2。
 macOS 的 cron 需要「完整磁碟取用權」，或改用 launchd。
 
-arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`，自我檢查：`uv run src/curate.py`、`uv run src/render_email.py --selftest`。
+arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`，自我檢查：`uv run python -m newsletter_agent.curate`、`uv run src/render_email.py --selftest`。
 
 ## 無人值守（Claude Agent SDK）
 

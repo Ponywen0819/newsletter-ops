@@ -1,0 +1,14 @@
+[project]
+name = "newsletter-agent"
+version = "0.1.0"
+description = "newsletter-ops 的核心：抓取 → 整理 → Claude 依 news-digest skill 寫報告"
+requires-python = ">=3.10"
+# claude-agent-sdk 隨 agent_run 一起搬進來；這個套件不得依賴 notify 或 web（deploy/check_boundaries.py 會檢查）
+dependencies = ["newsletter-shared"]
+
+[tool.uv.sources]
+newsletter-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12"]
+build-backend = "uv_build"
