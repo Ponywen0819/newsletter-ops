@@ -115,11 +115,11 @@
 
 ### ◆ Checkpoint A：shared 完成
 
-- [ ] `ls src/` 已沒有 `feedback`／`report_data`／`metrics`／`auth_store`
-- [ ] V-CI 全綠、`check_boundaries.py` 通過
-- [ ] V-GOLD（同 T4 的 `new` 覆寫）六項全部相同
-- [ ] V-DOCKER：建置成功；容器內 `python src/web.py --selftest` 通過（CMD 仍是舊路徑，靠 venv 的 python 能 import 新套件）
-- [ ] `git log --follow` 抽查兩個被搬的檔案追得到歷史
+- [x] `ls src/` 已沒有 `feedback`／`report_data`／`metrics`／`auth_store`
+- [x] V-CI 全綠、`check_boundaries.py` 通過
+- [x] V-GOLD（同 T4 的 `new` 覆寫）六項全部相同
+- [x] V-DOCKER：建置成功；容器內 `python src/web.py --selftest` 通過（CMD 仍是舊路徑，靠 venv 的 python 能 import 新套件）
+- [x] `git log --follow` 抽查兩個被搬的檔案追得到歷史
 - [ ] **使用者審閱後才繼續**
 
 ## Phase 2：反轉
