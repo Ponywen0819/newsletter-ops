@@ -31,6 +31,16 @@ export interface Report {
   sources: { title: string; url: string }[]
 }
 
+/** GET /api/feedback/<uid>：email 連結的確認頁要顯示的資料 */
+export interface FeedbackTarget {
+  uid: string
+  /** 含這則的最新一份晨報 */
+  date: string
+  /** 沒有 curated 資料時是空字串 */
+  title: string
+  mark: Mark
+}
+
 /** uid → 目前的標記；沒標或已取消的不在裡面 */
 export type Marks = Record<string, Mark>
 

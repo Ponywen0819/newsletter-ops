@@ -109,6 +109,13 @@ uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的�
 - `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
   （改版前是 `POST /feedback`；若有外部腳本或 Cloudflare Access 規則寫死舊路徑，要跟著改。）
 - `/auth`（貼 OAuth token）**只服務本機**，經 Tunnel 進來的一律 404，見下一節。
+- **email 裡的 👍／👎**：設環境變數 `NEWSLETTER_BASE_URL`（對外網址，如 `https://news.example.com`，要 `http(s)://` 開頭）後，
+  `render_email.py` 會在每則底下加兩個連結，指向 `<base>/feedback/<uid>?v=%2B`（👍）／`?v=-`（👎），手機看信也能回饋。
+  **連結不會一點就寫入**：信箱的安全掃描會自動開連結，所以 GET 只顯示「確認標為 👍」的頁面（`web/src/pages/FeedbackPage.tsx`，
+  資料來自 `GET /api/feedback/<uid>`，純讀取），按了確認才 `POST /api/feedback`。已經是同一個標記就只顯示「已記下」；
+  標記不同則說明會覆蓋。沒設 `NEWSLETTER_BASE_URL`（本機測試）就不加按鈕；格式不對會在 stderr 警告並不加。
+  網址要是 Tunnel + Access 保護的那個網域：點連結時 Access 會先要求登入，掃描器看到的只是登入頁。
+  Docker 部署在 `.env` 設；systemd／cron 部署在 `~/.config/newsletter-ops/env` 設。
 
 ### Web 前端（`web/`）
 
@@ -125,10 +132,10 @@ npm test             # Vitest + Testing Library：元件與路由
 npm run typecheck
 ```
 
-- 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/auth` 授權（只限本機）。後端對這幾條回 `index.html`，
+- 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機）。後端對這幾條回 `index.html`，
   其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`src/web.py` 的 `SPA_ROUTES` 要同步。
 - API（細節見 `src/web.py` 開頭的說明、型別見 `web/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
-  `/api/reports/<date>`、`/api/auth`；`POST /api/feedback`、`/api/auth/token|test|revoke`。
+  `/api/reports/<date>`、`/api/feedback/<uid>`、`/api/auth`；`POST /api/feedback`、`/api/auth/token|test|revoke`。
 - 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
@@ -298,6 +305,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up，PORTS 欄�
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
 | **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的 👍 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
+| `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的 👍 | 先經 Access 登入，再看到「確認標為 👍」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
 | `docker compose run --rm scheduler uv run src/agent_run.py --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、有費用）。

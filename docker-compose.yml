@@ -38,6 +38,7 @@ services:
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:?請在 .env 設定 GMAIL_APP_PASSWORD}
       NEWSLETTER_MAIL_TO: ${NEWSLETTER_MAIL_TO:-${GMAIL_USER}}   # 沒設就寄給自己
       NEWSLETTER_RUN_AT: ${NEWSLETTER_RUN_AT:-08:00}
+      NEWSLETTER_BASE_URL: ${NEWSLETTER_BASE_URL:-}   # 有設，email 才有 👍／👎 連結
 
   cloudflared:
     image: cloudflare/cloudflared:latest

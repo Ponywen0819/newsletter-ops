@@ -1,4 +1,4 @@
-import type { AuthResult, AuthStatus, Mark, ReportPayload, ReportSummary, Session, TodayPayload } from './types'
+import type { AuthResult, AuthStatus, FeedbackTarget, Mark, ReportPayload, ReportSummary, Session, TodayPayload } from './types'
 
 /** 伺服器回了非 2xx。message 是伺服器給的 error 文字（沒有就是狀態碼）。 */
 export class ApiError extends Error {
@@ -35,6 +35,7 @@ export const api = {
   today: () => request<TodayPayload>('/api/today'),
   reports: () => request<{ reports: ReportSummary[] }>('/api/reports').then((r) => r.reports),
   report: (date: string) => request<ReportPayload>(`/api/reports/${encodeURIComponent(date)}`),
+  feedbackTarget: (uid: string) => request<FeedbackTarget>(`/api/feedback/${encodeURIComponent(uid)}`),
   /** mark '' ＝ 取消。回傳伺服器實際記下的 mark。 */
   feedback: (uid: string, mark: Mark) => request<{ uid: string; mark: Mark }>('/api/feedback', { uid, mark }),
   auth: {

@@ -6,7 +6,7 @@ port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
 前端是 web/ 底下的 Vite + React 專案，要先建置：`cd web && npm install && npm run build`，
 這裡把 web/dist 當靜態檔提供（/assets/* 帶 hash，長期快取；index.html 每次確認）。
-前端的路由（/、/reports、/reports/<date>、/auth）一律回 index.html，由前端自己畫；沒建置過時回 503 並說明怎麼建置。
+前端的路由（/、/reports、/reports/<date>、/feedback/<uid>、/auth）一律回 index.html，由前端自己畫；沒建置過時回 503 並說明怎麼建置。
 開發前端用 `cd web && npm run dev`（Vite dev server，把 /api 代理到這裡），不必每次重新建置。
 
 API（都是 JSON；前端的型別在 web/src/types.ts）：
@@ -14,10 +14,14 @@ API（都是 JSON；前端的型別在 web/src/types.ts）：
   GET  /api/today             {date, latest, report, marks}   當日晨報；還沒產出時 report 是 null、latest 是最新一份的日期
   GET  /api/reports           {reports: [{date, headline}]}   歷史列表，新到舊
   GET  /api/reports/<date>    {date, report, marks}   report 是 report_data.parse_report() 的結構（不是 HTML）
+  GET  /api/feedback/<uid>    {uid, date, title, mark}  email 連結的確認頁用：這則的標題與目前標記（只讀，不寫入）
   POST /api/feedback          {uid, mark}             👍／👎
   GET  /api/auth              {state, ...}            OAuth token 的狀態（只限本機）
   POST /api/auth/token|test|revoke                    貼上、測試、刪除 OAuth token（只限本機）
 晨報的 Markdown 由 report_data.py 解析成結構，版型由前端負責；email 版型仍由 render_email.py 產生，兩者互不影響。
+
+email 裡的 👍／👎 連結（render_email.py，需設 NEWSLETTER_BASE_URL）指向 /feedback/<uid>?v=…：
+GET 只畫確認頁（信箱的安全掃描會自動開連結，所以 GET 絕不寫入），頁面上再按一次才 POST /api/feedback。
 
 回饋規則：只有 `+`（👍）、`-`（👎）兩級；再按一次同一顆＝取消，按另一顆＝覆蓋。
 一律 append 一行到 feedback.jsonl，以同一 uid 的最後一筆為準；取消寫成 mark ""。
@@ -77,7 +81,7 @@ MAX_BODY = 4096
 CHECK_TIMEOUT = 90  # 秒；驗證 token 的子程序最多等這麼久（無效 token 約 2 秒，有效的幾秒；卡住要放棄）
 
 # 前端的路由（web/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
-SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/auth")
+SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
 BUILD_COMMAND = "cd web && npm install && npm run build"
 STATIC_TYPES = {  # 副檔名白名單：dist 裡只有這些會被提供
     ".html": "text/html; charset=utf-8",
@@ -272,6 +276,14 @@ class Site:
             return {}
         return next((i for i in payload.get("items", []) if i.get("uid") == uid), {})
 
+    def feedback_target(self, uid: str) -> dict:
+        """email 連結的確認頁要顯示的資料。任何一份報告裡都沒有這個 uid ＝ NotFound。"""
+        date = self._find_report(uid) if UID_RE.fullmatch(uid) else None
+        if date is None:
+            raise NotFound(uid)
+        return {"uid": uid, "date": date, "title": self._curated_item(date, uid).get("title", ""),
+                "mark": self.marks().get(uid, "")}
+
     def record(self, uid: str, mark: str) -> dict:
         """append 一列到 feedback.jsonl，回傳寫入的那一列。mark '' ＝ 取消。"""
         if mark not in MARKS:
@@ -402,6 +414,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self.site.list_payload()
             elif m := re.fullmatch(r"/api/reports/(\d{4}-\d{2}-\d{2})", path):
                 payload = self.site.report_payload(m[1])
+            elif m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
+                payload = self.site.feedback_target(m[1])
             elif path == "/api/auth" and self._local():
                 payload = self.site.auth_status()
             else:
@@ -651,8 +665,21 @@ def selftest() -> None:
                 fh.write(json.dumps(feedback.build_row("f" * 16, "+", "2026-08-01.md", {})) + "\n")
             assert marks() == {uid_b: "-", uid_c: "+"}
 
-            # 擋掉不合法的請求，且不寫檔
+            # email 連結的確認頁：GET 只讀，絕不寫入；標題來自 curated，沒有就空字串；mark 是目前的標記
             before = site.feedback_path.read_text(encoding="utf-8")
+            assert get(f"/api/feedback/{uid_a}") == (200, {"uid": uid_a, "date": "2026-09-28", "title": "重點", "mark": ""})
+            assert get(f"/api/feedback/{uid_b}")[1] == {"uid": uid_b, "date": "2026-09-28", "title": "", "mark": "-"}
+            assert get(f"/api/feedback/{uid_c}")[1]["mark"] == "+"  # ++ 在網頁上算同一級
+            for path in (f"/api/feedback/{'e' * 16}", "/api/feedback/xyz", "/api/feedback/", "/api/feedback"):
+                assert get(path)[0] == 404, path  # 報告裡沒有的 uid、格式不符
+            for v in ("%2B", "-", "+"):  # 連結本身（含 ?v=）回前端的 index.html，同樣不寫入
+                status, _, body = req("GET", f"/feedback/{uid_a}?v={v}")
+                assert status == 200 and body == shell, (v, status)
+            assert req("GET", f"/feedback/{'e' * 16}")[0] == 200  # 頁面照給，找不到由前端畫
+            assert req("GET", "/feedback/xyz")[0] == 404 and req("GET", "/feedback")[0] == 404
+            assert site.feedback_path.read_text(encoding="utf-8") == before
+
+            # 擋掉不合法的請求，且不寫檔
             assert post({"uid": uid_a, "mark": "++"})[0] == 400
             assert post({"uid": "xyz", "mark": "+"})[0] == 400
             assert post({"uid": "e" * 16, "mark": "+"})[0] == 404          # 報告裡沒有這個 uid
