@@ -159,15 +159,15 @@
   - Files：（搬）`sources.py`、`fetch.py`、`curate.py`；（改）`src/run.py`、`agent/pyproject.toml`、根 `pyproject.toml`、`uv.lock`、`Dockerfile`、`.dockerignore`、`.gitignore`、`selftest.yml`
   - Scope：M-L（搬 3 ＋配置；配置改動各只有幾行）
 
-- [ ] **T9：`run.py`、`report.py` 進 `agent` ＋ `newsletter-fetch`**
+- [x] **T9：`run.py`、`report.py` 進 `agent` ＋ `newsletter-fetch`**
   - Acceptance：
-    - [ ] 兩檔 → `agent/.../`；`[project.scripts] newsletter-fetch = "newsletter_agent.run:main"`；`--config` 預設路徑改 `paths.ROOT/"config"/"config.json"`
-    - [ ] `run_daily.sh` 第 1 步、skill、CI（`--list-sources`）、README 使用說明 → `newsletter-fetch`
-    - [ ] `src/` 只剩 `agent_run.py`、`render_email.py`、`send_email.py`、`web.py`
+    - [x] 兩檔 → `agent/.../`；`[project.scripts] newsletter-fetch = "newsletter_agent.run:main"`；`--config` 預設路徑改 `paths.ROOT/"config"/"config.json"`
+    - [x] `run_daily.sh` 第 1 步、skill、CI（`--list-sources`）、README 使用說明 → `newsletter-fetch`
+    - [x] `src/` 只剩 `agent_run.py`、`render_email.py`、`send_email.py`、`web.py`
   - Verification：
-    - [ ] V-GOLD（`FETCH="uv run --locked newsletter-fetch"`，其餘仍 `src/`）：`sources.txt` 相同
-    - [ ] 離線煙霧測試：`NEWSLETTER_RUN_LABEL=test uv run --locked newsletter-fetch --list-sources` exit 0
-    - [ ] V-CI、`check_boundaries.py`、V-GREP
+    - [x] V-GOLD（`FETCH="uv run --locked newsletter-fetch"`，其餘仍 `src/`）：`sources.txt` 相同
+    - [x] 離線煙霧測試：`NEWSLETTER_RUN_LABEL=test uv run --locked newsletter-fetch --list-sources` exit 0
+    - [x] V-CI、`check_boundaries.py`、V-GREP
   - Dependencies：T8
   - Files：（搬）`run.py`、`report.py`；（改）`agent/pyproject.toml`、`run_daily.sh`、`SKILL.md`、`selftest.yml`、`README.md`
   - Scope：M

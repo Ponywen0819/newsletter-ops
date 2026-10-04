@@ -30,6 +30,6 @@ jobs:
       - run: uv run --locked python -m newsletter_shared.auth_store --selftest
       - run: uv run --locked python -m newsletter_shared.report_data --selftest
       - run: uv run --locked python src/web.py --selftest
-      - run: uv run --locked python src/run.py --list-sources
+      - run: uv run --locked newsletter-fetch --list-sources
       - run: python3 deploy/check_boundaries.py --selftest
       - run: python3 deploy/check_boundaries.py

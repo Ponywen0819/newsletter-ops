@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # 排程入口（systemd timer / cron 都呼叫這支）。每日依序：
-#   1. run.py --no-report      抓取 → data/curated/<date>.json
+#   1. newsletter-fetch --no-report      抓取 → data/curated/<date>.json
 #   2. agent_run.py            Claude Agent SDK 依 news-digest skill 寫 reports/<date>.md，並驗收（有更新、格式正確）
 #   3. render_email.py         reports/<date>.md → reports/<date>.html；stdout 是一行 JSON
 #   4. send_email.py           讀上一步的 JSON，寄出
 # 任一步失敗就停下並以該步的 exit code 結束（systemd 會標成 failed），過程全進 logs/<YYYY-MM>.log。
 # 機密從 env 檔載入，預設 ~/.config/newsletter-ops/env（NEWSLETTER_ENV_FILE 可改），權限必須是 600。
-# 額外參數（如 --lookback 72）會轉給 run.py。
+# 額外參數（如 --lookback 72）會轉給 newsletter-fetch。
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p logs
@@ -33,8 +33,8 @@ exec >> "$LOG" 2>&1
 trap 'status=$?; stamp "失敗，exit $status：$BASH_COMMAND"; exit $status' ERR
 
 # --locked：uv.lock 跟 pyproject.toml 對不上就直接失敗，不要在排程裡自己改鎖檔
-stamp "uv run src/run.py --no-report $*"
-uv run --locked src/run.py --no-report "$@"
+stamp "uv run newsletter-fetch --no-report $*"
+uv run --locked newsletter-fetch --no-report "$@"
 stamp "uv run src/agent_run.py"
 uv run --locked src/agent_run.py
 stamp "uv run src/render_email.py"

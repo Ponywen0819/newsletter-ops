@@ -6,6 +6,9 @@ requires-python = ">=3.10"
 # claude-agent-sdk 隨 agent_run 一起搬進來；這個套件不得依賴 notify 或 web（deploy/check_boundaries.py 會檢查）
 dependencies = ["newsletter-shared"]
 
+[project.scripts]
+newsletter-fetch = "newsletter_agent.run:main"
+
 [tool.uv.sources]
 newsletter-shared = { workspace = true }
 

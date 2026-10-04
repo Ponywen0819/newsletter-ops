@@ -11,8 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from newsletter_shared.feedback import mark_comment
-
-ROOT = Path(__file__).resolve().parent.parent
+from newsletter_shared.paths import ROOT
 
 
 def render(items: list[dict], stats: dict, config: dict, errors: list[str]) -> str:

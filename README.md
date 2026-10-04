@@ -12,7 +12,7 @@ config/sources.d/*.json    來源清單，一個主題一個檔
 agent/src/newsletter_agent/sources.py  來源載入層：掃 sources.d、驗證欄位、去重、處理停用
 agent/src/newsletter_agent/fetch.py  抓取層：RSS 2.0 / Atom / arXiv API（零第三方依賴）
 agent/src/newsletter_agent/curate.py  整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
-src/report.py              輸出層：模板版 Markdown（無 LLM 保底）
+agent/src/newsletter_agent/report.py  輸出層：模板版 Markdown（無 LLM 保底）
 shared/src/newsletter_shared/metrics.py  量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
 src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
@@ -22,7 +22,7 @@ shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標�
 shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
 src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
 web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
-src/run.py                 入口 CLI
+agent/src/newsletter_agent/newsletter-fetch  入口 CLI（newsletter-fetch）
 run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → render_email.py → send_email.py，失敗留 log、exit 非 0
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume（見「部署到家用 host」）
 deploy/                    不用 Docker 時的範本：systemd 單元、cloudflared 設定、env 範本
@@ -58,10 +58,10 @@ skill 裡由 agent 呼叫的指令都是 `uv run --locked …`，要在 repo 根
 ## 使用
 
 ```bash
-uv run src/run.py --dry-run     # 只測來源連通性
-uv run src/run.py               # 完整跑一次（含模板版報告）
-uv run src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
-uv run src/run.py --lookback 72 # 放寬時間窗到 72 小時
+uv run newsletter-fetch --dry-run     # 只測來源連通性
+uv run newsletter-fetch               # 完整跑一次（含模板版報告）
+uv run newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
+uv run newsletter-fetch --lookback 72 # 放寬時間窗到 72 小時
 uv run newsletter-feedback      # 收集報告裡填的標記
 (cd web && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
 uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
@@ -81,7 +81,7 @@ agent（`agent_run.py`，或在對話裡手動跑 skill）只負責寫 `reports/
 
 **突變**（換題目、接新案子）→ 改 `config/interests.md`，用自然語言寫「核心 / 關注 /
 背景 / 不要」四級，並更新檔頂的 `updated:` 日期。`news-digest` skill 每次寫報告前都讀它，
-skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每次執行都會在 stderr 提醒一行。
+skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-fetch` 每次執行都會在 stderr 提醒一行。
 
 **漸變**（慢慢偏移，自己察覺不到）→ 靠標記累積資料。報告每則末尾有一行：
 
@@ -163,10 +163,10 @@ npm run typecheck
 0 8 * * * $HOME/newsletter-ops/run_daily.sh
 ```
 
-它依序跑 `run.py --no-report` → `agent_run.py` → `render_email.py` → `send_email.py`（`render_email.py` 的 stdout 是一行 JSON，
+它依序跑 `newsletter-fetch --no-report` → `agent_run.py` → `render_email.py` → `send_email.py`（`render_email.py` 的 stdout 是一行 JSON，
 先收進變數再餵給 `send_email.py`）。任一步失敗就停下、以該步的 exit code 結束（`agent_run.py` 的 1～6 見下節），
-並在 `logs/<YYYY-MM>.log` 留一行失敗紀錄。額外參數（如 `--lookback 72`）轉給 `run.py`。
-先由 `run.py` 抓好當日 curated JSON，agent 讀到的就是今天的檔，不必自己再抓一次。
+並在 `logs/<YYYY-MM>.log` 留一行失敗紀錄。額外參數（如 `--lookback 72`）轉給 `newsletter-fetch`。
+先由 `newsletter-fetch` 抓好當日 curated JSON，agent 讀到的就是今天的檔，不必自己再抓一次。
 
 內部用 `uv run --locked` 執行，並替 cron 精簡的 PATH 補上 uv 常見的安裝位置（`~/.local/bin`、`~/.cargo/bin`、Homebrew）。
 `--locked` 讓鎖檔與 `pyproject.toml` 對不上時直接失敗，不會在排程裡自己改鎖檔。
@@ -356,7 +356,7 @@ git pull && docker compose up -d --build          # 更新（interests.md、conf
 git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops
 cd ~/newsletter-ops && uv sync --locked      # 建 .venv、裝 claude-agent-sdk；沒有 Python 3.11 時 uv 會自己下載
 (cd web && npm ci && npm run build)          # 建置網頁前端到 web/dist；沒做的話 web service 的頁面都回 503
-uv run src/run.py --list-sources             # 不連網，確認設定可用
+uv run newsletter-fetch --list-sources             # 不連網，確認設定可用
 ```
 
 **2. 機密**
@@ -425,14 +425,14 @@ Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理�
 
 ## 量測（debug）
 
-`config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run src/run.py ...`），每個階段會寫一行到
+`config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run newsletter-fetch ...`），每個階段會寫一行到
 `logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`render`，
 以及 news-digest 跑完後由 `uv run newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
 
 ```bash
 uv run newsletter-metrics summary 14         # 最近 14 天，每次正式執行一行
 uv run newsletter-metrics summary 14 --all   # 連測試執行一起列
-NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run src/run.py --no-report   # 測試執行，紀錄標 test
+NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run newsletter-fetch --no-report   # 測試執行，紀錄標 test
 ```
 
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
@@ -469,7 +469,7 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run src/run.py --no-report   # �
 weight，錯誤訊息會指出是哪個檔的哪個來源，程式以 exit code 2 結束。
 
 ```bash
-uv run src/run.py --list-sources   # 不連網，列出載入結果與停用項目
+uv run newsletter-fetch --list-sources   # 不連網，列出載入結果與停用項目
 ```
 
 改 `interests.md` 時順手看一次 `keywords`——前者是判讀用的自然語言，後者是評分用的
@@ -518,7 +518,7 @@ uv run src/run.py --list-sources   # 不連網，列出載入結果與停用項�
 Hugging Face / Google Research 給 1.2。數量由配額控制。
 
 ```bash
-uv run src/run.py --list-sources   # 不連網，列出載入結果與停用項目
+uv run newsletter-fetch --list-sources   # 不連網，列出載入結果與停用項目
 ```
 
 改 `interests.md` 時順手看一次 `keywords`——前者是判讀用的自然語言，後者是評分用的
