@@ -110,7 +110,9 @@ uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的�
   （改版前是 `POST /feedback`；若有外部腳本或 Cloudflare Access 規則寫死舊路徑，要跟著改。）
 - `/auth`（貼 OAuth token）**只服務本機**，經 Tunnel 進來的一律 404，見下一節。
 - **email 裡的 👍／👎**：設環境變數 `NEWSLETTER_BASE_URL`（對外網址，如 `https://news.example.com`，要 `http(s)://` 開頭）後，
-  `render_email.py` 會在每則底下加兩個連結，指向 `<base>/feedback/<uid>?v=%2B`（👍）／`?v=-`（👎），手機看信也能回饋。
+  `render_email.py` 會在每則**主要新聞**底下加兩個連結，指向 `<base>/feedback/<uid>?v=%2B`（👍）／`?v=-`（👎），手機看信也能回饋。
+  與網頁一致：「其餘收錄」那種沒有標題段落的整張單行清單不放連結；併了多篇文章的新聞（報告裡連著好幾行 mark，每篇一個 uid）只放一組，
+  uid 用逗號接起來 `<base>/feedback/<uid>,<uid>?v=…`，確認頁一次對每個 uid 各投一票（單一 uid 的舊連結照常可用）。
   **連結不會一點就寫入**：信箱的安全掃描會自動開連結，所以 GET 只顯示「確認標為 👍」的頁面（`web/src/pages/FeedbackPage.tsx`，
   資料來自 `GET /api/feedback/<uid>`，純讀取），按了確認才 `POST /api/feedback`。已經是同一個標記就只顯示「已記下」；
   標記不同則說明會覆蓋。沒設 `NEWSLETTER_BASE_URL`（本機測試）就不加按鈕；格式不對會在 stderr 警告並不加。

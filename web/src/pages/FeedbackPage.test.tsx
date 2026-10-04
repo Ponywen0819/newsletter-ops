@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -95,5 +95,89 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
   it('標題為空（沒有 curated 資料）：用「這則新聞」代替', async () => {
     open('?v=-', { [`GET /api/feedback/${UID}`]: () => ({ json: { ...target(), title: '' } }) })
     expect(await screen.findByText('「這則新聞」')).toBeInTheDocument()
+  })
+})
+
+// 併了多篇文章的新聞：email 連結是 /feedback/<uid>,<uid>，一次確認、對每個 uid 各投一票
+describe('/feedback/<uid>,<uid>（併了多篇的新聞）', () => {
+  const A = '0123456789abcdef'
+  const B = '1111111111111111'
+  const targetOf = (uid: string, title: string, mark: Mark = ''): FeedbackTarget => ({ uid, date: '2026-09-28', title, mark })
+
+  function openMulti(path: string, routes: Parameters<typeof mockFetch>[0] = {}) {
+    const net = mockFetch({
+      'GET /api/session': () => ({ json: { local: false } }),
+      [`GET /api/feedback/${A}`]: () => ({ json: targetOf(A, '三星漲價') }),
+      [`GET /api/feedback/${B}`]: () => ({ json: targetOf(B, 'Pixel 10a 調漲') }),
+      'POST /api/feedback': (body) => ({ json: body }),
+      ...routes,
+    })
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+      </MemoryRouter>,
+    )
+    return net
+  }
+
+  it('每篇的標題都列出來；開頁只讀；按確認對每個 uid 各 POST 一次', async () => {
+    const net = openMulti(`/feedback/${A},${B}?v=%2B`)
+    expect(await screen.findByText('「三星漲價」')).toBeInTheDocument()
+    expect(screen.getByText('「Pixel 10a 調漲」')).toBeInTheDocument()
+    expect(posts(net)).toEqual([])
+    await userEvent.click(screen.getByRole('button', { name: '確認標為 有用' }))
+    expect(await screen.findByText('已記下 有用。')).toBeInTheDocument()
+    expect(posts(net).map((c) => c.body)).toEqual([
+      { uid: A, mark: '+' },
+      { uid: B, mark: '+' },
+    ])
+    expect(screen.queryByRole('button', { name: /確認標為/ })).toBeNull()
+  })
+
+  it('兩篇都已經是這個標記：只顯示已記下；兩篇標記不同：說明會統一', async () => {
+    openMulti(`/feedback/${A},${B}?v=%2B`, {
+      [`GET /api/feedback/${A}`]: () => ({ json: targetOf(A, '三星漲價', '+') }),
+      [`GET /api/feedback/${B}`]: () => ({ json: targetOf(B, 'Pixel 10a 調漲', '+') }),
+    })
+    expect(await screen.findByText('已記下 有用。')).toBeInTheDocument()
+    expect(screen.queryByRole('button')).toBeNull()
+    cleanup()
+
+    openMulti(`/feedback/${A},${B}?v=%2B`, {
+      [`GET /api/feedback/${A}`]: () => ({ json: targetOf(A, '三星漲價', '+') }),
+      [`GET /api/feedback/${B}`]: () => ({ json: targetOf(B, 'Pixel 10a 調漲', '-') }),
+    })
+    expect(await screen.findByText('這幾篇目前的標記不一致，確認後會統一標為 有用。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '確認標為 有用' })).toBeEnabled()
+  })
+
+  it('部分寫入失敗：顯示錯誤、按鈕還在、不假裝成功；成功的那篇不會被收回', async () => {
+    const net = openMulti(`/feedback/${A},${B}?v=-`, {
+      'POST /api/feedback': (body) => ((body as { uid: string }).uid === B ? { status: 500, json: { error: 'x' } } : { json: body }),
+    })
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 沒用' }))
+    expect(await screen.findByText(/儲存失敗/)).toBeInTheDocument()
+    expect(screen.queryByText(/已記下/)).toBeNull()
+    expect(screen.getByRole('button', { name: '確認標為 沒用' })).toBeEnabled()
+    expect(screen.getByText('這幾篇目前的標記不一致，確認後會統一標為 沒用。')).toBeInTheDocument() // A 已寫入、B 還沒
+    expect(posts(net)).toHaveLength(2)
+  })
+
+  it('重複的 uid 只算一次；單一 uid 的連結照舊', async () => {
+    const net = openMulti(`/feedback/${A},${A}?v=%2B`)
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 有用' }))
+    await screen.findByText('已記下 有用。')
+    expect(posts(net).map((c) => c.body)).toEqual([{ uid: A, mark: '+' }])
+  })
+
+  it('其中一個找不到：整頁當找不到；uid 太多：連結不完整，而且不會發出任何請求', async () => {
+    openMulti(`/feedback/${A},${B}?v=%2B`, { [`GET /api/feedback/${B}`]: () => ({ status: 404, json: { error: 'nope' } }) })
+    expect(await screen.findByRole('heading', { name: '找不到這則新聞' })).toBeInTheDocument()
+    cleanup()
+
+    const many = Array.from({ length: 11 }, (_, i) => String(i).padStart(16, '0')).join(',')
+    const net = openMulti(`/feedback/${many}?v=%2B`)
+    expect(await screen.findByRole('heading', { name: '連結不完整' })).toBeInTheDocument()
+    expect(net.calls.filter((c) => c.path.startsWith('/api/feedback'))).toEqual([])
   })
 })

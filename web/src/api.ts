@@ -30,6 +30,8 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   return data as T
 }
 
+const feedback = (uid: string, mark: Mark) => request<{ uid: string; mark: Mark }>('/api/feedback', { uid, mark })
+
 export const api = {
   session: () => request<Session>('/api/session'),
   today: () => request<TodayPayload>('/api/today'),
@@ -37,7 +39,16 @@ export const api = {
   report: (date: string) => request<ReportPayload>(`/api/reports/${encodeURIComponent(date)}`),
   feedbackTarget: (uid: string) => request<FeedbackTarget>(`/api/feedback/${encodeURIComponent(uid)}`),
   /** mark '' ＝ 取消。回傳伺服器實際記下的 mark。 */
-  feedback: (uid: string, mark: Mark) => request<{ uid: string; mark: Mark }>('/api/feedback', { uid, mark }),
+  feedback,
+  /**
+   * 一則新聞底下可能有好幾個 uid（併了多篇文章，後端每篇各產一個）：對每個各送一次。
+   * saved 是寫入成功的；有任何一個失敗 failed 就是 true。成功的不會被收回，所以畫面要以 saved 為準。
+   */
+  feedbackAll: async (uids: string[], mark: Mark) => {
+    const results = await Promise.allSettled(uids.map((uid) => feedback(uid, mark)))
+    const saved = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+    return { saved, failed: saved.length < uids.length }
+  },
   auth: {
     status: () => request<AuthStatus>('/api/auth'),
     saveToken: (token: string) => request<AuthResult>('/api/auth/token', { token }),

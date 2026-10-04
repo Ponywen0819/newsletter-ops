@@ -31,13 +31,8 @@ export function FeedbackButtons({ uids, marks, onChange }: Props) {
   async function press(value: '+' | '-') {
     setBusy(true)
     setError('')
-    const target = mark === value ? '' : value
-    const results = await Promise.allSettled(uids.map((uid) => api.feedback(uid, target)))
-    let failed = false
-    results.forEach((result, i) => {
-      if (result.status === 'fulfilled') onChange(uids[i]!, result.value.mark)
-      else failed = true
-    })
+    const { saved, failed } = await api.feedbackAll(uids, mark === value ? '' : value)
+    saved.forEach((row) => onChange(row.uid, row.mark))
     // Cloudflare Access 的登入逾時會把 POST 導去登入頁，fetch 只會丟 TypeError；重新整理才會重新登入
     if (failed) setError('儲存失敗，請重試；若一直失敗，重新整理頁面')
     setBusy(false)
