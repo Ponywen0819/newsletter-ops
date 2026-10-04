@@ -60,16 +60,16 @@
   - Files：`.github/workflows/selftest.yml`、`.claude/skills/news-digest/SKILL.md`、`deploy/check_boundaries.py`、`.gitignore`
   - Scope：S
 
-- [ ] **T3：`feedback` 搬進 `shared`**
+- [x] **T3：`feedback` 搬進 `shared`**
   - Description：回饋 mark 格式、檔案鎖、`collect` 搬進 shared，改寫所有 importer。
   - Acceptance：
-    - [ ] `src/feedback.py` → `shared/src/newsletter_shared/feedback.py`；`ROOT` 改用 `paths.ROOT`；加 `main()`（`--selftest` 或 collect），`[project.scripts] newsletter-feedback`
-    - [ ] importer 全改：`src/report.py`、`src/report_data.py`、`src/auth_store.py`、`src/web.py`；`grep -rnE '^(import|from) feedback\b' src` 無結果
-    - [ ] CI 的 `src/feedback.py --selftest` 行 → `newsletter-feedback --selftest`；skill 的 `uv run --locked src/feedback.py` → `uv run --locked newsletter-feedback`；README 對應段落
+    - [x] `src/feedback.py` → `shared/src/newsletter_shared/feedback.py`；`ROOT` 改用 `paths.ROOT`；加 `main()`（`--selftest` 或 collect），`[project.scripts] newsletter-feedback`
+    - [x] importer 全改：`src/report.py`、`src/report_data.py`、`src/auth_store.py`、`src/web.py`；`grep -rnE '^(import|from) feedback\b' src` 無結果
+    - [x] CI 的 `src/feedback.py --selftest` 行 → `newsletter-feedback --selftest`；skill 的 `uv run --locked src/feedback.py` → `uv run --locked newsletter-feedback`；README 對應段落
   - Verification：
-    - [ ] V-CI；`uv run --locked newsletter-feedback --selftest`
-    - [ ] `check_boundaries.py`（shared 不 import 其他成員）；V-GREP（`Path(__file__)` 只在 `paths.py`）
-    - [ ] V-GIT（`git log --follow shared/src/newsletter_shared/feedback.py` 追得到歷史）
+    - [x] V-CI；`uv run --locked newsletter-feedback --selftest`
+    - [x] `check_boundaries.py`（shared 不 import 其他成員）；V-GREP（`Path(__file__)` 只在 `paths.py`）
+    - [x] V-GIT（`git log --follow shared/src/newsletter_shared/feedback.py` 追得到歷史）
   - Dependencies：T2
   - Files：（搬）`feedback.py`；（改）`src/report.py`、`src/report_data.py`、`src/auth_store.py`、`src/web.py`、`shared/pyproject.toml`、`selftest.yml`、`SKILL.md`、`README.md`
   - Scope：M（1 搬 ＋ 多個一行 import 改動）

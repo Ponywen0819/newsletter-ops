@@ -32,12 +32,8 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
-
-from feedback import MARK_RE  # noqa: E402
+from newsletter_shared.feedback import MARK_RE
 
 LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 COMMENT = re.compile(r"^\s*<!--(.*?)-->\s*$")

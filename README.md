@@ -18,7 +18,7 @@ src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 src/auth_store.py          認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
-src/feedback.py            回饋層：從報告收集人工標記
+shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
 src/report_data.py         報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
 src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
 web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
@@ -62,7 +62,7 @@ uv run src/run.py --dry-run     # 只測來源連通性
 uv run src/run.py               # 完整跑一次（含模板版報告）
 uv run src/run.py --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run src/run.py --lookback 72 # 放寬時間窗到 72 小時
-uv run src/feedback.py          # 收集報告裡填的標記
+uv run newsletter-feedback      # 收集報告裡填的標記
 (cd web && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
 uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 uv run src/render_email.py | uv run src/send_email.py   # 寄出當日 email
@@ -87,7 +87,7 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`run.py` 每�
 ```
 
 看完隨手填 `+`（有用）、`-`（沒用）、`++` / `--`（強烈），Markdown 預覽時不會顯示。
-跑 `uv run src/feedback.py` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
+跑 `uv run newsletter-feedback` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
 報告裡的標記只匯入 `feedback.jsonl` 還沒有紀錄的那一則；已有紀錄的（含網頁標的）以 jsonl 為準，不會被覆蓋。
 
 ### 用網頁標記（取代手改 Markdown）
@@ -106,7 +106,7 @@ uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的�
   併了多篇文章的新聞（報告裡連著好幾行 mark，每篇一個 uid）只有一組按鈕，按下去對每篇各記一筆。
 - 頁面的標記狀態只看 `feedback.jsonl`；還留在 Markdown 裡、尚未用 `feedback.py` 收集的標記不會顯示，先跑一次 `feedback.py` 匯入即可。
 - 網頁與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊。
-  `uv run src/feedback.py --selftest` 涵蓋這部分（含併發 append）。
+  `uv run newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
 - **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，但不 publish 任何 port，見「部署到家用 host」）。
 - `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
   （改版前是 `POST /feedback`；若有外部腳本或 Cloudflare Access 規則寫死舊路徑，要跟著改。）

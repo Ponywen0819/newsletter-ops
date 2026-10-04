@@ -95,7 +95,7 @@ curated JSON 的 `topic` 對應到簡報的五個段落：
 
 > **今日頭條：** 一句話點出今天最重要的一則，並用 [連結](URL) 帶出來源。
 
-<!-- 看完把每則的 mark: 填上 + 或 -（++ / -- 表示強烈），再跑 uv run --locked src/feedback.py -->
+<!-- 看完把每則的 mark: 填上 + 或 -（++ / -- 表示強烈），再跑 uv run --locked newsletter-feedback -->
 
 ## 科技與 AI
 
@@ -210,7 +210,7 @@ cd ROOT && uv run --locked src/metrics.py claude
 
 ## 回饋資料
 
-使用者在報告裡填的標記由 `uv run --locked src/feedback.py` 收集到 `state/feedback.jsonl`。
+使用者在報告裡填的標記由 `uv run --locked newsletter-feedback` 收集到 `state/feedback.jsonl`。
 累積量還少時不要拿它做推論。被明確要求分析時，看的是：
 
 - 收錄頻繁但從未拿到 `+` 的關鍵字 → 候選降權

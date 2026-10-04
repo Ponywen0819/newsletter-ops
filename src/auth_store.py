@@ -30,10 +30,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, MutableMapping
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
+from newsletter_shared import feedback  # 只借用 feedback.locked（跨程序檔案鎖）
 
-import feedback  # noqa: E402  只借用 feedback.locked（跨程序檔案鎖）
+ROOT = Path(__file__).resolve().parent.parent
 
 TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 TOKEN_FILE_ENV = "NEWSLETTER_TOKEN_FILE"
