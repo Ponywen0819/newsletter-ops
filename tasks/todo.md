@@ -188,17 +188,17 @@
   - Files：（搬）`agent_run.py`；（改）`agent/pyproject.toml`、根 `pyproject.toml`、`uv.lock`、`src/web.py`、`run_daily.sh`、`README.md`
   - Scope：M
 
-- [ ] **T11：`render_email`、`send_email` 進 `notify`**
+- [x] **T11：`render_email`、`send_email` 進 `notify`**
   - Acceptance：
-    - [ ] 兩檔 → `notify/src/newsletter_notify/`；`notify/pyproject.toml`（依賴 `newsletter-shared`）；`[project.scripts] newsletter-render`、`newsletter-send`；根 `members`／`dependencies`、`uv.lock`、Dockerfile、白名單更新
-    - [ ] `run_daily.sh` 第 3、4 步 → `newsletter-render`、`newsletter-send`；CI（`--selftest` 兩行）、README → 新指令
-    - [ ] 環境變數 `GMAIL_USER`／`GMAIL_APP_PASSWORD`／`NEWSLETTER_MAIL_TO`／`NEWSLETTER_BASE_URL` 名稱與語意不變；`newsletter-render` 的 stdout JSON 欄位不變
-    - [ ] `src/` 只剩 `web.py`
+    - [x] 兩檔 → `notify/src/newsletter_notify/`；`notify/pyproject.toml`（依賴 `newsletter-shared`）；`[project.scripts] newsletter-render`、`newsletter-send`；根 `members`／`dependencies`、`uv.lock`、Dockerfile、白名單更新
+    - [x] `run_daily.sh` 第 3、4 步 → `newsletter-render`、`newsletter-send`；CI（`--selftest` 兩行）、README → 新指令
+    - [x] 環境變數 `GMAIL_USER`／`GMAIL_APP_PASSWORD`／`NEWSLETTER_MAIL_TO`／`NEWSLETTER_BASE_URL` 名稱與語意不變；`newsletter-render` 的 stdout JSON 欄位不變
+    - [x] `src/` 只剩 `web.py`
   - Verification：
-    - [ ] V-GOLD（`RENDER="uv run --locked newsletter-render"`，`WEB` 仍 `src/web.py`）：`render.json`、`render.html`、`render-base.html` 與 old 逐位元相同
-    - [ ] `uv run --locked newsletter-render 2026-10-04 | uv run --locked newsletter-send --dry-run` 印出信件標頭、不連線
-    - [ ] metrics：`NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test` 跑 `newsletter-render` 後，`newsletter-metrics summary --all` 能看到 render 階段，並確認沒有把同一次執行切成兩列的現象（有就停下來問）
-    - [ ] `grep -rnE 'newsletter_(agent|web)' notify/` 無結果；V-CI、`check_boundaries.py`；V-DOCKER
+    - [x] V-GOLD（`RENDER="uv run --locked newsletter-render"`，`WEB` 仍 `src/web.py`）：`render.json`、`render.html`、`render-base.html` 與 old 逐位元相同
+    - [x] `uv run --locked newsletter-render 2026-10-04 | uv run --locked newsletter-send --dry-run` 印出信件標頭、不連線
+    - [x] metrics：`NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test` 跑 `newsletter-render` 後，`newsletter-metrics summary --all` 能看到 render 階段，並確認沒有把同一次執行切成兩列的現象（有就停下來問）
+    - [x] `grep -rnE 'newsletter_(agent|web)' notify/` 無結果；V-CI、`check_boundaries.py`；V-DOCKER
   - Dependencies：T7（agent 已不呼叫 render）；T10（避免同時改 `run_daily.sh`、Dockerfile、根 `pyproject.toml`）
   - Files：（搬）`render_email.py`、`send_email.py`；（改）`notify/pyproject.toml`、根 `pyproject.toml`、`uv.lock`、`Dockerfile`、`.dockerignore`、`.gitignore`、`run_daily.sh`、`selftest.yml`、`README.md`
   - Scope：M-L（搬 2 ＋ 多個幾行的配置）

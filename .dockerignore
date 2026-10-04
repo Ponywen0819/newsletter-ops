@@ -10,6 +10,8 @@
 !shared/src
 !agent/pyproject.toml
 !agent/src
+!notify/pyproject.toml
+!notify/src
 !web/index.html
 !web/package.json
 !web/package-lock.json

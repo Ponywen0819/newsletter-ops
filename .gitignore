@@ -37,6 +37,8 @@
 !/shared/src/**/*.py
 !/agent/pyproject.toml
 !/agent/src/**/*.py
+!/notify/pyproject.toml
+!/notify/src/**/*.py
 
 # Web 前端（Vite + React）：只放行原始碼、設定與鎖檔
 !/web/index.html

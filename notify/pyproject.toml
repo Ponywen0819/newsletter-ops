@@ -1,0 +1,18 @@
+[project]
+name = "newsletter-notify"
+version = "0.1.0"
+description = "newsletter-ops 的通知：報告 → email HTML → 寄出（日後別的通知管道也放這）"
+requires-python = ">=3.10"
+# 純標準庫；只依賴 shared，不得依賴 agent 或 web（deploy/check_boundaries.py 會檢查）
+dependencies = ["newsletter-shared"]
+
+[project.scripts]
+newsletter-render = "newsletter_notify.render_email:main"
+newsletter-send = "newsletter_notify.send_email:main"
+
+[tool.uv.sources]
+newsletter-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12"]
+build-backend = "uv_build"

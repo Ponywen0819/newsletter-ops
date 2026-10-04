@@ -39,9 +39,11 @@ WORKDIR /app
 COPY --chown=app:app pyproject.toml uv.lock .python-version ./
 COPY --chown=app:app shared/pyproject.toml ./shared/pyproject.toml
 COPY --chown=app:app agent/pyproject.toml ./agent/pyproject.toml
+COPY --chown=app:app notify/pyproject.toml ./notify/pyproject.toml
 RUN uv sync --locked --no-install-workspace
 COPY --chown=app:app shared ./shared
 COPY --chown=app:app agent ./agent
+COPY --chown=app:app notify ./notify
 RUN uv sync --locked
 
 COPY --chown=app:app run_daily.sh ./

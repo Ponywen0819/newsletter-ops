@@ -24,8 +24,8 @@ jobs:
       - run: uv run --locked python -m newsletter_agent.curate
       - run: uv run --locked python -m newsletter_agent.fetch
       - run: uv run --locked newsletter-metrics --selftest
-      - run: uv run --locked python src/render_email.py --selftest
-      - run: uv run --locked python src/send_email.py --selftest
+      - run: uv run --locked newsletter-render --selftest
+      - run: uv run --locked newsletter-send --selftest
       - run: uv run --locked newsletter-feedback --selftest
       - run: uv run --locked python -m newsletter_shared.auth_store --selftest
       - run: uv run --locked python -m newsletter_shared.report_data --selftest

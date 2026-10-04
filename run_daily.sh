@@ -2,8 +2,8 @@
 # 排程入口（systemd timer / cron 都呼叫這支）。每日依序：
 #   1. newsletter-fetch --no-report      抓取 → data/curated/<date>.json
 #   2. newsletter-agent        Claude Agent SDK 依 news-digest skill 寫 reports/<date>.md，並驗收（有更新、格式正確）
-#   3. render_email.py         reports/<date>.md → reports/<date>.html；stdout 是一行 JSON
-#   4. send_email.py           讀上一步的 JSON，寄出
+#   3. newsletter-render       reports/<date>.md → reports/<date>.html；stdout 是一行 JSON
+#   4. newsletter-send         讀上一步的 JSON，寄出
 # 任一步失敗就停下並以該步的 exit code 結束（systemd 會標成 failed），過程全進 logs/<YYYY-MM>.log。
 # 機密從 env 檔載入，預設 ~/.config/newsletter-ops/env（NEWSLETTER_ENV_FILE 可改），權限必須是 600。
 # 額外參數（如 --lookback 72）會轉給 newsletter-fetch。
@@ -37,10 +37,10 @@ stamp "uv run newsletter-fetch --no-report $*"
 uv run --locked newsletter-fetch --no-report "$@"
 stamp "uv run newsletter-agent"
 uv run --locked newsletter-agent
-stamp "uv run src/render_email.py"
-# 不用 render_email | send_email：pipefail 下 render 失敗時 send_email 也會因讀不到 JSON 而崩，
+stamp "uv run newsletter-render"
+# 不用 render | send：pipefail 下 render 失敗時 send 也會因讀不到 JSON 而崩，
 # 蓋掉 render 的 exit code 並多印一段無關的 traceback。先收進變數，失敗就停在這裡。
-meta=$(uv run --locked src/render_email.py)
-stamp "uv run src/send_email.py"
-printf '%s\n' "$meta" | uv run --locked src/send_email.py
+meta=$(uv run --locked newsletter-render)
+stamp "uv run newsletter-send"
+printf '%s\n' "$meta" | uv run --locked newsletter-send
 stamp "完成"

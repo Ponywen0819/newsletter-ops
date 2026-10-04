@@ -14,8 +14,8 @@ agent/src/newsletter_agent/fetch.py  抓取層：RSS 2.0 / Atom / arXiv API（�
 agent/src/newsletter_agent/curate.py  整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
 agent/src/newsletter_agent/report.py  輸出層：模板版 Markdown（無 LLM 保底）
 shared/src/newsletter_shared/metrics.py  量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
-src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
-src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
+notify/src/newsletter_notify/render_email.py  email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
+notify/src/newsletter_notify/send_email.py  寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 agent/src/newsletter_agent/agent_run.py  無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 shared/src/newsletter_shared/auth_store.py  認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
@@ -65,7 +65,7 @@ uv run newsletter-fetch --lookback 72 # 放寬時間窗到 72 小時
 uv run newsletter-feedback      # 收集報告裡填的標記
 (cd web && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
 uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
-uv run src/render_email.py | uv run src/send_email.py   # 寄出當日 email
+uv run newsletter-render | uv run newsletter-send   # 寄出當日 email
 ```
 
 agent（`agent_run.py`，或在對話裡手動跑 skill）只負責寫 `reports/<date>.md` 並驗證格式，**不產 email HTML、也不寄信**；
@@ -148,7 +148,7 @@ npm run typecheck
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
 - 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時**只改 `report_data.py`**：網頁與 email 共用同一個解析器。哪些條目可以投票
   （`list`／`mark` 區塊的 `votable`：主要新聞才有、「其餘收錄」沒有）也在那裡決定，兩邊版型只負責照畫。
-  `uv run python -m newsletter_shared.report_data --selftest` 驗證解析與 `votable`，`python3 src/render_email.py --selftest` 驗證 email 輸出。
+  `uv run python -m newsletter_shared.report_data --selftest` 驗證解析與 `votable`，`uv run newsletter-render --selftest` 驗證 email 輸出。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
@@ -176,7 +176,7 @@ npm run typecheck
 排程需要 OAuth token（環境變數 `CLAUDE_CODE_OAUTH_TOKEN`，或 `/auth` 頁面存的檔，見「無人值守」的「認證」）；兩者都沒有時 `agent_run.py` 直接 exit 2。
 macOS 的 cron 需要「完整磁碟取用權」，或改用 launchd。
 
-arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`，自我檢查：`uv run python -m newsletter_agent.curate`、`uv run src/render_email.py --selftest`。
+arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`，自我檢查：`uv run python -m newsletter_agent.curate`、`uv run newsletter-render --selftest`。
 
 ## 無人值守（Claude Agent SDK）
 
@@ -188,7 +188,7 @@ uv sync                                   # 依 uv.lock 建立 .venv 並裝好�
 uv run src/web.py                        # 第一次：開 http://127.0.0.1:8787/auth 貼上 OAuth token（見下方「認證」）
 uv run newsletter-agent                  # 依 skill 寫報告並驗收（有更新、格式正確），約數分鐘
 uv run newsletter-agent --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
-uv run src/render_email.py | uv run src/send_email.py   # 報告寫好之後：轉成 email 並寄出
+uv run newsletter-render | uv run newsletter-send   # 報告寫好之後：轉成 email 並寄出
 uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼叫），不跑晨報
 ```
 
