@@ -1,5 +1,11 @@
 /*
- * 版面與配色沿用 email 版型（src/render_email.py 的 S）：灰底、640px 的白色卡片。
+ * 配色沿用 email 版型（src/render_email.py 的 S）：灰底、白色卡片；版面則是自適應，
+ * 不再沿用 email 固定 640px 的寬度（email 客戶端不支援 @media，網頁沒有這個限制）。
+ *
+ * mobile-first：預設值就是手機，斷點只往上加 @media (min-width: …)，
+ * 這樣手機不用先吃一遍桌機樣式再被覆寫回來。
+ * 寬度、間距、字級都收在 :root 變數，斷點只改變數；各元件的規則只「使用」變數，
+ * 不必每個元件各寫一組 @media。
  * 元素的基本樣式用 :where() 壓低優先權，下面各元件的 class 才不用互相較量。
  */
 
@@ -16,42 +22,117 @@
   --page: #f3f4f6;
   --card: #ffffff;
   --mono: Menlo, Consolas, monospace;
+
+  /* 版面（預設＝手機：卡片滿版、貼齊螢幕左右、無圓角） */
+  /* 手機不設上限：卡片就是整個視窗寬，用 100% 才不會在 720–767px 之間被卡在 720px 而露出一條灰邊 */
+  --content-w: 100%;
+  --gutter: 16px; /* 卡片左右 padding */
+  --card-pad-y: 20px; /* 卡片上下 padding */
+  --card-radius: 0;
+  --page-pad-x: 0; /* 卡片外圍留白（套在 .page 上，標頭不受影響）；手機要讓卡片貼邊，所以左右為 0 */
+  --page-pad-y: 0;
+
+  /* 字級：手機 15px 起跳，≥768px 才放大，避免在小螢幕一行塞不下幾個字 */
+  --fs-body: 15px;
+  --fs-list: 15px; /* 列表內文（晨報條列、歷史列表） */
+  --fs-small: 12px; /* 資料來源、提示 */
+  --fs-h1: 24px;
+  --fs-h2: 18px;
+  --lh-body: 1.8; /* 中文長文行高要比英文鬆：1.6 讀久了字會擠在一起 */
+}
+
+/* 平板：卡片置中、圓角、四邊留白加大；內文欄 720px（扣掉左右 40px 後每行約 40 個全形字） */
+@media (min-width: 768px) {
+  :root {
+    --content-w: 720px;
+    --gutter: 40px;
+    --card-pad-y: 40px;
+    --card-radius: 10px;
+    --page-pad-x: 24px;
+    --page-pad-y: 24px;
+    --fs-body: 16px;
+    --fs-list: 16px;
+    --fs-small: 13px;
+    --fs-h1: 28px;
+    --fs-h2: 20px;
+  }
+}
+
+/* 桌機：只加寬卡片外面的留白；--content-w 與 --gutter 不動，行長才不會隨螢幕無限拉長 */
+@media (min-width: 1024px) {
+  :root {
+    --page-pad-x: 32px;
+    --page-pad-y: 40px;
+  }
 }
 
 body {
+  /* 不放 padding：標頭列要貼齊視窗頂端、橫跨整個視窗，外圍留白改由 .page 套在卡片那一層 */
   margin: 0;
-  padding: 24px 12px;
   background: var(--page);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', 'Helvetica Neue',
     Arial, sans-serif;
 }
-
-nav {
-  max-width: 640px;
-  margin: 0 auto 12px;
-  font-size: 13px;
+.page {
+  padding: var(--page-pad-y) var(--page-pad-x);
 }
-nav a {
+
+/* 標頭列：白底、下緣一條細線，滿版（卡片才受 --content-w 限制） */
+header {
+  background: var(--card);
+  border-bottom: 1px solid var(--rule);
+}
+/* 桌機：捲動時標頭蓋在卡片上面；手機直向高度寶貴，不黏 */
+@media (min-width: 1024px) {
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+}
+header nav {
+  display: flex;
+  flex-wrap: wrap; /* 窄到 375px 也放不下時（例如 320px）寧可換行，也不要撐出水平捲軸 */
+  align-items: center;
+  /* 寬度與左右 padding 跟 .card 一致，站名與連結才會對齊卡片的內文欄 */
+  box-sizing: border-box;
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  font-size: var(--fs-body);
+}
+.site-name {
+  margin-right: 12px;
+  font-weight: 700;
+  color: var(--heading);
+}
+header nav a {
+  display: inline-flex;
+  align-items: center;
+  /* 觸控目標至少 44px 高；水平 padding 讓相鄰連結的點擊區不互相擠壓 */
+  min-height: 44px;
+  padding: 0 12px;
   color: var(--link);
   text-decoration: none;
-  margin-right: 12px;
 }
-nav a[aria-current='page'] {
+header nav a[aria-current='page'] {
   font-weight: 600;
 }
 
 .card {
-  max-width: 640px;
+  /* --content-w 是含 padding 的卡片總寬：不加 border-box 的話，720px 會變成內文 720px、卡片 800px */
+  box-sizing: border-box;
+  max-width: var(--content-w);
   margin: 0 auto;
-  padding: 28px 28px 20px;
+  padding: var(--card-pad-y) var(--gutter);
   background: var(--card);
-  border-radius: 10px;
+  border-radius: var(--card-radius);
 }
 
 :where(.card) h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--fs-h1);
   line-height: 1.3;
   color: var(--heading);
 }
@@ -59,13 +140,14 @@ nav a[aria-current='page'] {
   margin: 28px 0 12px;
   padding-bottom: 6px;
   border-bottom: 2px solid var(--rule);
-  font-size: 18px;
+  font-size: var(--fs-h2);
   color: var(--heading);
 }
 :where(.card) p {
   margin: 14px 0 6px;
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere; /* Notice 會原樣顯示伺服器的錯誤訊息，沒有空白的長字串不能撐破卡片 */
 }
 :where(.card) a {
   color: var(--link);
@@ -83,75 +165,143 @@ nav a[aria-current='page'] {
 }
 
 /* 晨報 */
+/* 字級吃 :root 的變數（手機／桌機的差別在變數）；間距在這裡手機收緊、≥768px 回到寬鬆 */
 .report-date {
-  margin: 4px 0 20px;
-  font-size: 13px;
+  margin: 4px 0 16px;
+  font-size: var(--fs-small); /* 日期是次要資訊，比內文小一級、維持 muted 色 */
   line-height: normal;
   color: var(--muted);
 }
 .callout {
   margin: 0 0 8px;
-  padding: 14px 16px;
+  /* 手機寬度寶貴：callout 左邊框＋左右 padding 已吃掉 30px 以上，padding 收緊一點給文字 */
+  padding: 12px 14px;
   background: #fff7ed;
   border-left: 4px solid #f97316;
   border-radius: 6px;
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+/* 分類標題（科技與 AI…）與「資料來源」：手機上下收緊，一屏能多看到一點內容 */
+.report h2 {
+  margin: 22px 0 10px;
 }
 .report ul,
 .report ol {
   margin: 4px 0 10px;
-  padding-left: 22px;
+  /* 巢狀列表每一層都吃一次縮排，手機上 22px 兩層就是 44px；18px 仍容得下項目符號 */
+  padding-left: 18px;
 }
 .report li {
   margin: 3px 0;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--fs-list);
+  line-height: var(--lh-body);
+}
+/* 資料來源編號有兩位數（常到 30 多），縮排比一般列表多留一點，編號才不會掛到卡片邊緣外；手機桌機同一個值 */
+.report ol.sources {
+  padding-left: 26px;
 }
 .report ol.sources li {
   margin: 2px 0;
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--fs-small);
+  line-height: 1.7;
   color: var(--muted);
 }
+/* 長標題、長網址（含沒有空白的英文字串）要在容器內斷行；anywhere 還會把它算進 min-content，
+   不會在 flex／grid 容器裡把版面撐破。晨報內容來自 Markdown，標題與網址長度不可控，連結、列表、callout、段落、標題都可能遇到 */
+.report a,
+.report li,
+.report p,
+.report h2,
+.callout {
+  overflow-wrap: anywhere;
+}
+@media (min-width: 768px) {
+  .report-date {
+    margin: 4px 0 20px;
+  }
+  .callout {
+    padding: 14px 16px;
+  }
+  .report h2 {
+    margin: 28px 0 12px;
+  }
+  .report ul,
+  .report ol {
+    padding-left: 22px;
+  }
+}
 
-/* 👍／👎 */
+/* 每則的有用／沒用：SVG 箭頭吃 currentColor，狀態只靠顏色／底色切換 */
 .fb {
   display: flex;
+  flex-wrap: wrap; /* 錯誤訊息獨佔下一行，兩顆按鈕永遠同排 */
   align-items: center;
   gap: 8px;
   margin: 8px 0 2px;
 }
 .fb-btn {
-  font-size: 16px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 7px 14px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: #fff;
+  color: var(--muted);
   cursor: pointer;
-  filter: grayscale(1);
-  opacity: 0.55;
 }
 .fb-btn:hover {
-  opacity: 1;
+  color: var(--text);
 }
 .fb-btn:disabled {
   cursor: wait;
 }
 .fb-btn[aria-pressed='true'] {
-  filter: none;
-  opacity: 1;
+  color: var(--link);
   background: #eff6ff;
   border-color: var(--link);
 }
 .fb-btn[data-mark='-'][aria-pressed='true'] {
+  color: var(--danger);
   background: #fef2f2;
   border-color: var(--danger);
 }
 .fb-msg {
   font-size: 12px;
   color: var(--danger);
+}
+/* 有訊息才佔滿一行；空的時候留在原位（不用 display:none，role="status" 要一直在無障礙樹裡才會被朗讀） */
+.fb-msg:not(:empty) {
+  flex-basis: 100%;
+}
+/* 手指點的裝置：觸控目標至少 44px，間距拉開避免誤觸 */
+@media (pointer: coarse) {
+  .fb {
+    gap: 12px;
+  }
+  .fb-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/*
+ * /feedback 確認頁：確認鈕是 .card 的直接子元素（/auth 的按鈕包在 form／.auth-actions 裡，不會套到）。
+ * 手機滿版好點；桌機維持自然寬度，不要變成橫跨整張卡片的寬條。
+ */
+.card > .auth-btn {
+  width: 100%;
+}
+@media (min-width: 768px) {
+  .card > .auth-btn {
+    width: auto;
+  }
+}
+@media (pointer: coarse) {
+  .card > .auth-btn {
+    min-height: 44px;
+  }
 }
 
 /* /reports 歷史列表 */
@@ -160,25 +310,58 @@ nav a[aria-current='page'] {
   margin: 16px 0 0;
   padding: 0;
 }
+/*
+ * 手機（預設）：日期連結一行、標題一行。
+ * 原本兩者接在同一行，標題一長，換行點就落在日期後面的半行，標題第二行又退回最左邊，很難讀。
+ * 欄寬用 minmax(0, 1fr)：不讓一長串不能斷的標題把欄撐得比卡片寬，才不會橫向捲動。
+ * justify-items: start：日期連結只佔它自己的寬度，不會整列都變成可點區而誤觸。
+ */
 .reports li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
   padding: 10px 0;
   border-bottom: 1px solid var(--rule);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--fs-list);
+  line-height: var(--lh-body);
 }
 .reports a {
   font-weight: 600;
-  margin-right: 10px;
 }
 .reports span {
   color: var(--muted);
+  overflow-wrap: anywhere; /* 標題常有英文長字串／網址，在自己那一行內強制斷行 */
+}
+/* 手指點的裝置：日期連結是整列唯一的連結，高度至少 44px（與 .fb-btn 同一個門檻） */
+@media (pointer: coarse) {
+  .reports li {
+    padding-top: 0; /* 44px 的連結框本身就撐出日期上方的空間，不再多留 10px */
+  }
+  .reports a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+/*
+ * ≥768px：日期固定寬度欄、標題在右，兩者以文字基線對齊（一行標題時日期與標題在同一條線上）。
+ * 只套在有日期連結的 <li>：空列表那一格只有一段提示文字，沒有 a／span，
+ * 若也切成 8em 欄，文字會被擠進 8em 寬的窄欄裡斷成好幾行。
+ */
+@media (min-width: 768px) {
+  .reports li:has(> a) {
+    grid-template-columns: 8em minmax(0, 1fr);
+    align-items: baseline;
+  }
 }
 
 /* /auth：OAuth token（只限本機） */
+/* 手機單欄：dt 在上、dd 在下。兩欄時 dd 只剩「螢幕寬 − 左欄 − 左右 padding」，
+   tail、日期、「（以一年效期推算…）」這類長字很容易被擠到溢出；單欄 dd 就有整行寬。
+   dt 跟自己的 dd 靠近（2px），跟上一組隔開（dd + dt = 每組的 dt，第一組除外），才看得出誰屬於誰。 */
 .auth-status {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 6px 16px;
+  gap: 2px 0;
   margin: 16px 0;
   font-size: 14px;
   line-height: 1.5;
@@ -188,6 +371,20 @@ nav a[aria-current='page'] {
 }
 .auth-status dd {
   margin: 0;
+  overflow-wrap: anywhere; /* 沒有空白的長字串（token 尾碼、日期）也要能斷行 */
+}
+.auth-status dd + dt {
+  margin-top: 10px;
+}
+/* 平板以上：左欄 dt、右欄 dd；欄寬夠了，組間距回到列間距 */
+@media (min-width: 768px) {
+  .auth-status {
+    grid-template-columns: max-content 1fr;
+    gap: 6px 16px;
+  }
+  .auth-status dd + dt {
+    margin-top: 0;
+  }
 }
 .auth-state {
   font-weight: 600;
@@ -213,18 +410,30 @@ nav a[aria-current='page'] {
   font-size: 14px;
   line-height: 1.7;
 }
+/* 手機直排：輸入框與按鈕各佔一整行（flex 預設 stretch 就會撐滿寬），
+   橫排的話輸入框只剩螢幕寬扣掉按鈕，貼 token 時幾乎看不到內容 */
 #auth-form {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   margin: 10px 0;
 }
 #auth-token {
-  flex: 1;
+  box-sizing: border-box; /* 輸入框預設 content-box，不改的話 min-height 44px 會再加上 padding 與框線 */
   min-width: 0;
   padding: 8px 10px;
   font: 13px var(--mono);
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+/* 平板以上才橫排：輸入框吃剩下的寬度，按鈕維持自然寬 */
+@media (min-width: 768px) {
+  #auth-form {
+    flex-direction: row;
+  }
+  #auth-token {
+    flex: 1;
+  }
 }
 .auth-btn {
   padding: 8px 14px;
@@ -248,6 +457,7 @@ nav a[aria-current='page'] {
 }
 .auth-actions {
   display: flex;
+  flex-wrap: wrap; /* 兩顆放不下（窄螢幕、字放大）就換行，不要把頁面撐出水平捲軸 */
   gap: 8px;
   margin: 12px 0;
 }
@@ -257,7 +467,7 @@ nav a[aria-current='page'] {
   font-size: 13px;
   line-height: 1.5;
   color: var(--muted);
-  word-break: break-word;
+  overflow-wrap: anywhere; /* 錯誤訊息可能帶沒有空白的長字串（路徑、token 片段） */
 }
 .auth-msg.auth-ok {
   color: var(--ok);
@@ -270,4 +480,121 @@ nav a[aria-current='page'] {
   font-size: 12px;
   line-height: 1.6;
   color: var(--muted);
+  overflow-wrap: anywhere; /* 內含 <code>CLAUDE_CODE_OAUTH_TOKEN</code>，系統字級放大時這種沒有空白的字會頂出去 */
+}
+/* 手指點的裝置：按鈕與輸入框至少 44px 高；
+   token 輸入框字級 16px，iOS Safari 在小於 16px 的輸入框 focus 時會自動放大頁面；
+   「測試連線」旁邊就是「刪除」，間距拉開避免誤觸（同 .fb） */
+@media (pointer: coarse) {
+  .auth-btn,
+  #auth-token {
+    min-height: 44px;
+  }
+  #auth-token {
+    font-size: 16px;
+  }
+  .auth-actions {
+    gap: 12px;
+  }
+}
+
+/*
+ * 筆電的新聞目錄（≥1100px）：左側 sticky 的目錄＋右側一整頁往下捲的內文。
+ * 內文與窄螢幕完全一樣（所有新聞依序顯示、用滾輪閱讀）；目錄只負責「現在讀到哪、點一下跳過去」。
+ * <1100px 沒有目錄，.unit、.group 只是沒有樣式的包裝。
+ */
+.reader-nav {
+  display: none;
+}
+@media (min-width: 1100px) {
+  /* 卡片在這一頁只是容器：寬度放到「左欄 280 ＋ 間距 24 ＋ 右欄 720」，白底改由右欄承擔 */
+  main.card:has(> .reader) {
+    max-width: 1024px;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+  }
+  /* 標頭內容跟著放寬、貼齊左欄左緣，不然站名與連結會縮在中間 720px 那一欄 */
+  header:has(~ .page .reader) nav {
+    max-width: 1024px;
+    padding: 0;
+  }
+  .reader {
+    --header-h: 45px; /* 標頭列高度（44px 連結＋1px 底線）：左欄 sticky 與捲動定位都要閃開它 */
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    column-gap: 24px;
+    align-items: start;
+  }
+
+  /* 左欄：標題＋目錄。跟著捲動停在標頭下面；目錄比視窗長就自己捲 */
+  .reader-side {
+    position: sticky;
+    top: calc(var(--header-h) + 16px);
+    display: flex;
+    flex-direction: column;
+    /* 扣掉標頭與上下留白，整頁高度才不會超過視窗 */
+    max-height: calc(100vh - var(--header-h) - 2 * var(--page-pad-y) - 8px);
+  }
+  .reader-nav {
+    display: block;
+    min-height: 0;
+    margin-top: 16px;
+    overflow-y: auto;
+  }
+  .reader-nav ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .reader-nav-title {
+    margin: 16px 0 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .reader-nav a {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--text);
+    text-decoration: none;
+  }
+  /* 標題常有 40–60 字：最多 2 行，全文在 title 屬性裡 */
+  .reader-nav a > span {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .reader-nav a:hover {
+    background: var(--rule);
+  }
+  .reader-nav a[aria-current='true'] {
+    background: var(--card);
+    box-shadow: inset 3px 0 0 var(--link);
+    font-weight: 600;
+    color: var(--link);
+  }
+
+  /* 右欄：就是原本的白色卡片，一整頁往下捲 */
+  .reader-body {
+    box-sizing: border-box;
+    padding: var(--card-pad-y) var(--gutter);
+    background: var(--card);
+    border-radius: var(--card-radius);
+  }
+  /* 點目錄／j／k 捲過去時，停在 sticky 標頭的下面，而不是被它蓋住 */
+  .reader .unit,
+  .reader .group-title {
+    scroll-margin-top: calc(var(--header-h) + 16px);
+  }
+}
+/* 點目錄時平順捲過去；系統設定「減少動態效果」的人不套用 */
+@media (min-width: 1100px) and (prefers-reduced-motion: no-preference) {
+  html:has(.reader) {
+    scroll-behavior: smooth;
+  }
 }

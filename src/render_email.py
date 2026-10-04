@@ -4,9 +4,13 @@
 用法：python3 src/render_email.py [YYYY-MM-DD] [--selftest]
 stdout 印一行 JSON：{"subject", "headline", "html_path"}，給排程 prompt 寄信用。
 
-環境變數 NEWSLETTER_BASE_URL（對外網址，如 https://news.example.com）有設的話，每則（有 mark 註解的）
+環境變數 NEWSLETTER_BASE_URL（對外網址，如 https://news.example.com）有設的話，每則主要新聞（有 mark 註解的）
 底下加 👍／👎 兩個連結，指向 <base>/feedback/<uid>?v=…。連結只開確認頁，按了確認才寫入（信箱的安全掃描會自動開連結）。
 沒設就不加按鈕，本機測試不受影響。
+
+與網頁一致：只有主要新聞（標題段落＋清單）放連結，「其餘收錄」那種沒有標題段落的整張單行清單不放；
+併了多篇文章的新聞會連著好幾行 mark 註解（每篇一個 uid），只放一組連結，uid 用逗號接起來：
+<base>/feedback/<uid>,<uid>?v=…，確認頁一次對每個 uid 各投一票。
 
 版型寫死在這裡而不是讓 Claude 每天手寫 HTML：每天長得一樣、不花 token。
 email client 會剝掉 <style>，所以 CSS 全部 inline。
@@ -72,10 +76,13 @@ def plain(text: str) -> str:
     return re.sub(r"\*\*|`", "", LINK.sub(r"\1", text)).strip()
 
 
-def feedback_buttons(uid: str, base_url: str) -> str:
-    """👍／👎 連結。v 的 + 要寫成 %2B，否則 query 會把它當成空白。"""
+def feedback_buttons(uids: list[str], base_url: str) -> str:
+    """👍／👎 連結。v 的 + 要寫成 %2B，否則 query 會把它當成空白。
+    uids 有好幾個＝併了多篇文章的新聞：路徑用逗號接起來，確認頁對每個 uid 各投一票。"""
+    path = quote(",".join(uids), safe=",")
+
     def link(vote: str, label: str) -> str:
-        href = html.escape(f"{base_url}/feedback/{uid}?v={quote(vote)}")
+        href = html.escape(f"{base_url}/feedback/{path}?v={quote(vote)}")
         return f'<a href="{href}" style="{S["fb_btn"]}">{label}</a>'
     return f'<div style="{S["fb"]}">{link("+", "👍 有用")}{link("-", "👎 沒用")}</div>'
 
@@ -87,12 +94,21 @@ def render_body(markdown: str, base_url: str = "") -> tuple[str, str, str]:
     links: list[tuple[str, str]] = []
     subject = headline = ""
     depth = 0  # 目前開著幾層 <ul>
+    pending: list[str] = []  # 連續的 mark 註解：併了多篇文章的新聞每篇一個 uid，合起來只放一組連結
+    last = ""  # 上一個區塊：heading／paragraph／list／其他
+    votable = True  # 目前這張清單要不要放回饋連結
 
     def close_lists(to: int = 0) -> None:
         nonlocal depth
         while depth > to:
             body.append("</li></ul>")
             depth -= 1
+
+    def flush_marks() -> None:
+        if pending and votable:
+            close_lists(1)  # 按鈕放在最外層項目的巢狀子項目之後（與 report_data 的 uids 一致）
+            body.append(feedback_buttons(list(dict.fromkeys(pending)), base_url))
+        pending.clear()
 
     for line in markdown.splitlines():
         comment = COMMENT.match(line)
@@ -101,11 +117,15 @@ def render_body(markdown: str, base_url: str = "") -> tuple[str, str, str]:
                 subject = comment[1].strip()[len("subject:"):].strip()
             mark = MARK_RE.search(line)
             if mark and base_url:
-                close_lists(1)  # 按鈕放在最外層項目的巢狀子項目之後（與 report_data 的 uids 一致）
-                body.append(feedback_buttons(mark[2], base_url))
+                pending.append(mark[2])
             continue  # 其餘註解不進頁面，也不打斷清單
+        flush_marks()  # 碰到非註解的一行，前面累積的 mark 就結算（狀態還是 mark 那一刻的）
         bullet = re.match(r"^( *)[-*] (.+)$", line)
         if bullet:
+            if depth == 0 and last != "list":
+                # 新的一張清單：前面是標題段落＝主要新聞，放連結；緊接在 ## 後面＝「其餘收錄」那種整張單行清單，不放
+                votable = last == "paragraph"
+            last = "list"
             level = len(bullet[1]) // 2 + 1
             if level > depth:
                 body.append(f'<ul style="{S["ul"]}">' * (level - depth))
@@ -119,6 +139,7 @@ def render_body(markdown: str, base_url: str = "") -> tuple[str, str, str]:
         if not line.strip():
             continue
         if line.startswith("# "):
+            last = "other"
             title = line[2:].strip()
             date = re.search(r"\d{4}-\d{2}-\d{2}$", title)
             if date:
@@ -127,14 +148,18 @@ def render_body(markdown: str, base_url: str = "") -> tuple[str, str, str]:
             if date:
                 body.append(f'<p style="{S["date"]}">{date[0].replace("-", "/")}</p>')
         elif line.startswith("## "):
+            last = "heading"
             body.append(f'<h2 style="{S["h2"]}">{inline(line[3:].strip(), links)}</h2>')
         elif line.startswith(">"):
+            last = "other"
             text = line.lstrip("> ").strip()
             if "今日頭條" in text:
                 headline = plain(re.sub(r"^\**今日頭條[：:]\**\s*", "", text))
             body.append(f'<div style="{S["callout"]}">{inline(text, links)}</div>')
         else:
+            last = "paragraph"
             body.append(f'<p style="{S["p"]}">{inline(line.strip(), links)}</p>')
+    flush_marks()
     close_lists()
 
     if not headline:
@@ -198,19 +223,44 @@ def selftest() -> None:
     except ValueError:
         pass
 
-    # 回饋連結：沒設 base_url 就沒有；有設的話每個 mark 一組，按鈕在巢狀子項目之後、仍在最外層項目裡
+    # 回饋連結：沒設 base_url 就沒有；有設的話每則主要新聞一組，按鈕在巢狀子項目之後、仍在最外層項目裡
     assert "/feedback/" not in page
     page, _, _ = render(md, "https://news.example.com")
-    assert page.count("/feedback/") == 4 and page.count("<ul") == page.count("</ul>") == 3
-    for uid in ("0123456789abcdef", "0123456789abcdee"):
-        assert f"https://news.example.com/feedback/{uid}?v=%2B" in page and f"/feedback/{uid}?v=-" in page
+    assert page.count("/feedback/") == 2 and page.count("<ul") == page.count("</ul>") == 3
+    uid = "0123456789abcdef"
+    assert f"https://news.example.com/feedback/{uid}?v=%2B" in page and f"/feedback/{uid}?v=-" in page
     assert "👍 有用" in page and "mark:" not in page
     assert re.search(r"背景：B<div[^>]*><a [^>]*0123456789abcdef.*?</div></li></ul>", page), page
-    assert re.search(r"半句<div[^>]*><a [^>]*0123456789abcdee.*?</div></li><li[^>]*><strong>", page), page
+    # 「其餘收錄」（緊接在 ## 後面的整張單行清單）不放連結（與網頁一致），但 mark 註解不能漏進頁面
+    assert "0123456789abcdee" not in page and re.search(r"半句</li><li[^>]*><strong>", page), page
     # mark 直接接在巢狀項目後：巢狀清單先收掉，按鈕仍在最外層項目裡
     nested, _, _ = render(md.replace("- 背景：B\n", "").replace("  - 細節\n", "  - 細節\n  - 更深\n"), "https://n.example")
     assert re.search(r"更深</li></ul><div[^>]*><a [^>]*0123456789abcdef.*?</div></li></ul>", nested), nested
     assert nested.count("<ul") == nested.count("</ul>") and nested.count("<li") == nested.count("</li>")
+
+    # 併了多篇文章的新聞：連著好幾行 mark（含重複的 uid、夾著別的註解），只放一組連結，uid 用逗號接；
+    # 其餘收錄不放；其餘收錄之後的主要新聞照樣放（不能被前面的狀態帶壞）
+    merged_md = md.replace(
+        "<!-- mark:    uid=0123456789abcdef -->\n",
+        "<!-- mark:    uid=0123456789abcdef -->\n<!-- 別的註解 -->\n<!-- mark:    uid=1111111111111111 -->\n"
+        "<!-- mark:    uid=0123456789abcdef -->\n",
+    ) + """
+## 商業與市場
+
+**[另一則](https://a.example/3)**
+
+- 背景：C
+<!-- mark:    uid=2222222222222222 -->
+"""
+    merged, _, _ = render(merged_md, "https://news.example.com")
+    base = "https://news.example.com/feedback/"
+    assert merged.count("/feedback/") == 4, merged  # 併過的一組（👍＋👎）＋另一則一組
+    assert merged.count(f"{base}0123456789abcdef,1111111111111111?v=%2B") == 1
+    assert merged.count(f"{base}0123456789abcdef,1111111111111111?v=-") == 1
+    assert merged.count(f"{base}2222222222222222?v=%2B") == 1 and "0123456789abcdee" not in merged
+    assert re.search(r"背景：B<div[^>]*><a [^>]*0123456789abcdef,1111111111111111.*?</div></li></ul>", merged), merged
+    assert merged.count("<ul") == merged.count("</ul>") == 4 and merged.count("<li") == merged.count("</li>")
+    assert "/feedback/" not in render(merged_md)[0] and "mark:" not in merged
     print("ok")
 
 

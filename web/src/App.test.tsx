@@ -72,6 +72,14 @@ describe('路由', () => {
     expect(nav.getByRole('link', { name: '歷史晨報' })).toBeInTheDocument()
   })
 
+  it('導覽有站名「晨報」，是純文字、不是連結（免得跟「今日晨報」重複）', async () => {
+    open('/nope', {})
+    await screen.findByRole('heading', { name: '找不到頁面' })
+    const nav = within(screen.getByRole('navigation'))
+    expect(nav.getByText('晨報')).toBeInTheDocument()
+    expect(nav.queryByRole('link', { name: '晨報' })).toBeNull()
+  })
+
   it('導覽的「Claude 授權」只在本機出現；問不到 session 時當作不是本機', async () => {
     open('/nope', {}, true)
     expect(await screen.findByRole('link', { name: 'Claude 授權' })).toBeInTheDocument()
