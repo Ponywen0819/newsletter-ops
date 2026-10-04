@@ -40,14 +40,15 @@ COPY --chown=app:app pyproject.toml uv.lock .python-version ./
 COPY --chown=app:app shared/pyproject.toml ./shared/pyproject.toml
 COPY --chown=app:app agent/pyproject.toml ./agent/pyproject.toml
 COPY --chown=app:app notify/pyproject.toml ./notify/pyproject.toml
+COPY --chown=app:app web/server/pyproject.toml ./web/server/pyproject.toml
 RUN uv sync --locked --no-install-workspace
 COPY --chown=app:app shared ./shared
 COPY --chown=app:app agent ./agent
 COPY --chown=app:app notify ./notify
+COPY --chown=app:app web/server ./web/server
 RUN uv sync --locked
 
 COPY --chown=app:app run_daily.sh ./
-COPY --chown=app:app src ./src
 COPY --from=web --chown=app:app /web/dist ./web/ui/dist
 COPY --chown=app:app config ./config
 COPY --chown=app:app .claude ./.claude
@@ -59,4 +60,4 @@ VOLUME /var/lib/newsletter
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
 # 預設是 web；沒有登入，只 bind 127.0.0.1（對外只能經 cloudflared + Access）
-CMD ["python", "src/web.py", "--host", "127.0.0.1", "--port", "8787"]
+CMD ["newsletter-web", "--host", "127.0.0.1", "--port", "8787"]

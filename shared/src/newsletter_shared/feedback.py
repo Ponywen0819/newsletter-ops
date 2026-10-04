@@ -13,7 +13,7 @@
 
 之後跑 `uv run newsletter-feedback` 收集到 state/feedback.jsonl。
 同一則重複標記時以最新一次為準（以檔案日期排序）。
-也可以改用 `python3 src/web.py` 在網頁上按 👍／👎，直接寫同一個檔（取消記為 mark ""）。
+也可以改用 `uv run newsletter-web` 在網頁上按 👍／👎，直接寫同一個檔（取消記為 mark ""）。
 
 兩條路徑共用 state/feedback.jsonl，都只往後 append、不改寫舊內容，並用同一把檔案鎖排隊，
 所以可以同時跑。為了不和網頁打架：報告裡的標記只匯入「feedback.jsonl 還沒有紀錄」的那一則；

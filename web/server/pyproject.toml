@@ -1,0 +1,22 @@
+[project]
+name = "newsletter-web"
+version = "0.1.0"
+description = "newsletter-ops 的網頁後端：JSON API ＋ 提供前端（web/ui）的建置結果"
+requires-python = ">=3.10"
+# 純標準庫。依賴 shared，以及 agent（只為了 token 驗證：以 `python -m newsletter_agent.agent_run --auth-check` 呼叫）；
+# 不得依賴 notify（deploy/check_boundaries.py 會檢查）。
+dependencies = [
+    "newsletter-shared",
+    "newsletter-agent",
+]
+
+[project.scripts]
+newsletter-web = "newsletter_web.web:main"
+
+[tool.uv.sources]
+newsletter-shared = { workspace = true }
+newsletter-agent = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12"]
+build-backend = "uv_build"

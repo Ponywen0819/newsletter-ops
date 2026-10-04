@@ -229,18 +229,18 @@
   - Files：（搬）`web/` 前端整包；（改）`src/web.py`、`Dockerfile`、`.dockerignore`、`.gitignore`、`README.md`
   - Scope：M（一次目錄搬移 ＋ 5 個小改動）
 
-- [ ] **T13：後端搬到 `web/server/` ＋ `newsletter-web`**
+- [x] **T13：後端搬到 `web/server/` ＋ `newsletter-web`**
   - Acceptance：
-    - [ ] `src/web.py` → `web/server/src/newsletter_web/web.py`（不拆）；`ROOT` 用 `paths.ROOT`；加 `main()`
-    - [ ] `web/server/pyproject.toml`：依賴 `newsletter-shared`、`newsletter-agent`；`[project.scripts] newsletter-web`；根 `members`／`dependencies`、`uv.lock` 更新
-    - [ ] Dockerfile 的 `CMD` 與 `docker-compose.yml` 的 `web.command` → `newsletter-web …`；healthcheck、服務名、volume 名、環境變數、埠號不變
-    - [ ] `deploy/newsletter-web.service` 的 `ExecStart` → `uv run --locked newsletter-web --host 127.0.0.1 --port 8787`；README 註明已安裝的 unit 需重新複製並 `systemctl --user daemon-reload`
-    - [ ] CI（`newsletter-web --selftest`）、README、本機 `.claude/launch.json` 更新；`src/` 目錄已空並刪除
+    - [x] `src/web.py` → `web/server/src/newsletter_web/web.py`（不拆）；`ROOT` 用 `paths.ROOT`；加 `main()`
+    - [x] `web/server/pyproject.toml`：依賴 `newsletter-shared`、`newsletter-agent`；`[project.scripts] newsletter-web`；根 `members`／`dependencies`、`uv.lock` 更新
+    - [x] Dockerfile 的 `CMD` 與 `docker-compose.yml` 的 `web.command` → `newsletter-web …`；healthcheck、服務名、volume 名、環境變數、埠號不變
+    - [x] `deploy/newsletter-web.service` 的 `ExecStart` → `uv run --locked newsletter-web --host 127.0.0.1 --port 8787`；README 註明已安裝的 unit 需重新複製並 `systemctl --user daemon-reload`
+    - [x] CI（`newsletter-web --selftest`）、README、本機 `.claude/launch.json` 更新；`src/` 目錄已空並刪除
   - Verification：
-    - [ ] V-GOLD（全部用最終指令）：六項全部相同，含 `api.json`
-    - [ ] 本機 `newsletter-web` 開 `/auth`，用**假 token** 觸發測試：回「無效」，證明子程序走的是 `python -m newsletter_agent.agent_run`（不耗額度）
-    - [ ] V-DOCKER（`/api/reports` 回 200；`docker compose config` 通過）；`grep -rn newsletter_notify web/server` 無結果
-    - [ ] V-CI、`check_boundaries.py`、V-GREP
+    - [x] V-GOLD（全部用最終指令）：六項全部相同，含 `api.json`
+    - [x] 本機 `newsletter-web` 開 `/auth`，用**假 token** 觸發測試：回「無效」，證明子程序走的是 `python -m newsletter_agent.agent_run`（不耗額度）
+    - [x] V-DOCKER（`/api/reports` 回 200；`docker compose config` 通過）；`grep -rn newsletter_notify web/server` 無結果
+    - [x] V-CI、`check_boundaries.py`、V-GREP
   - Dependencies：T12
   - Files：（搬）`web.py`；（改）`web/server/pyproject.toml`、根 `pyproject.toml`、`uv.lock`、`Dockerfile`、`docker-compose.yml`、`deploy/newsletter-web.service`、`selftest.yml`、`README.md`、`.dockerignore`、`.gitignore`
   - Scope：M-L

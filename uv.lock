@@ -14,6 +14,7 @@ members = [
     "newsletter-notify",
     "newsletter-ops",
     "newsletter-shared",
+    "newsletter-web",
 ]
 
 [[package]]
@@ -425,6 +426,7 @@ dependencies = [
     { name = "newsletter-agent" },
     { name = "newsletter-notify" },
     { name = "newsletter-shared" },
+    { name = "newsletter-web" },
 ]
 
 [package.metadata]
@@ -432,12 +434,28 @@ requires-dist = [
     { name = "newsletter-agent", editable = "agent" },
     { name = "newsletter-notify", editable = "notify" },
     { name = "newsletter-shared", editable = "shared" },
+    { name = "newsletter-web", editable = "web/server" },
 ]
 
 [[package]]
 name = "newsletter-shared"
 version = "0.1.0"
 source = { editable = "shared" }
+
+[[package]]
+name = "newsletter-web"
+version = "0.1.0"
+source = { editable = "web/server" }
+dependencies = [
+    { name = "newsletter-agent" },
+    { name = "newsletter-shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "newsletter-agent", editable = "agent" },
+    { name = "newsletter-shared", editable = "shared" },
+]
 
 [[package]]
 name = "opentelemetry-api"

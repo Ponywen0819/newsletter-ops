@@ -9,6 +9,7 @@ dependencies = [
     "newsletter-shared",
     "newsletter-agent",
     "newsletter-notify",
+    "newsletter-web",
 ]
 
 [tool.uv]
@@ -17,9 +18,10 @@ package = false
 
 # 搬移期間根目錄仍是一般專案；成員搬完後這個檔會只剩下 [tool.uv.workspace]
 [tool.uv.workspace]
-members = ["shared", "agent", "notify"]
+members = ["shared", "agent", "notify", "web/server"]
 
 [tool.uv.sources]
 newsletter-shared = { workspace = true }
 newsletter-agent = { workspace = true }
 newsletter-notify = { workspace = true }
+newsletter-web = { workspace = true }

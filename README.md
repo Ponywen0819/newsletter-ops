@@ -20,7 +20,7 @@ agent/src/newsletter_agent/agent_run.py  無人值守層：Claude Agent SDK 跑 
 shared/src/newsletter_shared/auth_store.py  認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
 shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
-src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/ui/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
+web/server/src/newsletter_web/web.py  Web 後端：JSON API（/api/*）＋提供 web/ui/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
 web/ui/                    Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/ui/dist 不進版控
 agent/src/newsletter_agent/newsletter-fetch  入口 CLI（newsletter-fetch）
 run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → render_email.py → send_email.py，失敗留 log、exit 非 0
@@ -64,7 +64,7 @@ uv run newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claud
 uv run newsletter-fetch --lookback 72 # 放寬時間窗到 72 小時
 uv run newsletter-feedback      # 收集報告裡填的標記
 (cd web/ui && npm install && npm run build)   # 第一次（以及改了前端之後）：建置網頁前端，見「Web 前端」
-uv run src/web.py               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
+uv run newsletter-web               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
 uv run newsletter-render | uv run newsletter-send   # 寄出當日 email
 ```
 
@@ -97,8 +97,8 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-f
 
 ```bash
 (cd web/ui && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
-uv run src/web.py               # 開 http://127.0.0.1:8787/
-uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制
+uv run newsletter-web               # 開 http://127.0.0.1:8787/
+uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制
 ```
 
 `/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則主要新聞末尾有「有用／沒用」兩顆按鈕（上／下箭頭圖示），按下即 append 一行到
@@ -126,22 +126,22 @@ uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的�
 
 ### Web 前端（`web/`）
 
-Vite + React + TypeScript。後端 `src/web.py` 只出 JSON，頁面全由前端畫；晨報不再是後端組好的 HTML，
+Vite + React + TypeScript。後端 `newsletter-web`（`web/server`）只出 JSON，頁面全由前端畫；晨報不再是後端組好的 HTML，
 而是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
 版面是自適應的（手機單欄、筆電左側目錄＋內文，樣式在 `web/ui/src/styles.css`）；email 吃同一份結構，由 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
 cd web/ui
 npm install          # 第一次；需要 Node ^20.19 或 >=22.12
-npm run build        # 型別檢查 + 建置到 web/ui/dist，src/web.py 直接提供
-npm run dev          # 開發：Vite 在 :5173，/api 代理到 src/web.py（需另外用 uv run src/web.py 開後端）
+npm run build        # 型別檢查 + 建置到 web/ui/dist，newsletter-web 直接提供
+npm run dev          # 開發：Vite 在 :5173，/api 代理到 newsletter-web（需另外用 uv run newsletter-web 開後端）
 npm test             # Vitest + Testing Library：元件與路由
 npm run typecheck
 ```
 
 - 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機）。後端對這幾條回 `index.html`，
-  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`src/web.py` 的 `SPA_ROUTES` 要同步。
-- API（細節見 `src/web.py` 開頭的說明、型別見 `web/ui/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
+  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`web/server/src/newsletter_web/web.py` 的 `SPA_ROUTES` 要同步。
+- API（細節見 `web/server/src/newsletter_web/web.py` 開頭的說明、型別見 `web/ui/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
   `/api/reports/<date>`、`/api/feedback/<uid>`、`/api/auth`；`POST /api/feedback`、`/api/auth/token|test|revoke`。
 - 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
@@ -185,7 +185,7 @@ arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解
 
 ```bash
 uv sync                                   # 依 uv.lock 建立 .venv 並裝好依賴（uv run 也會自動做）
-uv run src/web.py                        # 第一次：開 http://127.0.0.1:8787/auth 貼上 OAuth token（見下方「認證」）
+uv run newsletter-web                        # 第一次：開 http://127.0.0.1:8787/auth 貼上 OAuth token（見下方「認證」）
 uv run newsletter-agent                  # 依 skill 寫報告並驗收（有更新、格式正確），約數分鐘
 uv run newsletter-agent --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
 uv run newsletter-render | uv run newsletter-send   # 報告寫好之後：轉成 email 並寄出
@@ -198,7 +198,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
 
 1. 在**自己的電腦**執行 `claude setup-token`，在瀏覽器完成授權；它會印出效期一年的 token（CLI 不會幫你存）。
    需要 Pro / Max / Team / Enterprise 方案。
-2. 開 `http://127.0.0.1:8787/auth`（`uv run src/web.py`），把 token 貼上送出。伺服器會先用它實際呼叫一次 Claude
+2. 開 `http://127.0.0.1:8787/auth`（`uv run newsletter-web`），把 token 貼上送出。伺服器會先用它實際呼叫一次 Claude
    （極小的請求）驗證，**通過才儲存**到 `state/oauth_token.json`（權限 600、不進版控）；貼錯的 token 不會蓋掉原本可用的。
    頁面也顯示授權狀態與預計到期日（以一年效期推算，剩 30 天內會提醒），並可「測試連線」或「刪除已存的 token」
    （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。
@@ -221,7 +221,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
   所以光看來源位址擋不住 Tunnel；要同時符合「來源是 loopback」「`Host` 是 `127.0.0.1` / `localhost` / `[::1]`」
   「沒有 `Cf-*` / `X-Forwarded-*` 等代理標頭」「`Origin`（若有）是本機」，否則回 404。
   遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>`，再用自己電腦的瀏覽器開 `http://localhost:8787/auth`。
-- 驗證 token 需要 SDK，請用 `uv run src/web.py` 啟動（用 `python3 src/web.py` 時其他頁面照常，只有貼 token 會提示缺 SDK）。
+- 驗證 token 需要 SDK：`web` 成員依賴 `agent`（它帶著 SDK），用 `uv run newsletter-web` 啟動就有。
 - **範圍**：只載入專案層級的 skill（`setting_sources=["project"]`），不吃使用者層級的同名 skill；預先允許
   `Skill / Bash / Read / Write / Edit / WebFetch / WebSearch`，其餘工具一律拒絕（不會卡在沒人回答的提示）。
 - **失敗會以非 0 結束**，cron 看得到：
@@ -249,7 +249,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
   ```
 
 - 用 `agent_run.py` 時，skill 裡的 `newsletter-metrics claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
-- 自我檢查：`uv run python -m newsletter_agent.agent_run --selftest`、`uv run python -m newsletter_shared.auth_store --selftest`、`uv run src/web.py --selftest`、
+- 自我檢查：`uv run python -m newsletter_agent.agent_run --selftest`、`uv run python -m newsletter_shared.auth_store --selftest`、`uv run newsletter-web --selftest`、
   `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web/ui && npm test`。
   push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
 

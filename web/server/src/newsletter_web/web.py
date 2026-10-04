@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Web 層：JSON API ＋ 提供前端（web/，Vite + React）的建置結果。晨報每則旁邊按 👍／👎，直接寫進 state/feedback.jsonl。
 
-用法：python3 src/web.py [--host 127.0.0.1] [--port 8787] [--selftest]
+用法：uv run newsletter-web [--host 127.0.0.1] [--port 8787] [--selftest]
 port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
 前端是 web/ui/ 底下的 Vite + React 專案，要先建置：`cd web/ui && npm install && npm run build`，
@@ -42,7 +42,7 @@ cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以光看來源
 遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth，
 或直接在 host 上設環境變數 CLAUDE_CODE_OAUTH_TOKEN。
 貼上的 token 先交給 `newsletter-agent --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
-token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK，請用 `uv run src/web.py` 啟動。
+token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK（由 newsletter-agent 帶進來），用 `uv run newsletter-web` 啟動就有。
 """
 from __future__ import annotations
 
@@ -65,8 +65,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from newsletter_shared import auth_store, feedback, report_data
-
-ROOT = Path(__file__).resolve().parent.parent
+from newsletter_shared.paths import ROOT
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -158,7 +157,7 @@ def run_auth_check(token: str) -> dict:
             return {"ok": result["ok"], "kind": str(result.get("kind", "other")),
                     "message": str(result.get("message", "")).replace(token, "***")}
     if p.returncode == 2:  # agent_run 在沒有 SDK 時、還沒走到驗證就以 2 結束
-        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run src/web.py` 啟動"}
+        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run newsletter-web` 啟動"}
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
 
 
@@ -889,7 +888,7 @@ def selftest_auth() -> None:
             assert uid in (root / "state" / "feedback.jsonl").read_text(encoding="utf-8")
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="晨報瀏覽與 👍／👎 回饋")
     ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}，不要綁到對外位址（沒有登入）")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WEB_PORT", DEFAULT_PORT)))
@@ -915,4 +914,4 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())
