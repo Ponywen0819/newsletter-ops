@@ -40,11 +40,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
+from newsletter_shared import auth_store, metrics
 
-import auth_store  # noqa: E402
-from newsletter_shared import metrics  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
 
 try:
     import claude_agent_sdk as sdk

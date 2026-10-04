@@ -64,12 +64,9 @@ from typing import Callable, Iterator, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
+from newsletter_shared import auth_store, feedback, report_data
 
-import auth_store  # noqa: E402
-from newsletter_shared import feedback  # noqa: E402
-from newsletter_shared import report_data  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787

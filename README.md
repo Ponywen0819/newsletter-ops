@@ -17,7 +17,7 @@ shared/src/newsletter_shared/metrics.py  量測層：debug 開啟時記錄各階
 src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
-src/auth_store.py          認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
+shared/src/newsletter_shared/auth_store.py  認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
 shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
 src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
@@ -246,7 +246,7 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
   ```
 
 - 用 `agent_run.py` 時，skill 裡的 `newsletter-metrics claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
-- 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`、
+- 自我檢查：`uv run src/agent_run.py --selftest`、`uv run python -m newsletter_shared.auth_store --selftest`、`uv run src/web.py --selftest`、
   `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web && npm test`。
   push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
 

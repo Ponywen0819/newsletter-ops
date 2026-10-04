@@ -103,11 +103,11 @@
   - Files：（搬）`metrics.py`；（改）`src/fetch.py`、`src/run.py`、`src/render_email.py`、`src/agent_run.py`、`shared/pyproject.toml`、`selftest.yml`、`SKILL.md`、`README.md`
   - Scope：M
 
-- [ ] **T6：`auth_store` 搬進 `shared`**
+- [x] **T6：`auth_store` 搬進 `shared`**
   - Acceptance：
-    - [ ] `src/auth_store.py` → `shared/.../auth_store.py`（借 `feedback.locked` 改為套件內 import）；importer 改：`src/agent_run.py`、`src/web.py`
-    - [ ] `token_path()` 仍是 `ROOT/state/oauth_token.json`；環境變數名稱（`CLAUDE_CODE_OAUTH_TOKEN` 等）不變
-    - [ ] CI 該行 → `uv run --locked python -m newsletter_shared.auth_store --selftest`
+    - [x] `src/auth_store.py` → `shared/.../auth_store.py`（借 `feedback.locked` 改為套件內 import）；importer 改：`src/agent_run.py`、`src/web.py`
+    - [x] `token_path()` 仍是 `ROOT/state/oauth_token.json`；環境變數名稱（`CLAUDE_CODE_OAUTH_TOKEN` 等）不變
+    - [x] CI 該行 → `uv run --locked python -m newsletter_shared.auth_store --selftest`
   - Verification：V-CI；`check_boundaries.py`；V-GREP；README 的 token 段落指令已更新
   - Dependencies：T5
   - Files：（搬）`auth_store.py`；（改）`src/agent_run.py`、`src/web.py`、`selftest.yml`、`README.md`

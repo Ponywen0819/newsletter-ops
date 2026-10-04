@@ -27,7 +27,7 @@ jobs:
       - run: uv run --locked python src/render_email.py --selftest
       - run: uv run --locked python src/send_email.py --selftest
       - run: uv run --locked newsletter-feedback --selftest
-      - run: uv run --locked python src/auth_store.py --selftest
+      - run: uv run --locked python -m newsletter_shared.auth_store --selftest
       - run: uv run --locked python -m newsletter_shared.report_data --selftest
       - run: uv run --locked python src/web.py --selftest
       - run: uv run --locked python src/run.py --list-sources
