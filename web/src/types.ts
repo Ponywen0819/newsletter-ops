@@ -20,9 +20,12 @@ export type Block =
   | { type: 'heading'; inline: InlineNode[] }
   | { type: 'callout'; inline: InlineNode[] }
   | { type: 'paragraph'; inline: InlineNode[] }
-  /** votable：這張清單（或獨立 mark）要不要放有用／沒用。規則在後端 report_data.py，網頁與 email 都只讀這個旗標 */
-  | { type: 'list'; items: ListItem[]; votable: boolean }
-  | { type: 'mark'; uid: string; votable: boolean }
+  /**
+   * votable：這張清單（或獨立 mark）要不要放有用／沒用。規則在後端 report_data.py，網頁與 email 都只讀這個旗標。
+   * 舊版後端沒有這個欄位：缺少時當作可投票——寧可多一組按鈕，也不要讓整頁的投票消失。
+   */
+  | { type: 'list'; items: ListItem[]; votable?: boolean }
+  | { type: 'mark'; uid: string; votable?: boolean }
 
 export interface Report {
   title: string

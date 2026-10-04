@@ -72,6 +72,19 @@ describe('ReportView', () => {
     expect(document.querySelectorAll('.fb')).toHaveLength(2) // 原本可投票的主要新聞反而一組都沒有
   })
 
+  it('後端沒給 votable（舊版後端）：一律當可投票，投票鈕不會消失', () => {
+    const legacy: Report = {
+      ...stories,
+      blocks: stories.blocks.map((b) => {
+        if (b.type !== 'list' && b.type !== 'mark') return b
+        const { votable: _omit, ...withoutFlag } = b
+        return withoutFlag
+      }),
+    }
+    render(<ReportView report={legacy} marks={{}} onMark={() => {}} />)
+    expect(document.querySelectorAll('.fb')).toHaveLength(5) // 兩則新聞＋獨立 mark＋其餘收錄的一條與它後面的 mark：全部照畫，不是全部消失
+  })
+
   it('每組按鈕亮的是自己那則的標記', () => {
     render(<ReportView report={stories} marks={{ [UID_A]: '+', [UID_B]: '-' }} onMark={() => {}} />)
     const boxes = [...document.querySelectorAll<HTMLElement>('.fb')]

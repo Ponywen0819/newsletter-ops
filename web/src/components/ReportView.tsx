@@ -56,9 +56,9 @@ function BlockView({ block, votes }: { block: Block; votes: Votes }) {
         </p>
       )
     case 'list':
-      return <Items items={block.items} votable={block.votable} votes={votes} />
+      return <Items items={block.items} votable={block.votable !== false} votes={votes} />
     case 'mark':
-      return block.votable ? <FeedbackButtons uids={[block.uid]} marks={votes.marks} onChange={votes.onMark} /> : null
+      return block.votable !== false ? <FeedbackButtons uids={[block.uid]} marks={votes.marks} onChange={votes.onMark} /> : null
   }
 }
 
