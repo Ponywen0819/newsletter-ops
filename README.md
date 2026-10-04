@@ -66,32 +66,6 @@ logs/<YYYY-MM>.log         排程執行紀錄
 抓取、去重、排序、arXiv 會議判斷、HTML 版型全部可重現；挑選重點與條列改寫由 Claude
 依 `news-digest` skill 讀 curated JSON 後改寫 `reports/<date>.md`。
 
-### 從舊版（monorepo 之前）遷移
-
-| 舊指令 | 現在 |
-| --- | --- |
-| `uv run src/run.py …` | `uv run newsletter-fetch …` |
-| `uv run src/agent_run.py …` | `uv run newsletter-agent …` |
-| `uv run src/render_email.py` | `uv run newsletter-render` |
-| `uv run src/send_email.py` | `uv run newsletter-send` |
-| `uv run src/feedback.py` | `uv run newsletter-feedback` |
-| `uv run src/metrics.py …` | `uv run newsletter-metrics …` |
-| `uv run src/web.py` | `uv run newsletter-web` |
-| `uv run src/curate.py`（自我檢查） | `uv run python -m newsletter_agent.curate`；其餘自我檢查見 `.github/workflows/selftest.yml` |
-| `cd web && npm …` | `cd web/ui && npm …` |
-| （新增） | `uv run newsletter-report-check [YYYY-MM-DD]`：驗證報告格式 |
-
-行為上只有一個變動：**agent 不再產 email HTML、也不寄信**。`run_daily.sh` 變成抓取 → agent → `newsletter-render` → `newsletter-send` 四步，
-`newsletter-agent` 的 exit 4 現在代表「報告格式不符」（原本是 render 失敗，實際上也是格式不符），stdout 保持空。
-
-主機端要做的事：
-
-- **Docker**：`git pull && docker compose up -d --build`。volume、環境變數、服務名稱、埠號都沒變。
-- **systemd**（不用 Docker 時）：`deploy/newsletter-web.service` 的 `ExecStart` 改了，已安裝的 unit 要重新複製到 `~/.config/systemd/user/`，
-  再 `systemctl --user daemon-reload && systemctl --user restart newsletter-web`。排程的 unit 不變（它呼叫 `run_daily.sh`）。
-- **前端**要重新建置（路徑變成 `web/ui`）：`cd web/ui && npm ci && npm run build`。
-- 若在 Claude Code 的權限白名單裡放過舊指令（例如 `Bash(python3 src/…)`），要換成新指令。
-
 ## 環境（uv）
 
 Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-version` 固定直譯器（3.11）、`uv.lock` 鎖定依賴。
@@ -163,7 +137,6 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
   `uv run newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
 - **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，但不 publish 任何 port，見「部署到家用 host」）。
 - `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
-  （改版前是 `POST /feedback`；若有外部腳本或 Cloudflare Access 規則寫死舊路徑，要跟著改。）
 - `/auth`（貼 OAuth token）**只服務本機**，經 Tunnel 進來的一律 404，見下一節。
 - **email 裡的「👍 有用／👎 沒用」連結**（email 的連結文字仍帶 emoji；網頁上的按鈕是箭頭圖示）：設環境變數 `NEWSLETTER_BASE_URL`（對外網址，如 `https://news.example.com`，要 `http(s)://` 開頭）後，
   `render_email.py` 會在每則**主要新聞**底下加兩個連結，指向 `<base>/feedback/<uid>?v=%2B`（有用）／`?v=-`（沒用），手機看信也能回饋。
@@ -175,10 +148,9 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
   網址要是 Tunnel + Access 保護的那個網域：點連結時 Access 會先要求登入，掃描器看到的只是登入頁。
   Docker 部署在 `.env` 設；systemd／cron 部署在 `~/.config/newsletter-ops/env` 設。
 
-### Web 前端（`web/`）
+### Web 前端（`web/ui/`）
 
-Vite + React + TypeScript。後端 `newsletter-web`（`web/server`）只出 JSON，頁面全由前端畫；晨報不再是後端組好的 HTML，
-而是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
+Vite + React + TypeScript。後端 `newsletter-web`（`web/server`）只出 JSON，頁面全由前端畫；晨報是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
 版面是自適應的（手機單欄、筆電左側目錄＋內文，樣式在 `web/ui/src/styles.css`）；email 吃同一份結構，由 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
@@ -265,7 +237,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
   若帳號開了「額外用量」（[extra usage](https://support.claude.com/en/articles/12429409-extra-usage-for-paid-claude-plans)）
   之類的自動付費設定，額度用完後仍可能產生費用，請到帳號設定確認。
 - **token 保護**：token 傳給驗證子程序時走環境變數、不上命令列，不回傳給瀏覽器（最多顯示尾 4 碼）、不寫進 log。
-  注意 token 在 agent（claude CLI）的環境裡，agent 用 Bash 跑的指令讀得到它（以前的 API key 也一樣）；
+  注意 token 在 agent（claude CLI）的環境裡，agent 用 Bash 跑的指令讀得到它；
   Claude Code 有 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 可以擋，但它要求系統有 bubblewrap，沒有就整個 CLI 啟動失敗，
   所以預設沒開；要用請先裝 bubblewrap 再自己在環境設這個變數。
 - **`/auth` 只能從本機開**：能寫入憑證，而 `web.py` 沒有登入。`cloudflared` 跑在同一台機器、以 `127.0.0.1` 連進來，
