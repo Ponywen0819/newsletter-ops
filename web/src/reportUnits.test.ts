@@ -8,6 +8,7 @@ const heading = (text: string): Block => ({ type: 'heading', inline: t(text) })
 const para = (text: string): Block => ({ type: 'paragraph', inline: [{ type: 'strong', children: [{ type: 'link', href: 'https://x.example', children: t(text) }] }] })
 const list = (...items: { text: string; uid?: string }[]): Block => ({
   type: 'list',
+  votable: true,
   items: items.map(({ text, uid }) => ({ inline: t(text), uids: uid ? [uid] : undefined })),
 })
 const make = (blocks: Block[], sources: Report['sources'] = []): Report => ({ title: 'T', subject: 'S', headline: 'H', blocks, sources })
@@ -100,7 +101,7 @@ describe('groupReport', () => {
   })
 
   it('邊界：孤兒 mark、空標題、多個 title 都不會遺失區塊', () => {
-    const blocks: Block[] = [{ type: 'mark', uid: UID_A }, { type: 'title', title: 'A', date: null }, { type: 'title', title: 'B', date: null }, para('')]
+    const blocks: Block[] = [{ type: 'mark', uid: UID_A, votable: true }, { type: 'title', title: 'A', date: null }, { type: 'title', title: 'B', date: null }, para('')]
     const g = groupReport(make(blocks))
     const count = (g.title ? 1 : 0) + (g.callout ? 1 : 0) + g.units.reduce((n, u) => n + u.blocks.length, 0)
     expect(count).toBe(blocks.length)

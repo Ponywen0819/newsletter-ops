@@ -32,6 +32,7 @@ export const report: Report = {
     },
     {
       type: 'list',
+      votable: true,
       items: [
         {
           inline: [{ type: 'text', text: '發生什麼：' }, { type: 'code', text: 'X900' }],
@@ -41,8 +42,8 @@ export const report: Report = {
       ],
     },
     { type: 'heading', inline: [{ type: 'text', text: '其餘收錄' }] },
-    { type: 'list', items: [{ inline: [{ type: 'text', text: '其他' }], children: [{ inline: [{ type: 'text', text: '補充' }] }], uids: [UID_B] }] },
-    { type: 'mark', uid: UID_C },
+    { type: 'list', votable: false, items: [{ inline: [{ type: 'text', text: '其他' }], children: [{ inline: [{ type: 'text', text: '補充' }] }], uids: [UID_B] }] },
+    { type: 'mark', uid: UID_C, votable: false },
   ],
   sources: [
     { title: '來源', url: 'https://a.example/x?a=1&b=2' },

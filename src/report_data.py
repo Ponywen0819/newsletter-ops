@@ -3,28 +3,33 @@
 
 用法：python3 src/report_data.py [--selftest]
 
-web 前端（web/，Vite + React）不吃 HTML，而是拿這裡解析好的結構自己排版：
+晨報只有這一個解析器：web 前端（web/，Vite + React）拿這裡解析好的結構自己排版，
+email（render_email.py）也吃同一份結構、排成 inline-CSS HTML，所以格式（SKILL.md 規定的 Markdown 子集）或內容規則
+（哪些條目可以投票）有改動時只改這裡，兩邊版型各自負責呈現。
 {"title", "date", "subject", "headline", "blocks": [...], "sources": [...]}。
-認的 Markdown 子集與 render_email.py 完全相同（# / ## / > / - / 兩格縮排的 - / 粗體 / 連結 / 行內碼 / <!-- -->），
-SKILL.md 改格式時兩邊要一起改；selftest 會拿同一份 Markdown 對照兩邊的解析結果，漂移了會失敗。
+認的 Markdown 子集：# / ## / > / - / 兩格縮排的 - / 粗體 / 連結 / 行內碼 / <!-- -->。
 
 blocks 的種類（依出現順序）：
   {"type": "title", "title", "date"}        # date 是標題尾端的 YYYY-MM-DD，沒有就是 None
   {"type": "heading", "inline": [...]}      # ## 段落標題
   {"type": "callout", "inline": [...]}      # > 引言（今日頭條）
   {"type": "paragraph", "inline": [...]}
-  {"type": "list", "items": [item, ...]}    # item: {"inline", "children": [item...]?, "uids": [uid...]?}
-  {"type": "mark", "uid"}                   # 沒掛在任何清單項目底下的 mark 註解
+  {"type": "list", "items": [item, ...], "votable"}   # item: {"inline", "children": [item...]?, "uids": [uid...]?}
+  {"type": "mark", "uid", "votable"}        # 沒掛在任何清單項目底下的 mark 註解
 inline 是 [{"type": "text", "text"} | {"type": "strong", "children"} | {"type": "link", "href", "children"}
           | {"type": "code", "text"}]。
 
+votable：這張清單（或獨立 mark）要不要放有用／沒用。只有主要新聞——標題段落＋清單——才放；
+緊接在 ## 後面的整張單行清單（「其餘收錄」）不放。被空行切開的同一則新聞（清單接在清單後面）沿用前一張的結果。
+網頁與 email 都只讀這個旗標，規則不要在各自的版型裡再寫一次。
+
 mark 註解（`<!-- mark: uid=... -->`）掛在它前面那份清單最外層的最後一個項目的 uids 上
-（與 email 版型一致：按鈕在該項目的巢狀子項目之後）。清單被空行或其他內容打斷後，mark 就是獨立的 block。
-格式不符時 raise ValueError（找不到今日頭條或 subject 註解），訊息與 render_email 相同。只用 stdlib。
+（按鈕在該項目的巢狀子項目之後）。一則新聞併了多篇文章時會連著好幾行 mark，uids 就有好幾個（每篇一個）；
+清單被空行或其他內容打斷後，mark 就是獨立的 block。
+格式不符時 raise ValueError（找不到今日頭條或 subject 註解）。只用 stdlib。
 """
 from __future__ import annotations
 
-import html
 import re
 import sys
 from pathlib import Path
@@ -33,8 +38,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from feedback import MARK_RE  # noqa: E402
-from render_email import COMMENT, LINK, plain  # noqa: E402
 
+LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
+COMMENT = re.compile(r"^\s*<!--(.*?)-->\s*$")
 BOLD = re.compile(r"\*\*(.+?)\*\*")
 CODE = re.compile(r"`([^`]+)`")
 BULLET = re.compile(r"^( *)[-*] (.+)$")
@@ -42,6 +48,19 @@ TITLE_DATE = re.compile(r"\d{4}-\d{2}-\d{2}$")
 # 連結先換成佔位符，粗體才能把整個連結包起來（`**[標題](url)**`）；用私人使用區字元，一般文字不會出現
 SLOT_OPEN, SLOT_CLOSE = "", ""
 SLOT = re.compile(f"{SLOT_OPEN}(\\d+){SLOT_CLOSE}")
+
+
+def plain(text: str) -> str:
+    """去掉粗體、行內碼、連結語法，只留文字（今日頭條的純文字版）。"""
+    return re.sub(r"\*\*|`", "", LINK.sub(r"\1", text)).strip()
+
+
+def votable_after(blocks: list[dict], standalone_mark: bool = False) -> bool:
+    """接在 blocks 後面的新清單（或獨立 mark）要不要放回饋，規則見檔頭。"""
+    prev = next((b for b in reversed(blocks) if b["type"] != "mark"), None)
+    if prev is not None and prev["type"] == "list":
+        return prev["votable"]
+    return True if standalone_mark else prev is not None and prev["type"] == "paragraph"
 
 
 def parse_inline(text: str, links: list[tuple[str, str]] | None = None) -> list[dict]:
@@ -111,13 +130,13 @@ def parse_report(markdown: str) -> dict:
                 if current is not None:
                     current["items"][-1].setdefault("uids", []).append(mark[2])
                 else:
-                    blocks.append({"type": "mark", "uid": mark[2]})
+                    blocks.append({"type": "mark", "uid": mark[2], "votable": votable_after(blocks, standalone_mark=True)})
             continue  # 其餘註解不進頁面，也不打斷清單
         bullet = BULLET.match(line)
         if bullet:
             level = len(bullet[1]) // 2 + 1
             if current is None:  # 新清單一定從第一層開始，開頭就縮排也一樣
-                current = {"type": "list", "items": []}
+                current = {"type": "list", "items": [], "votable": votable_after(blocks)}
                 blocks.append(current)
                 stack = [current["items"]]
                 level = 1
@@ -187,8 +206,6 @@ def iter_items(report: dict):
 
 
 def selftest() -> None:
-    import render_email
-
     # inline：連結、粗體、行內碼、跳脫；網址的 & 保持原樣（跳脫交給前端框架）
     def flat(nodes: list[dict]) -> str:
         out = []
@@ -248,7 +265,7 @@ def selftest() -> None:
     assert [flat(i["inline"]) for i in first[0]["children"][0]["children"]] == ["更細"]
     assert "uids" not in first[0] and first[1]["uids"] == [uid_a]
     assert report["blocks"][6]["items"][0]["uids"] == [uid_b]
-    assert report["blocks"][7] == {"type": "mark", "uid": uid_c}  # 空行打斷清單後，mark 是獨立 block
+    assert report["blocks"][7] == {"type": "mark", "uid": uid_c, "votable": False}  # 空行打斷清單後，mark 是獨立 block
     assert report["blocks"][8]["items"][0]["uids"] == [uid_d]
     assert uids_of(report) == [uid_a, uid_b, uid_c, uid_d]
     # 資料來源：依出現順序、網址去重、標題去掉 **
@@ -265,12 +282,25 @@ def selftest() -> None:
         except ValueError as exc:
             assert why in str(exc), exc
 
-    # 與 email 版型對照：同一份 Markdown，兩邊的解析結果要一致（標題、項目數、資料來源）
-    body, subject, headline = render_email.render_body(md)
-    assert (subject, headline) == (report["subject"], report["headline"])
-    main, _, tail = body.partition(">資料來源</h2>")
-    assert main.count("<li") == sum(1 for _ in iter_items(report)), main
-    assert [html.unescape(u) for u in re.findall(r'<a href="([^"]*)"', tail)] == [s["url"] for s in report["sources"]]
+    # votable：主要新聞（標題段落＋清單）才有回饋；緊接在 ## 後面的整張單行清單沒有，
+    # 它之後被空行切開的清單與獨立 mark 沿用前一張的結果
+    assert [b.get("votable") for b in report["blocks"]] == [None, None, None, None, True, None, False, False, False], report["blocks"]
+    cases = {
+        "story_blank": "**[標題](https://a.example/1)**\n- a\n\n- b\n<!-- mark:    uid=%s -->\n",   # 同一則被空行切成兩張清單：沿用
+        "list_after_heading": "## 其餘收錄\n- a\n<!-- mark:    uid=%s -->\n",
+        "paragraph_only_mark": "## X\n**[標題](https://a.example/1)**\n\n<!-- mark:    uid=%s -->\n",  # 沒有清單的新聞：mark 照樣可投票
+        "list_first": "- a\n<!-- mark:    uid=%s -->\n",
+    }
+    head = "> **今日頭條：** x\n<!-- subject: s -->\n"
+    def votables(body: str) -> list[bool]:
+        return [b["votable"] for b in parse_report(head + body % uid_a)["blocks"] if "votable" in b]
+    assert votables(cases["story_blank"]) == [True, True]
+    assert votables(cases["list_after_heading"]) == [False]
+    assert votables(cases["paragraph_only_mark"]) == [True]
+    assert votables(cases["list_first"]) == [False]  # 前面沒有標題段落
+    # 併了多篇文章：連著好幾行 mark，掛在同一個項目的 uids 上（每篇一個）
+    merged = parse_report(head + "**[標題](https://a.example/1)**\n- a\n<!-- mark:    uid=%s -->\n<!-- mark:    uid=%s -->\n" % (uid_a, uid_b))
+    assert merged["blocks"][-1]["items"][-1]["uids"] == [uid_a, uid_b] and merged["blocks"][-1]["votable"] is True
     print("ok")
 
 
