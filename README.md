@@ -14,12 +14,12 @@ src/fetch.py               抓取層：RSS 2.0 / Atom / arXiv API（零第三方
 src/curate.py              整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
 src/report.py              輸出層：模板版 Markdown（無 LLM 保底）
 src/metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
-src/render_email.py        email 層：條列版報告 Markdown → inline-CSS HTML（reports/<date>.html）
+src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 src/auth_store.py          認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 src/feedback.py            回饋層：從報告收集人工標記
-src/report_data.py         報告資料層：報告 Markdown → 結構化 JSON（與 render_email.py 認同一套格式），給網頁用
+src/report_data.py         報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
 src/web.py                 Web 後端：JSON API（/api/*）＋提供 web/dist；👍／👎 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
 web/                       Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/dist 不進版控
 src/run.py                 入口 CLI
@@ -123,7 +123,7 @@ uv run src/web.py --selftest    # API、靜態檔、寫入／覆蓋／取消的�
 
 Vite + React + TypeScript。後端 `src/web.py` 只出 JSON，頁面全由前端畫；晨報不再是後端組好的 HTML，
 而是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
-版面沿用 email 版型（灰底、640px 白卡片），email 本身仍由 `render_email.py` 產生、不受影響。
+版面是自適應的（手機單欄、筆電左側目錄＋內文，樣式在 `web/src/styles.css`）；email 吃同一份結構，由 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
 cd web
@@ -141,8 +141,9 @@ npm run typecheck
 - 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
-- 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時，`render_email.py`（email）與 `report_data.py`（網頁）兩邊要一起改；
-  `python3 src/report_data.py --selftest` 會拿同一份 Markdown 對照兩邊的解析結果。
+- 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時**只改 `report_data.py`**：網頁與 email 共用同一個解析器。哪些條目可以投票
+  （`list`／`mark` 區塊的 `votable`：主要新聞才有、「其餘收錄」沒有）也在那裡決定，兩邊版型只負責照畫。
+  `python3 src/report_data.py --selftest` 驗證解析與 `votable`，`python3 src/render_email.py --selftest` 驗證 email 輸出。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
