@@ -41,7 +41,7 @@ HTML 回應帶 Content-Security-Policy（只許同源的腳本與樣式），前
 cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以光看來源位址擋不住 Tunnel，要靠 2、3。
 遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth，
 或直接在 host 上設環境變數 CLAUDE_CODE_OAUTH_TOKEN。
-貼上的 token 先交給 `agent_run.py --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
+貼上的 token 先交給 `newsletter-agent --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
 token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK，請用 `uv run src/web.py` 啟動。
 """
 from __future__ import annotations
@@ -138,9 +138,9 @@ def is_local_request(client_ip: str, headers: Mapping[str, str]) -> bool:
 
 
 def run_auth_check(token: str) -> dict:
-    """用 `agent_run.py --auth-check` 實際呼叫一次來驗證 token。回傳 {ok, kind, message}。
+    """用 `newsletter-agent --auth-check` 實際呼叫一次來驗證 token。回傳 {ok, kind, message}。
     token 只放在子程序的環境變數（不上命令列，ps 看不到）；子程序自己會移除環境裡的 API key 等。"""
-    cmd = [sys.executable, str(ROOT / "src" / "agent_run.py"), "--auth-check", "--token-from-env"]
+    cmd = [sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]
     env = {**os.environ, auth_store.TOKEN_ENV: token}
     try:
         p = subprocess.run(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -157,7 +157,7 @@ def run_auth_check(token: str) -> dict:
         if isinstance(result, dict) and isinstance(result.get("ok"), bool):
             return {"ok": result["ok"], "kind": str(result.get("kind", "other")),
                     "message": str(result.get("message", "")).replace(token, "***")}
-    if p.returncode == 2:  # agent_run.py 在沒有 SDK 時、還沒走到驗證就以 2 結束
+    if p.returncode == 2:  # agent_run 在沒有 SDK 時、還沒走到驗證就以 2 結束
         return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run src/web.py` 啟動"}
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
 
@@ -743,6 +743,7 @@ def selftest_auth() -> None:
     assert res == {"ok": False, "kind": "auth", "message": "bad ***"}, res
     cmd, kw = calls[0]
     assert secret not in " ".join(cmd) and "--auth-check" in cmd and "--token-from-env" in cmd
+    assert cmd[1:3] == ["-m", "newsletter_agent.agent_run"] and kw["cwd"] == ROOT, cmd  # 以模組呼叫、cwd 是 repo 根
     assert kw["env"][auth_store.TOKEN_ENV] == secret and kw["timeout"] == CHECK_TIMEOUT and kw["stdin"] == sp.DEVNULL
     run, _ = fake_run('{"ok": true, "kind": "ok", "message": "驗證通過", "source": "env-token"}\n')
     with mock.patch.object(sp, "run", run):

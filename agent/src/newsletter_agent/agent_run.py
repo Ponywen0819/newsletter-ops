@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """無人值守入口：用 Claude Agent SDK 跑同一份 news-digest skill，不必開 Claude app。
 
-用法：uv run src/agent_run.py [--max-turns N]
-      uv run src/agent_run.py --auth-check [--token-from-env]
-      uv run src/agent_run.py --selftest
+用法：uv run newsletter-agent [--max-turns N]
+      uv run newsletter-agent --auth-check [--token-from-env]
+      uv run python -m newsletter_agent.agent_run --selftest
 
 抓取、寫報告都由 agent 依 SKILL.md 完成，寫完用 newsletter-report-check 驗證格式；本程式負責啟動、記錄用量、
 驗收產出（報告有更新、格式正確）。轉成 email 與寄出不是這裡的事，由 run_daily.sh 接著處理。
@@ -40,9 +40,8 @@ from datetime import datetime
 from pathlib import Path
 
 from newsletter_shared import auth_store, metrics
+from newsletter_shared.paths import ROOT
 from newsletter_shared.report_data import parse_report
-
-ROOT = Path(__file__).resolve().parent.parent
 
 try:
     import claude_agent_sdk as sdk
@@ -249,7 +248,7 @@ def check_format(root: Path, stamp: str) -> str | None:
     return None
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS)
     ap.add_argument("--selftest", action="store_true")
@@ -258,7 +257,7 @@ def main(argv: list[str]) -> int:
                     help=f"搭配 --auth-check：只用環境變數 {auth_store.TOKEN_ENV}（驗證尚未儲存的 token）")
     args = ap.parse_args(argv)
     if sdk is None:
-        print("缺 claude-agent-sdk：請用 `uv run src/agent_run.py` 執行（或先 `uv sync`）", file=sys.stderr)
+        print("缺 claude-agent-sdk：請用 `uv run newsletter-agent` 執行（或先 `uv sync`）", file=sys.stderr)
         return 2
     if args.selftest:
         selftest()
@@ -494,4 +493,4 @@ def selftest_main() -> None:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

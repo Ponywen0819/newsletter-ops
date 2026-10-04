@@ -3,10 +3,9 @@ name = "newsletter-ops"
 version = "0.1.0"
 description = "每日新聞自動蒐集 → 整理 → 報告的 pipeline"
 requires-python = ">=3.10"
-# 抓取、整理、寄信都只用標準庫；只有 src/agent_run.py（無人值守執行）需要 SDK。
-# 下限是測試過的版本，不是已知的最低相容版本。
+# 依賴都宣告在各成員的 pyproject.toml（只有 agent 需要第三方套件 claude-agent-sdk）；
+# 根目錄只負責把成員裝進同一個環境。
 dependencies = [
-    "claude-agent-sdk>=0.2.123",
     "newsletter-shared",
     "newsletter-agent",
 ]

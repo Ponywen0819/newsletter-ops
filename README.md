@@ -16,7 +16,7 @@ agent/src/newsletter_agent/report.py  輸出層：模板版 Markdown（無 LLM �
 shared/src/newsletter_shared/metrics.py  量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
 src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
-src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
+agent/src/newsletter_agent/agent_run.py  無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
 shared/src/newsletter_shared/auth_store.py  認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
 shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
 shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
@@ -52,7 +52,7 @@ uv add <套件>         # 新增依賴（會更新 pyproject.toml 與 uv.lock，
 uv lock --upgrade     # 升級鎖定的版本
 ```
 
-抓取、整理、寄信都只用標準庫，只有 `src/agent_run.py` 需要第三方套件（`claude-agent-sdk`）。
+抓取、整理、寄信都只用標準庫，只有 `agent` 成員（`agent_run`）需要第三方套件（`claude-agent-sdk`）。
 skill 裡由 agent 呼叫的指令都是 `uv run --locked …`，要在 repo 根目錄、有 uv 的環境下執行。
 
 ## 使用
@@ -180,16 +180,16 @@ arXiv 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解
 
 ## 無人值守（Claude Agent SDK）
 
-不開 Claude app 也能跑完整流程：`src/agent_run.py` 用 Claude Agent SDK 呼叫**同一份**
+不開 Claude app 也能跑完整流程：`agent_run`（`uv run newsletter-agent`）用 Claude Agent SDK 呼叫**同一份**
 `.claude/skills/news-digest/SKILL.md`，與在對話裡打 `/news-digest` 並存、結果一致。
 
 ```bash
 uv sync                                   # 依 uv.lock 建立 .venv 並裝好依賴（uv run 也會自動做）
 uv run src/web.py                        # 第一次：開 http://127.0.0.1:8787/auth 貼上 OAuth token（見下方「認證」）
-uv run src/agent_run.py                  # 依 skill 寫報告並驗收（有更新、格式正確），約數分鐘
-uv run src/agent_run.py --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
+uv run newsletter-agent                  # 依 skill 寫報告並驗收（有更新、格式正確），約數分鐘
+uv run newsletter-agent --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
 uv run src/render_email.py | uv run src/send_email.py   # 報告寫好之後：轉成 email 並寄出
-uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼叫），不跑晨報
+uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼叫），不跑晨報
 ```
 
 ### 認證：只用 OAuth（訂閱額度），不使用 API key
@@ -244,12 +244,12 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
   跑幾天後用它調整 `--max-turns`，並看看一次晨報吃掉多少訂閱額度：
 
   ```bash
-  NEWSLETTER_DEBUG=1 uv run src/agent_run.py
+  NEWSLETTER_DEBUG=1 uv run newsletter-agent
   uv run newsletter-metrics summary 14
   ```
 
 - 用 `agent_run.py` 時，skill 裡的 `newsletter-metrics claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
-- 自我檢查：`uv run src/agent_run.py --selftest`、`uv run python -m newsletter_shared.auth_store --selftest`、`uv run src/web.py --selftest`、
+- 自我檢查：`uv run python -m newsletter_agent.agent_run --selftest`、`uv run python -m newsletter_shared.auth_store --selftest`、`uv run src/web.py --selftest`、
   `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web && npm test`。
   push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
 
@@ -314,7 +314,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up，PORTS 欄�
 | **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的「有用」 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
 | `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的「👍 有用」連結 | 先經 Access 登入，再看到「確認標為 有用」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
-| `docker compose run --rm scheduler uv run src/agent_run.py --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
+| `docker compose run --rm scheduler uv run newsletter-agent --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、有費用）。
 Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理頁面重新登入即可。
@@ -325,7 +325,7 @@ Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理�
 docker compose logs -f scheduler                  # 排程輸出；run_daily.sh 失敗時會附上 logs/ 的最後 20 行
 docker compose exec web ls reports                # volume 裡的報告
 docker compose run --rm scheduler ./run_daily.sh  # 手動跑一次完整流程（抓取 → agent → render → 寄信）
-docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test scheduler uv run src/agent_run.py   # 只產報告、不寄信
+docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test scheduler uv run newsletter-agent   # 只產報告、不寄信
 git pull && docker compose up -d --build          # 更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
 
@@ -419,7 +419,7 @@ Application domain 填 `news.example.com`；Policy 一條就好：Action = Allow
 | **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的「有用」 | host 上 `tail -n1 ~/newsletter-ops/state/feedback.jsonl` 多一行 |
 
-頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上 `uv run src/agent_run.py`
+頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上 `uv run newsletter-agent`
 （或上面的手動排程）先產一份。
 Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理頁面重新登入即可。
 

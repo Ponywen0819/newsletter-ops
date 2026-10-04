@@ -395,25 +395,27 @@ name = "newsletter-agent"
 version = "0.1.0"
 source = { editable = "agent" }
 dependencies = [
-    { name = "newsletter-shared" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "newsletter-shared", editable = "shared" }]
-
-[[package]]
-name = "newsletter-ops"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
     { name = "claude-agent-sdk" },
-    { name = "newsletter-agent" },
     { name = "newsletter-shared" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.123" },
+    { name = "newsletter-shared", editable = "shared" },
+]
+
+[[package]]
+name = "newsletter-ops"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "newsletter-agent" },
+    { name = "newsletter-shared" },
+]
+
+[package.metadata]
+requires-dist = [
     { name = "newsletter-agent", editable = "agent" },
     { name = "newsletter-shared", editable = "shared" },
 ]

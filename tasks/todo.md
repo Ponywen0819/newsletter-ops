@@ -172,18 +172,18 @@
   - Files：（搬）`run.py`、`report.py`；（改）`agent/pyproject.toml`、`run_daily.sh`、`SKILL.md`、`selftest.yml`、`README.md`
   - Scope：M
 
-- [ ] **T10：`agent_run` 進 `agent` ＋ `newsletter-agent`；SDK 依賴移到 `agent`**
+- [x] **T10：`agent_run` 進 `agent` ＋ `newsletter-agent`；SDK 依賴移到 `agent`**
   - Acceptance：
-    - [ ] `src/agent_run.py` → `agent/.../agent_run.py`；`agent/pyproject.toml` 依賴 `claude-agent-sdk>=0.2.123`、`newsletter-shared`；根 `dependencies` 移除直接的 SDK 依賴；`[project.scripts] newsletter-agent`
-    - [ ] `cwd` 仍是 repo 根（`paths.ROOT`），`PROMPT` 不變
-    - [ ] `src/web.py` 的 token 驗證子程序改成 `[sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]`（`cwd=ROOT`、以環境變數傳 token 不變）；web 的註解與 docstring 同步
-    - [ ] `run_daily.sh` 第 2 步、README「無人值守」段落更新
-    - [ ] `uv.lock` 的 `claude-agent-sdk` 版本不變
+    - [x] `src/agent_run.py` → `agent/.../agent_run.py`；`agent/pyproject.toml` 依賴 `claude-agent-sdk>=0.2.123`、`newsletter-shared`；根 `dependencies` 移除直接的 SDK 依賴；`[project.scripts] newsletter-agent`
+    - [x] `cwd` 仍是 repo 根（`paths.ROOT`），`PROMPT` 不變
+    - [x] `src/web.py` 的 token 驗證子程序改成 `[sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]`（`cwd=ROOT`、以環境變數傳 token 不變）；web 的註解與 docstring 同步
+    - [x] `run_daily.sh` 第 2 步、README「無人值守」段落更新
+    - [x] `uv.lock` 的 `claude-agent-sdk` 版本不變
   - Verification：
-    - [ ] `uv run --locked python -m newsletter_agent.agent_run --selftest` 通過
-    - [ ] 無 token：`env -u CLAUDE_CODE_OAUTH_TOKEN uv run --locked newsletter-agent` → exit 2、訊息指向 `/auth` 或環境變數（不消耗額度）
-    - [ ] `uv run --locked python src/web.py --selftest` 通過
-    - [ ] `grep -rn newsletter_notify agent/` 無結果；V-CI、`check_boundaries.py`；V-DOCKER
+    - [x] `uv run --locked python -m newsletter_agent.agent_run --selftest` 通過
+    - [x] 無 token：`env -u CLAUDE_CODE_OAUTH_TOKEN uv run --locked newsletter-agent` → exit 2、訊息指向 `/auth` 或環境變數（不消耗額度）
+    - [x] `uv run --locked python src/web.py --selftest` 通過
+    - [x] `grep -rn newsletter_notify agent/` 無結果；V-CI、`check_boundaries.py`；V-DOCKER
   - Dependencies：T9
   - Files：（搬）`agent_run.py`；（改）`agent/pyproject.toml`、根 `pyproject.toml`、`uv.lock`、`src/web.py`、`run_daily.sh`、`README.md`
   - Scope：M

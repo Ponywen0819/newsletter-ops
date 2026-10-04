@@ -167,14 +167,14 @@ cd ROOT && uv run --locked newsletter-metrics claude
 
 它從本 session 的紀錄統計 news-digest 開始至今的 token、API 回合數與各工具耗時，寫進 `logs/metrics/<date>.jsonl`。
 被排程呼叫時，把這步留給排程 prompt 在寄信之後執行，寄信的用量才會算進去。
-由 `src/agent_run.py` 呼叫時（環境變數 `NEWSLETTER_RUNNER=sdk`）這步會自動略過，用量由 agent_run 從 SDK 的結果記錄，含費用。
+由 `newsletter-agent` 呼叫時（環境變數 `NEWSLETTER_RUNNER=sdk`）這步會自動略過，用量由 agent_run 從 SDK 的結果記錄，含費用。
 使用者只是要測試時，指令前加 `NEWSLETTER_RUN_LABEL=test`（`newsletter-fetch` 那步也要加）。`logs/metrics/` 的紀錄一律不刪。
 
 最後一則回覆只寫報告路徑與今日頭條，不要把整份報告貼進對話。寄信由呼叫端（排程 prompt）負責，這個 skill 不寄信。
 
 ### 無人值守執行
 
-`uv run --locked src/agent_run.py` 會以 Claude Agent SDK 跑本 skill，沒有人可以回答問題，也看不到對話。這時：
+`uv run --locked newsletter-agent` 會以 Claude Agent SDK 跑本 skill，沒有人可以回答問題，也看不到對話。這時：
 
 - 不要停下來問，不確定的地方照上面的規則自行判斷。
 - 中途無法完成（例如 `newsletter-fetch` exit 3、`newsletter-report-check` 修不好）就停止，**不要留下殘缺或空的報告**，
