@@ -281,13 +281,13 @@
   - Files：`README.md`、`ISSUES.md`、`.claude/skills/news-digest/SKILL.md`、`Dockerfile`、`docker-compose.yml`、`deploy/*.service`（註解）
   - Scope：M
 
-- [ ] **T16：最終驗證與交接**
+- [x] **T16：最終驗證與交接**
   - Description：依序驗 [SPEC.md](../SPEC.md) 的 8 條成功條件，整理證據；不 push、不開 PR、不重建正在跑的 stack，除非使用者另外同意。
   - Acceptance：
-    - [ ] SPEC 成功條件 1–8 逐條有證據（指令與輸出摘要）；條件 7 的「`docker compose up -d` 後 web healthy、volume 資料在、對外網址可開」改為**列為使用者合併後要做的步驟**，本任務只驗到 `migration-test` 映像
-    - [ ] 條件 8：`logs/metrics/` 檔案數在重構前後一致（用 `git` 以外的方式比對：這個目錄不進版控，工作區沒有就記為「未涉及」）
-    - [ ] 完成定義清單逐項勾完
-    - [ ] 交接摘要：變更範圍、行為變更只有一項、使用者要做的主機端步驟、已知限制
+    - [x] SPEC 成功條件 1–8 逐條有證據（指令與輸出摘要）；條件 7 的「`docker compose up -d` 後 web healthy、volume 資料在、對外網址可開」改為**列為使用者合併後要做的步驟**，本任務只驗到 `migration-test` 映像
+    - [x] 條件 8：`logs/metrics/` 檔案數在重構前後一致（用 `git` 以外的方式比對：這個目錄不進版控，工作區沒有就記為「未涉及」）
+    - [x] 完成定義清單逐項勾完
+    - [x] 交接摘要：變更範圍、行為變更只有一項、使用者要做的主機端步驟、已知限制
   - Verification：V-CI、V-GOLD、V-DOCKER 全套；`git log --oneline main..HEAD` 每個 commit 對應一個任務；`git diff --stat main..HEAD | tail -1`
   - Dependencies：T15
   - Files：無（只驗證）
@@ -296,5 +296,5 @@
 
 ### ◆ Checkpoint 完成
 
-- [ ] 所有 SPEC 成功條件達成
+- [x] 所有 SPEC 成功條件達成（條件 7 的「重建正在跑的 stack」留給使用者合併後做）
 - [ ] 使用者核可後才 push／開 PR

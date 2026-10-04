@@ -19,7 +19,7 @@
 | 位置 | 現在 | 之後 |
 |---|---|---|
 | 靜態檔目錄 `self.dist`（約第 187 行）與 selftest 的假 dist | `root/"web"/"dist"` | `root/"web"/"ui"/"dist"` |
-| `BUILD_COMMAND` 與 503 頁的說明字串 | `cd web && npm install && npm run build` | `npm --prefix web/ui install && npm --prefix web/ui run build` |
+| `BUILD_COMMAND` 與 503 頁的說明字串 | `cd web && npm install && npm run build` | `cd web/ui && npm install && npm run build` |
 | 驗證 token 的子程序（約第 147 行） | `[sys.executable, ROOT/"src"/"agent_run.py", "--auth-check", "--token-from-env"]` | `[sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]`，`cwd=ROOT`、env 傳 token 的方式不變 |
 | `web/ui/vite.config.ts` | `/api` 代理到 `127.0.0.1:${NEWSLETTER_WEB_PORT ?? 8787}` | 不變 |
 | docstring 與 README 裡的 `cd web && …`、`src/web.py` | — | 同步更新 |

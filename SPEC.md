@@ -1,6 +1,6 @@
 # Spec: newsletter-ops 改成 monorepo
 
-> 狀態：**已核可（2026-10-04）**。實作順序與任務見 [tasks/plan.md](tasks/plan.md)、[tasks/todo.md](tasks/todo.md)。
+> 狀態：**已實作**於分支 `claude/monorepo-restructure-ab5b9d`（2026-10-04 核可、同日完成），待 push 與合併。實作順序與任務見 [tasks/plan.md](tasks/plan.md)、[tasks/todo.md](tasks/todo.md)。
 > 各模組的細節在 `SPEC-<module id>.md`；本檔是索引，也是整個重構共用的規則。
 
 ## Capability Map
