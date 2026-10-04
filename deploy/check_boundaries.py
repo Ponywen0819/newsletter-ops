@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""依賴方向檢查：各成員只能 import SPEC.md 的 Capability Map 允許的 newsletter_* 套件。
+"""依賴方向檢查：各成員只能 import 下面 MEMBERS 表允許的 newsletter_* 套件。
 
 用法：python3 deploy/check_boundaries.py [--selftest]
 
