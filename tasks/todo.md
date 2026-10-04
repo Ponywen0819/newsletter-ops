@@ -268,14 +268,14 @@
   - Files：`pyproject.toml`、`uv.lock`、`deploy/check_boundaries.py`
   - Scope：S
 
-- [ ] **T15：文件掃尾與 grep 閘門**
+- [x] **T15：文件掃尾與 grep 閘門**
   - Description：README 的架構段落與全文指令改成 monorepo 現況；加一張「舊指令 → 新指令」對照表與主機端遷移注意事項。
   - Acceptance：
-    - [ ] README 的「架構」改為新目錄樹與依賴圖；`src/` 相關指令（原 56 處）全部更新；新增「舊指令 → 新指令」對照表（`python3 src/run.py` → `uv run --locked newsletter-fetch` 等）
-    - [ ] README 遷移注意：已安裝的 systemd unit 需重新複製並 `daemon-reload`；Docker 使用者重建映像即可（volume 與環境變數不變）；互動使用改跑 `newsletter-render`
-    - [ ] `ISSUES.md` 只更新被搬動的路徑（2 處）；**不還原、不新增任何項目**
-    - [ ] Dockerfile、compose、`deploy/` 範本的註解與現況一致
-    - [ ] V-GREP 兩條全部為空：`Path(__file__)` 只在 `paths.py`；舊 `src/…py` 路徑在 README、skill、Dockerfile、compose、systemd 範本、CI、`run_daily.sh` 皆無
+    - [x] README 的「架構」改為新目錄樹與依賴圖；`src/` 相關指令（原 56 處）全部更新；新增「舊指令 → 新指令」對照表（`python3 src/run.py` → `uv run --locked newsletter-fetch` 等）
+    - [x] README 遷移注意：已安裝的 systemd unit 需重新複製並 `daemon-reload`；Docker 使用者重建映像即可（volume 與環境變數不變）；互動使用改跑 `newsletter-render`
+    - [x] `ISSUES.md` 只更新被搬動的路徑（2 處）；**不還原、不新增任何項目**
+    - [x] Dockerfile、compose、`deploy/` 範本的註解與現況一致
+    - [x] V-GREP 兩條全部為空：`Path(__file__)` 只在 `paths.py`；舊 `src/…py` 路徑在 README、skill、Dockerfile、compose、systemd 範本、CI、`run_daily.sh` 皆無
   - Verification：V-GREP；`grep -c 'src/' README.md` 只剩 `shared/src`、`agent/src` 等套件內路徑；通讀 README 一遍
   - Dependencies：T14
   - Files：`README.md`、`ISSUES.md`、`.claude/skills/news-digest/SKILL.md`、`Dockerfile`、`docker-compose.yml`、`deploy/*.service`（註解）

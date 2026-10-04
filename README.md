@@ -4,42 +4,93 @@
 
 ## 架構
 
+monorepo，用 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) 組成：每個模組是獨立的 Python 套件，
+`uv sync` 把它們以 editable 裝進同一個環境。依賴方向由 `deploy/check_boundaries.py` 檢查（CI 也跑），違規的 import 會失敗：
+
 ```
-ISSUES.md                  已知問題與限制（先看這裡）
+shared ◄── agent ◄── web
+   ▲
+   └────── notify
+```
+
+`agent` 是核心（抓取 → 整理 → Claude 寫報告），**不認得 email**；`notify` 是外圍（報告 → email → 寄出），之後加別的通知管道放這裡；
+`web` 依賴 `agent` 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`）。
+
+```
+shared/                    共用底層（標準庫）
+  src/newsletter_shared/
+    paths.py               repo 根目錄 ROOT 的唯一來源；其他模組一律從這裡取，不自己用 __file__ 推算
+    report_data.py         報告 Markdown → 結構化資料：報告格式（SKILL.md 規定的子集）唯一的解析與驗證者，網頁與 email 共用
+                           （newsletter-report-check 用它驗證 reports/<date>.md）
+    feedback.py            回饋標記格式、跨程序檔案鎖、從報告收集人工標記（newsletter-feedback）
+    metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量（newsletter-metrics）
+    auth_store.py          OAuth token 的儲存與來源解析，agent 與 web 共用
+agent/                     核心：抓取 → 整理 → Claude 寫報告（唯一的第三方依賴 claude-agent-sdk 在這裡）
+  src/newsletter_agent/
+    sources.py             來源載入層：掃 sources.d、驗證欄位、去重、處理停用
+    fetch.py               抓取層：RSS 2.0 / Atom / arXiv API（零第三方依賴）
+    curate.py              整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
+    report.py              輸出層：模板版 Markdown（無 LLM 保底）
+    run.py                 入口 CLI（newsletter-fetch）
+    agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（newsletter-agent）
+notify/                    通知（標準庫）
+  src/newsletter_notify/
+    render_email.py        email 層：報告結構 → inline-CSS HTML（reports/<date>.html）（newsletter-render）
+    send_email.py          寄信層：Gmail SMTP 寄出 email HTML，不依賴 Claude 的 Gmail connector（newsletter-send）
+web/
+  server/src/newsletter_web/web.py   Web 後端：JSON API（/api/*）＋提供 web/ui/dist；有用／沒用 寫進 feedback.jsonl；
+                                     /auth 貼 OAuth token（標準庫，無登入）（newsletter-web）
+  ui/                      Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/ui/dist 不進版控
 config/interests.md        關注範圍（自然語言），報告判讀的依據
 config/config.json         執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json    來源清單，一個主題一個檔
-agent/src/newsletter_agent/sources.py  來源載入層：掃 sources.d、驗證欄位、去重、處理停用
-agent/src/newsletter_agent/fetch.py  抓取層：RSS 2.0 / Atom / arXiv API（零第三方依賴）
-agent/src/newsletter_agent/curate.py  整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
-agent/src/newsletter_agent/report.py  輸出層：模板版 Markdown（無 LLM 保底）
-shared/src/newsletter_shared/metrics.py  量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
-notify/src/newsletter_notify/render_email.py  email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
-notify/src/newsletter_notify/send_email.py  寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
-agent/src/newsletter_agent/agent_run.py  無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
-shared/src/newsletter_shared/auth_store.py  認證層：OAuth token 的儲存與來源解析，agent_run.py 與 web.py 共用（stdlib）
-shared/src/newsletter_shared/feedback.py  回饋層：從報告收集人工標記
-shared/src/newsletter_shared/report_data.py  報告資料層：報告 Markdown → 結構化 JSON（唯一的解析器，網頁與 email 共用）
-web/server/src/newsletter_web/web.py  Web 後端：JSON API（/api/*）＋提供 web/ui/dist；有用／沒用 寫進 feedback.jsonl；/auth 貼 OAuth token（stdlib，無登入）
-web/ui/                    Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/ui/dist 不進版控
-agent/src/newsletter_agent/newsletter-fetch  入口 CLI（newsletter-fetch）
-run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent_run.py → render_email.py → send_email.py，失敗留 log、exit 非 0
+.claude/skills/news-digest/  報告撰寫的 skill，隨專案進版控
+run_daily.sh               排程入口：載入 env 檔 → 抓取 → agent → render → send，失敗留 log、exit 非 0
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume（見「部署到家用 host」）
-deploy/                    不用 Docker 時的範本：systemd 單元、cloudflared 設定、env 範本
-pyproject.toml, uv.lock    Python 版本與依賴，由 uv 管理（.python-version 固定直譯器版本）
+deploy/                    不用 Docker 時的範本（systemd 單元、cloudflared 設定、env 範本）；check_boundaries.py 依賴方向檢查
+pyproject.toml, uv.lock    workspace 的根（只列成員）與整個 workspace 的鎖檔；.python-version 固定直譯器版本
+ISSUES.md                  已知問題與限制（先看這裡）
+
+# 執行期生成物（都不進版控；位置都在 repo 根，Docker 裡是 volume）
 data/raw/<date>.jsonl      當日原始抓取（append，供回溯）
 data/curated/<date>.json   排序後的收錄清單 ← SKILL 的輸入
 reports/<date>.md          最終報告
+reports/<date>.html        email 版（newsletter-render 產生）
 state/seen.json            30 天去重記憶
-state/feedback.jsonl       累積的人工標記，供日後調整關鍵字與 interests.md（不進版控）
-state/oauth_token.json     /auth 頁面存的 OAuth token（權限 600，不進版控；見「無人值守」）
+state/feedback.jsonl       累積的人工標記，供日後調整關鍵字與 interests.md
+state/oauth_token.json     /auth 頁面存的 OAuth token（權限 600；見「無人值守」）
 logs/<YYYY-MM>.log         排程執行紀錄
-.claude/skills/news-digest/  報告撰寫的 skill，隨專案進版控
 ```
 
 分工原則：**確定性的部分交給 Python，判斷性的部分交給 Claude。**
 抓取、去重、排序、arXiv 會議判斷、HTML 版型全部可重現；挑選重點與條列改寫由 Claude
 依 `news-digest` skill 讀 curated JSON 後改寫 `reports/<date>.md`。
+
+### 從舊版（monorepo 之前）遷移
+
+| 舊指令 | 現在 |
+| --- | --- |
+| `uv run src/run.py …` | `uv run newsletter-fetch …` |
+| `uv run src/agent_run.py …` | `uv run newsletter-agent …` |
+| `uv run src/render_email.py` | `uv run newsletter-render` |
+| `uv run src/send_email.py` | `uv run newsletter-send` |
+| `uv run src/feedback.py` | `uv run newsletter-feedback` |
+| `uv run src/metrics.py …` | `uv run newsletter-metrics …` |
+| `uv run src/web.py` | `uv run newsletter-web` |
+| `uv run src/curate.py`（自我檢查） | `uv run python -m newsletter_agent.curate`；其餘自我檢查見 `.github/workflows/selftest.yml` |
+| `cd web && npm …` | `cd web/ui && npm …` |
+| （新增） | `uv run newsletter-report-check [YYYY-MM-DD]`：驗證報告格式 |
+
+行為上只有一個變動：**agent 不再產 email HTML、也不寄信**。`run_daily.sh` 變成抓取 → agent → `newsletter-render` → `newsletter-send` 四步，
+`newsletter-agent` 的 exit 4 現在代表「報告格式不符」（原本是 render 失敗，實際上也是格式不符），stdout 保持空。
+
+主機端要做的事：
+
+- **Docker**：`git pull && docker compose up -d --build`。volume、環境變數、服務名稱、埠號都沒變。
+- **systemd**（不用 Docker 時）：`deploy/newsletter-web.service` 的 `ExecStart` 改了，已安裝的 unit 要重新複製到 `~/.config/systemd/user/`，
+  再 `systemctl --user daemon-reload && systemctl --user restart newsletter-web`。排程的 unit 不變（它呼叫 `run_daily.sh`）。
+- **前端**要重新建置（路徑變成 `web/ui`）：`cd web/ui && npm ci && npm run build`。
+- 若在 Claude Code 的權限白名單裡放過舊指令（例如 `Bash(python3 src/…)`），要換成新指令。
 
 ## 環境（uv）
 
@@ -47,8 +98,8 @@ Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-ver
 安裝 uv 後不必自己建 venv，`uv run` 第一次執行會自動建立 `.venv` 並裝好依賴；沒有該版本的 Python 時 uv 會自動下載。
 
 ```bash
-uv sync               # 依 uv.lock 同步環境
-uv add <套件>         # 新增依賴（會更新 pyproject.toml 與 uv.lock，兩個檔案一起 commit）
+uv sync               # 依 uv.lock 同步環境（所有成員一起裝）
+uv add --package newsletter-agent <套件>   # 替某個成員新增依賴（改該成員的 pyproject.toml 與 uv.lock，一起 commit）
 uv lock --upgrade     # 升級鎖定的版本
 ```
 
@@ -251,7 +302,8 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
 - 用 `agent_run.py` 時，skill 裡的 `newsletter-metrics claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
 - 自我檢查：`uv run python -m newsletter_agent.agent_run --selftest`、`uv run python -m newsletter_shared.auth_store --selftest`、`uv run newsletter-web --selftest`、
   `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web/ui && npm test`。
-  push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
+  push 時 GitHub Actions 會跑除了 `agent_run`（要裝 SDK）和前端以外的全部自我檢查，另外跑 `deploy/check_boundaries.py`（依賴方向），
+  設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
 
 ## 部署到家用 host（Docker + Cloudflare Tunnel + Access）
 
@@ -264,7 +316,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。
                                     三個容器共用一個 volume：newsletter-data（reports／data／state／logs）
 ```
 
-- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`web/`），
+- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，各成員以 editable 裝進同一個環境，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`web/ui/`），
   只把 `web/ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
@@ -330,6 +382,8 @@ git pull && docker compose up -d --build          # 更新（interests.md、conf
 ```
 
 - 每天 08:00（Asia/Taipei，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器停機時錯過的那一次不會補跑，要補就手動跑。
+- 每個**新**容器的第一次 `uv run` 會在 log 印出 `Building … Uninstalled 4 packages / Installed 4 packages`：uv 判定 editable 成員比安裝記錄新而重裝
+  （約 10 毫秒、不需要網路），之後同一個容器就安靜了。這不是錯誤。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
 
 **6. 資料保存：不保存**
