@@ -3,23 +3,23 @@
 順序、依賴圖、標準搬移清單（M1–M8）、驗證工具（V-CI／V-GOLD／V-DOCKER／V-GREP／V-GIT）與完成定義都在 [plan.md](plan.md)。
 任務寫「特例」；沒寫的照 M1–M8。規格見 [SPEC.md](../SPEC.md) 與 `SPEC-<module>.md`。
 
-`BASE_SHA`：T0 完成時記在這裡 → `________`
+`BASE_SHA`：`844d60d`（origin/main，T0 完成時記錄；基準檔用 `golden.sh old` 從該 SHA 的 worktree 產生）
 
 ---
 
 ## Phase 0：準備
 
-- [ ] **T0：commit 規格與計畫、合併 main、建立 golden 基準**
+- [x] **T0：commit 規格與計畫、合併 main、建立 golden 基準**
   - Description：把本分支更新到最新 main，commit 規格與計畫，並用舊程式產生之後每個任務要對照的基準輸出。
   - Acceptance：
-    - [ ] `git merge-base --is-ancestor origin/main HEAD` 成立；把當時 main 的 SHA 填進上面的 `BASE_SHA`
-    - [ ] `SPEC.md`、`SPEC-*.md`（5 份）、`tasks/plan.md`、`tasks/todo.md` 已追蹤；`.gitignore` 已放行 `SPEC*.md`、`tasks/*.md`
-    - [ ] 基準 worktree 在 `BASE_SHA`；`golden.sh old` 在其中產出 `$G/old.*` 六個檔且皆非空
-    - [ ] 合併後的樹上，現有 CI 全套通過（此時仍是裸 `python3 src/…`）
+    - [x] `git merge-base --is-ancestor origin/main HEAD` 成立；把當時 main 的 SHA 填進上面的 `BASE_SHA`
+    - [x] `SPEC.md`、`SPEC-*.md`（5 份）、`tasks/plan.md`、`tasks/todo.md` 已追蹤；`.gitignore` 已放行 `SPEC*.md`、`tasks/*.md`
+    - [x] 基準 worktree 在 `BASE_SHA`；`golden.sh old` 在其中產出 `$G/old.*` 六個檔且皆非空
+    - [x] 合併後的樹上，現有 CI 全套通過（此時仍是裸 `python3 src/…`）
   - Verification：
-    - [ ] `git ls-files SPEC.md tasks/plan.md tasks/todo.md`
-    - [ ] V-CI（舊版 CI 檔，原樣）
-    - [ ] `ls -l "$G"/old.*`
+    - [x] `git ls-files SPEC.md tasks/plan.md tasks/todo.md`
+    - [x] V-CI（舊版 CI 檔，原樣）
+    - [x] `ls -l "$G"/old.*`
   - Dependencies：無
   - Files：`SPEC*.md`（6）、`tasks/*.md`（2）、`.gitignore`
   - Scope：S

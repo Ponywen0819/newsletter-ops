@@ -71,7 +71,7 @@ todo.md 的模組搬移任務只寫「特例」，其餘照這張做：
 **V-CI（本機跑 CI 全套）**——CI 檔是唯一真相，每個任務同 commit 更新它：
 
 ```bash
-grep -E '^\s+- run: ' .github/workflows/selftest.yml | sed -E 's/^\s+- run: //' \
+grep -E '^[[:space:]]+- run: ' .github/workflows/selftest.yml | sed -E 's/^[[:space:]]+- run: //' \
   | while IFS= read -r c; do echo "+ $c"; sh -c "$c" || { echo "FAIL: $c"; exit 1; }; done
 ```
 
