@@ -9,6 +9,8 @@
 !/.gitignore
 !/README.md
 !/ISSUES.md
+!/SPEC*.md
+!/tasks/*.md
 !/run_daily.sh
 !/pyproject.toml
 !/uv.lock
