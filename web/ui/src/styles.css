@@ -1,5 +1,5 @@
 /*
- * 配色沿用 email 版型（src/render_email.py 的 S）：灰底、白色卡片；版面則是自適應，
+ * 配色沿用 email 版型（notify 的 render_email.py 的 S）：灰底、白色卡片；版面則是自適應，
  * 不再沿用 email 固定 640px 的寬度（email 客戶端不支援 @media，網頁沒有這個限制）。
  *
  * mobile-first：預設值就是手機，斷點只往上加 @media (min-width: …)，
