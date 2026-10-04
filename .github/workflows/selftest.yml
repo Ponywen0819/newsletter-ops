@@ -23,7 +23,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run --locked python src/curate.py
       - run: uv run --locked python src/fetch.py
-      - run: uv run --locked python src/metrics.py --selftest
+      - run: uv run --locked newsletter-metrics --selftest
       - run: uv run --locked python src/render_email.py --selftest
       - run: uv run --locked python src/send_email.py --selftest
       - run: uv run --locked newsletter-feedback --selftest

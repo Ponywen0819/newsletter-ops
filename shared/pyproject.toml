@@ -8,6 +8,7 @@ dependencies = []
 
 [project.scripts]
 newsletter-feedback = "newsletter_shared.feedback:main"
+newsletter-metrics = "newsletter_shared.metrics:main"
 newsletter-report-check = "newsletter_shared.report_data:check"
 
 [build-system]

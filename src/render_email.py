@@ -29,11 +29,10 @@ from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
+from newsletter_shared import metrics
+from newsletter_shared.report_data import parse_report
 
-import metrics  # noqa: E402
-from newsletter_shared.report_data import parse_report  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent
 
 BASE_URL_ENV = "NEWSLETTER_BASE_URL"
 

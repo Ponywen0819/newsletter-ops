@@ -13,7 +13,7 @@ src/sources.py             來源載入層：掃 sources.d、驗證欄位、去�
 src/fetch.py               抓取層：RSS 2.0 / Atom / arXiv API（零第三方依賴）
 src/curate.py              整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
 src/report.py              輸出層：模板版 Markdown（無 LLM 保底）
-src/metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
+shared/src/newsletter_shared/metrics.py  量測層：debug 開啟時記錄各階段耗時與 Claude token 用量
 src/render_email.py        email 層：report_data 的結構 → inline-CSS HTML（reports/<date>.html）
 src/send_email.py          寄信層：Gmail SMTP 寄出 email HTML（不依賴 Claude 的 Gmail connector）
 src/agent_run.py           無人值守層：Claude Agent SDK 跑 news-digest skill，記錄用量、驗收產出（唯一的第三方依賴）
@@ -242,10 +242,10 @@ uv run src/agent_run.py --auth-check     # 只驗證 token（一次最小的呼�
 
   ```bash
   NEWSLETTER_DEBUG=1 uv run src/agent_run.py
-  uv run src/metrics.py summary 14
+  uv run newsletter-metrics summary 14
   ```
 
-- 用 `agent_run.py` 時，skill 裡的 `metrics.py claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
+- 用 `agent_run.py` 時，skill 裡的 `newsletter-metrics claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
 - 自我檢查：`uv run src/agent_run.py --selftest`、`python3 src/auth_store.py --selftest`、`uv run src/web.py --selftest`、
   `uv run python -m newsletter_shared.report_data --selftest`；前端 `cd web && npm test`。
   push 時 GitHub Actions 會跑除了 `agent_run.py`（要裝 SDK）和前端以外的全部自我檢查，設定在 `.github/workflows/selftest.yml`；新增模組的自我檢查記得加進去。
@@ -424,11 +424,11 @@ Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理�
 
 `config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run src/run.py ...`），每個階段會寫一行到
 `logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`render`，
-以及 news-digest 跑完後由 `python3 src/metrics.py claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
+以及 news-digest 跑完後由 `uv run newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
 
 ```bash
-uv run src/metrics.py summary 14         # 最近 14 天，每次正式執行一行
-uv run src/metrics.py summary 14 --all   # 連測試執行一起列
+uv run newsletter-metrics summary 14         # 最近 14 天，每次正式執行一行
+uv run newsletter-metrics summary 14 --all   # 連測試執行一起列
 NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run src/run.py --no-report   # 測試執行，紀錄標 test
 ```
 

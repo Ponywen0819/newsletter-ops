@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 import auth_store  # noqa: E402
-import metrics  # noqa: E402
+from newsletter_shared import metrics  # noqa: E402
 
 try:
     import claude_agent_sdk as sdk
@@ -142,7 +142,7 @@ def agent_env(token: str) -> dict[str, str]:
     """傳給 claude CLI 的環境（疊在行程環境上；要移除的變數得先 scrub_environ，這裡只能新增／覆寫）。"""
     return {
         auth_store.TOKEN_ENV: token,
-        "NEWSLETTER_RUNNER": "sdk",  # metrics.py claude 看到這個就略過，用量由本程式記錄
+        "NEWSLETTER_RUNNER": "sdk",  # newsletter-metrics claude 看到這個就略過，用量由本程式記錄
     }
 
 

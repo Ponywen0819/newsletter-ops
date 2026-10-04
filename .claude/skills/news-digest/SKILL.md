@@ -162,7 +162,7 @@ exit code 非 0 代表 Markdown 格式不符（例如缺 `subject` 或今日頭�
 若 `config/config.json` 的 `debug` 為 `true`（或環境變數 `NEWSLETTER_DEBUG=1`），最後再跑：
 
 ```bash
-cd ROOT && uv run --locked src/metrics.py claude
+cd ROOT && uv run --locked newsletter-metrics claude
 ```
 
 它從本 session 的紀錄統計 news-digest 開始至今的 token、API 回合數與各工具耗時，寫進 `logs/metrics/<date>.jsonl`。

@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
 
-import metrics
+from newsletter_shared import metrics
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 NS = {

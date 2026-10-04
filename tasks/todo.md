@@ -89,16 +89,16 @@
   - Files：（搬）`report_data.py`；（改）`src/render_email.py`、`src/web.py`、`shared/pyproject.toml`、`selftest.yml`、`README.md`
   - Scope：M
 
-- [ ] **T5：`metrics` 搬進 `shared`**
+- [x] **T5：`metrics` 搬進 `shared`**
   - Description：量測模組搬進 shared；路徑一律由 `paths.ROOT` 推算。
   - Acceptance：
-    - [ ] `src/metrics.py` → `shared/.../metrics.py`；`__main__` 的分派包成 `main()`；`[project.scripts] newsletter-metrics`
-    - [ ] `METRICS_DIR = ROOT/"logs"/"metrics"`、`TRANSCRIPTS` 由 `paths.ROOT` 推算；selftest 斷言兩者的來源是 `paths.ROOT`，且 `enabled()` 仍讀 `ROOT/"config"/"config.json"`
-    - [ ] importer 改：`src/fetch.py`、`src/run.py`、`src/render_email.py`、`src/agent_run.py`
-    - [ ] CI 與 skill（`metrics.py claude`、`summary`）、README 對應指令改成 `newsletter-metrics …`
+    - [x] `src/metrics.py` → `shared/.../metrics.py`；`__main__` 的分派包成 `main()`；`[project.scripts] newsletter-metrics`
+    - [x] `METRICS_DIR = ROOT/"logs"/"metrics"`、`TRANSCRIPTS` 由 `paths.ROOT` 推算；selftest 斷言兩者的來源是 `paths.ROOT`，且 `enabled()` 仍讀 `ROOT/"config"/"config.json"`
+    - [x] importer 改：`src/fetch.py`、`src/run.py`、`src/render_email.py`、`src/agent_run.py`
+    - [x] CI 與 skill（`metrics.py claude`、`summary`）、README 對應指令改成 `newsletter-metrics …`
   - Verification：
-    - [ ] V-CI；`NEWSLETTER_RUN_LABEL=test uv run --locked newsletter-metrics summary` 能執行（沒有紀錄也不報錯）
-    - [ ] `check_boundaries.py`；V-GREP；`git status` 確認 `logs/metrics/` 沒被碰（工作區沒有該目錄是正常的）
+    - [x] V-CI；`NEWSLETTER_RUN_LABEL=test uv run --locked newsletter-metrics summary` 能執行（沒有紀錄也不報錯）
+    - [x] `check_boundaries.py`；V-GREP；`git status` 確認 `logs/metrics/` 沒被碰（工作區沒有該目錄是正常的）
   - Dependencies：T4
   - Files：（搬）`metrics.py`；（改）`src/fetch.py`、`src/run.py`、`src/render_email.py`、`src/agent_run.py`、`shared/pyproject.toml`、`selftest.yml`、`SKILL.md`、`README.md`
   - Scope：M
