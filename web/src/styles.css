@@ -38,7 +38,7 @@
   --fs-small: 12px; /* 資料來源、提示 */
   --fs-h1: 24px;
   --fs-h2: 18px;
-  --lh-body: 1.6;
+  --lh-body: 1.8; /* 中文長文行高要比英文鬆：1.6 讀久了字會擠在一起 */
 }
 
 /* 平板：卡片置中、圓角、四邊留白加大；內文欄 720px（扣掉左右 40px 後每行約 40 個全形字） */
@@ -204,7 +204,7 @@ header nav a[aria-current='page'] {
 .report ol.sources li {
   margin: 2px 0;
   font-size: var(--fs-small);
-  line-height: 1.5;
+  line-height: 1.7;
   color: var(--muted);
 }
 /* 長標題、長網址（含沒有空白的英文字串）要在容器內斷行；anywhere 還會把它算進 min-content，
@@ -323,7 +323,7 @@ header nav a[aria-current='page'] {
   padding: 10px 0;
   border-bottom: 1px solid var(--rule);
   font-size: var(--fs-list);
-  line-height: 1.5;
+  line-height: var(--lh-body);
 }
 .reports a {
   font-weight: 600;
@@ -499,11 +499,11 @@ header nav a[aria-current='page'] {
 }
 
 /*
- * 筆電閱讀器：左側新聞清單＋右側一次一則（≥1100px）。
- * <1100px 完全是單欄長頁：清單與上一則／下一則隱藏，所有單位依序顯示（.unit、.group 只是沒有樣式的包裝）。
+ * 筆電的新聞目錄（≥1100px）：左側 sticky 的目錄＋右側一整頁往下捲的內文。
+ * 內文與窄螢幕完全一樣（所有新聞依序顯示、用滾輪閱讀）；目錄只負責「現在讀到哪、點一下跳過去」。
+ * <1100px 沒有目錄，.unit、.group 只是沒有樣式的包裝。
  */
-.reader-nav,
-.reader-pager {
+.reader-nav {
   display: none;
 }
 @media (min-width: 1100px) {
@@ -520,20 +520,20 @@ header nav a[aria-current='page'] {
     padding: 0;
   }
   .reader {
-    --header-h: 45px; /* 標頭列高度（44px 連結＋1px 底線）：左欄 sticky 要閃開它 */
+    --header-h: 45px; /* 標頭列高度（44px 連結＋1px 底線）：左欄 sticky 與捲動定位都要閃開它 */
     display: grid;
     grid-template-columns: 280px minmax(0, 1fr);
     column-gap: 24px;
     align-items: start;
   }
 
-  /* 左欄：標題＋清單。跟著捲動停在標頭下面；清單比視窗長就自己捲 */
+  /* 左欄：標題＋目錄。跟著捲動停在標頭下面；目錄比視窗長就自己捲 */
   .reader-side {
     position: sticky;
     top: calc(var(--header-h) + 16px);
     display: flex;
     flex-direction: column;
-    /* 扣掉標頭與上下留白，整頁高度才不會超過視窗：一則短新聞時頁面不該還能捲動 */
+    /* 扣掉標頭與上下留白，整頁高度才不會超過視窗 */
     max-height: calc(100vh - var(--header-h) - 2 * var(--page-pad-y) - 8px);
   }
   .reader-nav {
@@ -579,52 +579,22 @@ header nav a[aria-current='page'] {
     color: var(--link);
   }
 
-  /* 右欄：一次只顯示選到的那一則（連同它所屬分類的標題）。min-height 讓切換時卡片高度不要跳來跳去 */
+  /* 右欄：就是原本的白色卡片，一整頁往下捲 */
   .reader-body {
     box-sizing: border-box;
-    min-height: 70vh;
     padding: var(--card-pad-y) var(--gutter);
     background: var(--card);
     border-radius: var(--card-radius);
   }
-  .reader .unit:not([data-active]),
-  .reader .group:not(:has(> .unit[data-active])) {
-    display: none;
+  /* 點目錄／j／k 捲過去時，停在 sticky 標頭的下面，而不是被它蓋住 */
+  .reader .unit,
+  .reader .group-title {
+    scroll-margin-top: calc(var(--header-h) + 16px);
   }
-  .reader .group-title,
-  .reader .unit > :first-child {
-    margin-top: 0;
-  }
-  /* 今日頭條固定在右欄最上面（不是閱讀單位）：與下面切換的那一則隔開一段 */
-  .reader-body > .callout {
-    margin-bottom: 24px;
-  }
-
-  .reader-pager {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-top: 28px;
-    padding-top: 16px;
-    border-top: 1px solid var(--rule);
-    font-size: 14px;
-    color: var(--muted);
-  }
-  .pager-btn {
-    padding: 8px 16px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: #fff;
-    font: inherit;
-    color: var(--text);
-    cursor: pointer;
-  }
-  .pager-btn:hover:not(:disabled) {
-    border-color: var(--link);
-    color: var(--link);
-  }
-  .pager-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
+}
+/* 點目錄時平順捲過去；系統設定「減少動態效果」的人不套用 */
+@media (min-width: 1100px) and (prefers-reduced-motion: no-preference) {
+  html:has(.reader) {
+    scroll-behavior: smooth;
   }
 }
