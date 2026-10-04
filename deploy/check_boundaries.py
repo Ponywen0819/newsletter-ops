@@ -7,7 +7,8 @@
   1. 成員原始碼的 `import newsletter_x` 只能是自己，或下表允許的成員
   2. 成員 pyproject.toml 宣告的 newsletter-* 依賴要與下表完全一致
   3. `__file__` 只准出現在 shared 的 paths.py（repo 根只從那裡取）
-成員目錄還不存在就略過（搬移期間逐步加入）。只用標準庫。
+  4. 四個成員目錄都要存在；repo 根不得有 src/；根 pyproject.toml 只是 workspace 的根（沒有 [project]、members 與成員一致）
+只用標準庫。
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ def check(members: dict = MEMBERS) -> list[str]:
     errors = []
     for mid, (base, allowed) in members.items():
         if not base.is_dir():
+            errors.append(f"成員 {mid} 的目錄不存在：{base}")
             continue
         ok = {f"newsletter_{m}" for m in allowed | {mid}}
         for py in sorted((base / "src").rglob("*.py")):
@@ -53,7 +55,21 @@ def check(members: dict = MEMBERS) -> list[str]:
         declared = {d for d in declared if d.startswith("newsletter-")}
         expected = {f"newsletter-{m}" for m in allowed}
         if declared != expected:
-            errors.append(f"{mid}/pyproject.toml 的 newsletter-* 依賴是 {sorted(declared)}，應為 {sorted(expected)}")
+            errors.append(f"成員 {mid} 的 pyproject.toml：newsletter-* 依賴是 {sorted(declared)}，應為 {sorted(expected)}")
+    return errors
+
+
+def check_root(root: Path = ROOT, members: dict = MEMBERS) -> list[str]:
+    errors = []
+    if (root / "src").exists():
+        errors.append("repo 根不應再有 src/（程式都在各成員的 src/ 裡）")
+    cfg = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    if "project" in cfg:
+        errors.append("根 pyproject.toml 不應有 [project]：它只是 workspace 的根")
+    want = sorted(str(base.relative_to(root)) for base, _ in members.values())
+    got = sorted(cfg.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", []))
+    if got != want:
+        errors.append(f"根 pyproject.toml 的 workspace members 是 {got}，應為 {want}")
     return errors
 
 
@@ -77,6 +93,20 @@ def selftest() -> None:
         mod.write_text("")
         (base / "pyproject.toml").write_text('[project]\nname = "newsletter-agent"\ndependencies = ["newsletter-notify"]\n')
         assert any("pyproject.toml" in e for e in check(members))
+        assert any("目錄不存在" in e for e in check({"notify": (Path(d) / "notify", {"shared"})}))
+
+        root = Path(d) / "repo"
+        root.mkdir()
+        want = {"agent": (root / "agent", {"shared"}), "web": (root / "web" / "server", {"shared", "agent"})}
+        (root / "pyproject.toml").write_text('[tool.uv.workspace]\nmembers = ["agent", "web/server"]\n')
+        assert check_root(root, want) == [], check_root(root, want)
+        (root / "src").mkdir()
+        assert any("src/" in e for e in check_root(root, want))
+        (root / "src").rmdir()
+        (root / "pyproject.toml").write_text('[project]\nname = "x"\n[tool.uv.workspace]\nmembers = ["agent", "web/server"]\n')
+        assert any("[project]" in e for e in check_root(root, want))
+        (root / "pyproject.toml").write_text('[tool.uv.workspace]\nmembers = ["agent"]\n')
+        assert any("workspace members" in e for e in check_root(root, want))
     print("ok")
 
 
@@ -84,6 +114,6 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
         raise SystemExit(0)
-    errs = check()
+    errs = check() + check_root()
     print("\n".join(errs) if errs else "ok", file=sys.stderr if errs else sys.stdout)
     raise SystemExit(1 if errs else 0)

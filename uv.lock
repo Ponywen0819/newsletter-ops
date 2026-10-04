@@ -12,7 +12,6 @@ resolution-markers = [
 members = [
     "newsletter-agent",
     "newsletter-notify",
-    "newsletter-ops",
     "newsletter-shared",
     "newsletter-web",
 ]
@@ -417,25 +416,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "newsletter-shared", editable = "shared" }]
-
-[[package]]
-name = "newsletter-ops"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "newsletter-agent" },
-    { name = "newsletter-notify" },
-    { name = "newsletter-shared" },
-    { name = "newsletter-web" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "newsletter-agent", editable = "agent" },
-    { name = "newsletter-notify", editable = "notify" },
-    { name = "newsletter-shared", editable = "shared" },
-    { name = "newsletter-web", editable = "web/server" },
-]
 
 [[package]]
 name = "newsletter-shared"

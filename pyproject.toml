@@ -1,27 +1,5 @@
-[project]
-name = "newsletter-ops"
-version = "0.1.0"
-description = "每日新聞自動蒐集 → 整理 → 報告的 pipeline"
-requires-python = ">=3.10"
-# 依賴都宣告在各成員的 pyproject.toml（只有 agent 需要第三方套件 claude-agent-sdk）；
-# 根目錄只負責把成員裝進同一個環境。
-dependencies = [
-    "newsletter-shared",
-    "newsletter-agent",
-    "newsletter-notify",
-    "newsletter-web",
-]
-
-[tool.uv]
-# 這是一組腳本，不是可安裝的套件：只管環境與依賴，不建置、不安裝專案本身
-package = false
-
-# 搬移期間根目錄仍是一般專案；成員搬完後這個檔會只剩下 [tool.uv.workspace]
+# uv workspace 的根：只列成員，本身沒有 [project]（根目錄不是套件）。
+# 依賴宣告在各成員的 pyproject.toml（只有 agent 需要第三方套件 claude-agent-sdk）；
+# `uv sync`、`uv run` 會把所有成員以 editable 裝進同一個環境。
 [tool.uv.workspace]
 members = ["shared", "agent", "notify", "web/server"]
-
-[tool.uv.sources]
-newsletter-shared = { workspace = true }
-newsletter-agent = { workspace = true }
-newsletter-notify = { workspace = true }
-newsletter-web = { workspace = true }

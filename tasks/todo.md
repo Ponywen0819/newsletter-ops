@@ -247,23 +247,23 @@
 
 ### ◆ Checkpoint C：所有模組已搬
 
-- [ ] `src/` 不存在；V-CI 全綠；`check_boundaries.py` 通過
-- [ ] V-GOLD 六項全部相同
-- [ ] V-DOCKER 全套；`npm --prefix web/ui` 的 typecheck／test／build
-- [ ] `docker compose config` 通過（只驗證設定，**不 `up`**）
-- [ ] **使用者審閱後才繼續**
+- [x] `src/` 不存在；V-CI 全綠；`check_boundaries.py` 通過
+- [x] V-GOLD 六項全部相同
+- [x] V-DOCKER 全套；`npm --prefix web/ui` 的 typecheck／test／build
+- [x] `docker compose config` 通過（只驗證設定，**不 `up`**）
+- [x] **使用者審閱後才繼續**（使用者指示「直接全部做完」，略過這個停點）
 
 ## Phase 5：收斂
 
-- [ ] **T14：根變成虛擬 workspace 根 ＋ 邊界檢查轉嚴格**
+- [x] **T14：根變成虛擬 workspace 根 ＋ 邊界檢查轉嚴格**
   - Acceptance：
-    - [ ] 根 `pyproject.toml` 只剩 `[tool.uv.workspace] members = ["shared","agent","notify","web/server"]`（刪 `[project]`、`[tool.uv] package`、`[tool.uv.sources]`）；`uv.lock` 重生
-    - [ ] `check_boundaries.py` 嚴格模式：四個成員目錄都必須存在、repo 根不得有 `src/`、成員 `pyproject.toml` 的 `dependencies` 與依賴表完全一致、`Path(__file__)` 只能在 `paths.py`
-    - [ ] Dockerfile 的 `COPY pyproject.toml uv.lock .python-version` 仍成立
+    - [x] 根 `pyproject.toml` 只剩 `[tool.uv.workspace] members = ["shared","agent","notify","web/server"]`（刪 `[project]`、`[tool.uv] package`、`[tool.uv.sources]`）；`uv.lock` 重生
+    - [x] `check_boundaries.py` 嚴格模式：四個成員目錄都必須存在、repo 根不得有 `src/`、成員 `pyproject.toml` 的 `dependencies` 與依賴表完全一致、`Path(__file__)` 只能在 `paths.py`
+    - [x] Dockerfile 的 `COPY pyproject.toml uv.lock .python-version` 仍成立
   - Verification：
-    - [ ] 乾淨環境：`rm -rf .venv && uv sync --locked && uv lock --check`
-    - [ ] `uv.lock` 的 `claude-agent-sdk` 版本不變；V-CI；V-DOCKER
-    - [ ] 反向驗證兩次：① notify import agent ② 在 agent 加一行 `Path(__file__)` → 兩者都必須讓 `check_boundaries.py` 失敗，再還原
+    - [x] 乾淨環境：`rm -rf .venv && uv sync --locked && uv lock --check`
+    - [x] `uv.lock` 的 `claude-agent-sdk` 版本不變；V-CI；V-DOCKER
+    - [x] 反向驗證兩次：① notify import agent ② 在 agent 加一行 `Path(__file__)` → 兩者都必須讓 `check_boundaries.py` 失敗，再還原
   - Dependencies：T13
   - Files：`pyproject.toml`、`uv.lock`、`deploy/check_boundaries.py`
   - Scope：S
