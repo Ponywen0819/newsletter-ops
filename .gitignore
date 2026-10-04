@@ -27,6 +27,7 @@
 !/deploy/*.service
 !/deploy/*.timer
 !/deploy/*.example
+!/deploy/*.py
 
 # 程式
 !/src/*.py

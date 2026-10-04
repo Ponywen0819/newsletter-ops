@@ -45,17 +45,17 @@
   - Files：`pyproject.toml`、`uv.lock`、`shared/pyproject.toml`、`shared/src/newsletter_shared/{__init__,paths}.py`、`Dockerfile`、`.dockerignore`、`.gitignore`
   - Scope：M（配置為主，3 個小檔；這些無法拆開而不讓 Docker 或 CI 變紅）
 
-- [ ] **T2：工具鏈——CI 與 skill 改用 `uv run`、邊界檢查上線**
+- [x] **T2：工具鏈——CI 與 skill 改用 `uv run`、邊界檢查上線**
   - Description：先把「呼叫程式」的入口換成 uv，之後任何 `src/*.py` import `newsletter_shared` 才不會壞。同時加上依賴方向檢查，保護後面每一步。
   - Acceptance：
-    - [ ] `selftest.yml`：`astral-sh/setup-uv`（`version: "0.11.13"`、`enable-cache: true`）＋ `uv sync --locked`；每個既有檢查改成 `uv run --locked python <原路徑>`（路徑此時不變）；新增 `python3 deploy/check_boundaries.py`
-    - [ ] skill 裡 `python3 src/X.py` 一律改 `uv run --locked src/X.py`（run.py、render_email.py、metrics.py、feedback.py）
-    - [ ] `deploy/check_boundaries.py`（標準庫＋`ast`，約 30 行）：內建依賴表 shared→∅、agent→{shared}、notify→{shared}、web→{shared,agent}；掃每個**存在的**成員 `src/**/*.py` 的 `newsletter_*` import，超出就列出並 exit 1；成員的 `pyproject.toml` `dependencies` 也要與表一致
-    - [ ] `.gitignore` 放行 `deploy/*.py`
+    - [x] `selftest.yml`：`astral-sh/setup-uv`（`version: "0.11.13"`、`enable-cache: true`）＋ `uv sync --locked`；每個既有檢查改成 `uv run --locked python <原路徑>`（路徑此時不變）；新增 `python3 deploy/check_boundaries.py`
+    - [x] skill 裡 `python3 src/X.py` 一律改 `uv run --locked src/X.py`（run.py、render_email.py、metrics.py、feedback.py）
+    - [x] `deploy/check_boundaries.py`（標準庫＋`ast`，約 30 行）：內建依賴表 shared→∅、agent→{shared}、notify→{shared}、web→{shared,agent}；掃每個**存在的**成員 `src/**/*.py` 的 `newsletter_*` import，超出就列出並 exit 1；成員的 `pyproject.toml` `dependencies` 也要與表一致
+    - [x] `.gitignore` 放行 `deploy/*.py`
   - Verification：
-    - [ ] V-CI（新版 CI 檔）全綠
-    - [ ] 反向驗證：暫時在 `shared/.../paths.py` 加 `import newsletter_agent`，`check_boundaries.py` 必須 exit 1；還原後 exit 0
-    - [ ] `git diff` 裡 skill 沒有殘留 `python3 src/`
+    - [x] V-CI（新版 CI 檔）全綠
+    - [x] 反向驗證：暫時在 `shared/.../paths.py` 加 `import newsletter_agent`，`check_boundaries.py` 必須 exit 1；還原後 exit 0
+    - [x] `git diff` 裡 skill 沒有殘留 `python3 src/`
   - Dependencies：T1
   - Files：`.github/workflows/selftest.yml`、`.claude/skills/news-digest/SKILL.md`、`deploy/check_boundaries.py`、`.gitignore`
   - Scope：S

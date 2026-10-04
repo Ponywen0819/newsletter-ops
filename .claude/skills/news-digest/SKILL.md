@@ -19,7 +19,7 @@ cd ROOT && ls -t data/curated/ | head -3
 若當日 `data/curated/<YYYY-MM-DD>.json` 不存在、早於今天，**或它的 `items` 是空陣列**，先跑抓取：
 
 ```bash
-cd ROOT && python3 src/run.py --no-report
+cd ROOT && uv run --locked src/run.py --no-report
 ```
 
 `items` 為空的舊檔代表那次抓取全軍覆沒，不是「今天沒新聞」——一定要重跑，不要拿它寫報告。
@@ -95,7 +95,7 @@ curated JSON 的 `topic` 對應到簡報的五個段落：
 
 > **今日頭條：** 一句話點出今天最重要的一則，並用 [連結](URL) 帶出來源。
 
-<!-- 看完把每則的 mark: 填上 + 或 -（++ / -- 表示強烈），再跑 python3 src/feedback.py -->
+<!-- 看完把每則的 mark: 填上 + 或 -（++ / -- 表示強烈），再跑 uv run --locked src/feedback.py -->
 
 ## 科技與 AI
 
@@ -153,7 +153,7 @@ curated JSON 的 `topic` 對應到簡報的五個段落：
 ### 5. 產出 email HTML 並收尾
 
 ```bash
-cd ROOT && python3 src/render_email.py
+cd ROOT && uv run --locked src/render_email.py
 ```
 
 它讀當日 `reports/<date>.md`，寫出 `reports/<date>.html`，並在 stdout 印一行 JSON：`{"subject", "headline", "html_path"}`。
@@ -162,7 +162,7 @@ exit code 非 0 代表 Markdown 格式不符（例如缺 `subject` 或今日頭�
 若 `config/config.json` 的 `debug` 為 `true`（或環境變數 `NEWSLETTER_DEBUG=1`），最後再跑：
 
 ```bash
-cd ROOT && python3 src/metrics.py claude
+cd ROOT && uv run --locked src/metrics.py claude
 ```
 
 它從本 session 的紀錄統計 news-digest 開始至今的 token、API 回合數與各工具耗時，寫進 `logs/metrics/<date>.jsonl`。
@@ -174,7 +174,7 @@ cd ROOT && python3 src/metrics.py claude
 
 ### 無人值守執行
 
-`python3 src/agent_run.py` 會以 Claude Agent SDK 跑本 skill，沒有人可以回答問題，也看不到對話。這時：
+`uv run --locked src/agent_run.py` 會以 Claude Agent SDK 跑本 skill，沒有人可以回答問題，也看不到對話。這時：
 
 - 不要停下來問，不確定的地方照上面的規則自行判斷。
 - 中途無法完成（例如 `run.py` exit 3、`render_email.py` 修不好）就停止，**不要留下殘缺或空的報告**，
@@ -201,16 +201,16 @@ cd ROOT && python3 src/metrics.py claude
 - 「這個來源先停一陣子」→ 該 feed 加 `"enabled": false`；整個主題停用則把 `"enabled": false` 放在檔案頂層。不要直接刪掉，保留記錄。
 - 「加個新主題」→ 在 `config/sources.d/` 新增一個 JSON 檔，不必改程式碼或主設定。
 - 「漏掉某主題」→ 在對應主題檔的 `feeds` 加一筆，或把關鍵字加進 `keywords.boost_high`。
-- 改完來源設定一律先跑 `python3 src/run.py --list-sources` 確認載入結果（不連網，會一併列出被停用、重複、被略過的項目）。
+- 改完來源設定一律先跑 `uv run --locked src/run.py --list-sources` 確認載入結果（不連網，會一併列出被停用、重複、被略過的項目）。
 - 「抓取太慢」→ 開 `debug` 看 `fetch_source` 各來源耗時；請求間隔只套用在同一網域（`request.delay_seconds`，個別網域用 `request.domain_delay_seconds` 覆寫，arXiv API 規範要求 3 秒）。
-- 「補抓前幾天」→ `python3 src/run.py --no-report --lookback 72`（注意 `state/seen.json` 會擋掉已收錄過的項目，想重收要先清掉對應項目）。
+- 「補抓前幾天」→ `uv run --locked src/run.py --no-report --lookback 72`（注意 `state/seen.json` 會擋掉已收錄過的項目，想重收要先清掉對應項目）。
 
 **改 `interests.md` 時，記得同步看一次 `config/config.json` 的 `keywords`** —— 前者是給判讀用的自然語言，
 後者是給評分用的機械版本，兩邊脫節的話會出現「分數很高但你根本不在乎」的項目。改完也要更新檔案頂端的 `updated:` 日期。
 
 ## 回饋資料
 
-使用者在報告裡填的標記由 `python3 src/feedback.py` 收集到 `state/feedback.jsonl`。
+使用者在報告裡填的標記由 `uv run --locked src/feedback.py` 收集到 `state/feedback.jsonl`。
 累積量還少時不要拿它做推論。被明確要求分析時，看的是：
 
 - 收錄頻繁但從未拿到 `+` 的關鍵字 → 候選降權
