@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 圖示來源。滿版底色、字在中央 80% 內，所以同一份可以直接當 maskable（安全區是中央半徑 40% 的圓）。 -->
+  <rect width="512" height="512" fill="#2563eb"/>
+  <text x="256" y="256" fill="#ffffff" font-family="'PingFang TC','Noto Sans TC','Microsoft JhengHei',sans-serif" font-size="260" font-weight="700" text-anchor="middle" dominant-baseline="central">報</text>
+</svg>

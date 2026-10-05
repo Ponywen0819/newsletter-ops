@@ -1,7 +1,7 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { mockFetch } from './test/fetchMock'
 import { report, UID_A } from './test/fixtures'
@@ -70,6 +70,12 @@ describe('路由', () => {
     const nav = within(screen.getByRole('navigation'))
     expect(nav.getByRole('link', { name: '今日晨報' })).toBeInTheDocument()
     expect(nav.getByRole('link', { name: '歷史晨報' })).toBeInTheDocument()
+  })
+
+  it('導覽有配色切換，每個頁面都有（包含找不到頁面）', async () => {
+    open('/nope', {})
+    await screen.findByRole('heading', { name: '找不到頁面' })
+    expect(within(screen.getByRole('navigation')).getByRole('combobox', { name: '配色' })).toBeInTheDocument()
   })
 
   it('導覽有站名「晨報」，是純文字、不是連結（免得跟「今日晨報」重複）', async () => {
@@ -172,5 +178,37 @@ describe('版面由路由決定', () => {
     open('/nope', {})
     expect(await screen.findByRole('heading', { name: '找不到頁面' })).toBeInTheDocument()
     expect(document.querySelector('.reader')).toBeNull()
+  })
+})
+
+describe('離線橫幅', () => {
+  it('離線時標頭下方出現「離線中」，恢復連線後消失', async () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
+    open('/reports', { 'GET /api/reports': () => ({ json: { reports: [] } }) })
+    await screen.findByRole('heading', { name: '歷史晨報' })
+    expect(screen.queryByText(/離線中/)).toBeNull()
+
+    act(() => {
+      onLine.mockReturnValue(false)
+      window.dispatchEvent(new Event('offline'))
+    })
+    const bar = screen.getByText(/離線中/)
+    expect(bar).toHaveAttribute('role', 'status')
+    expect(bar).toHaveTextContent('上次載入的內容')
+
+    act(() => {
+      onLine.mockReturnValue(true)
+      window.dispatchEvent(new Event('online'))
+    })
+    expect(screen.queryByText(/離線中/)).toBeNull()
+    onLine.mockRestore()
+  })
+
+  it('一開始就離線：直接顯示橫幅；導覽與 /auth 連結的判斷不受影響', async () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    open('/nope', {}, true)
+    expect(screen.getByText(/離線中/)).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Claude 授權' })).toBeInTheDocument()
+    onLine.mockRestore()
   })
 })
