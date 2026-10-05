@@ -100,12 +100,13 @@ describe('版面由路由決定', () => {
 
   it.each([
     ['/', 'reader'],
+    ['/reports', 'reader'],
     ['/reports/2026-09-28', 'reader'],
     ['/auth', 'single'],
     [`/feedback/${UID_A}`, 'single'],
     ['/nope', 'single'],
   ])('%s → %s', (path, expected) => {
-    open(path, { 'GET /api/today': never, 'GET /api/reports/2026-09-28': never, 'GET /api/auth': never, [`GET /api/feedback/${UID_A}`]: never })
+    open(path, { 'GET /api/today': never, 'GET /api/reports': never, 'GET /api/reports/2026-09-28': never, 'GET /api/auth': never, [`GET /api/feedback/${UID_A}`]: never })
     expect(layout()).toBe(expected)
   })
 
@@ -128,6 +129,43 @@ describe('版面由路由決定', () => {
     open('/reports/2026-01-01', {})
     expect(await screen.findByRole('heading', { name: '找不到頁面' })).toBeInTheDocument()
     expect(body()).toContainElement(screen.getByRole('heading', { name: '找不到頁面' }))
+  })
+
+  it('/reports：標題在左欄、日期列表在右欄；載入中與讀取失敗的外框一樣', async () => {
+    const side = () => document.querySelector('.reader-side')
+    const body = () => document.querySelector('.reader-body')
+    open('/reports', { 'GET /api/reports': never })
+    expect(body()).toHaveTextContent('載入中…')
+    expect(side()).toBeEmptyDOMElement()
+    cleanup()
+
+    open('/reports', { 'GET /api/reports': () => ({ status: 500, json: { error: '壞了' } }) })
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    expect(body()).toContainElement(screen.getByRole('heading', { name: '讀取失敗' }))
+    cleanup()
+
+    open('/reports', { 'GET /api/reports': () => ({ json: { reports: [{ date: '2026-09-28', headline: '某事發生' }] } }) })
+    const link = await screen.findByRole('link', { name: '2026-09-28' })
+    expect(side()).toContainElement(screen.getByRole('heading', { level: 1, name: '歷史晨報' }))
+    expect(body()).toContainElement(link)
+  })
+
+  it('站內切換首頁 → 歷史 → 單日，外框一直是 reader；點到 single 的頁面才換', async () => {
+    open('/', {
+      'GET /api/today': () => ({ json: { date: '2026-09-28', latest: '2026-09-28', report, marks: {} } }),
+      'GET /api/reports': () => ({ json: { reports: [{ date: '2026-09-28', headline: '某事發生' }] } }),
+      'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {} } }),
+    }, true)
+    const nav = within(await screen.findByRole('navigation'))
+    expect(layout()).toBe('reader')
+    await userEvent.click(nav.getByRole('link', { name: '歷史晨報' }))
+    const link = await screen.findByRole('link', { name: '2026-09-28' })
+    expect(layout()).toBe('reader')
+    await userEvent.click(link)
+    expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
+    expect(layout()).toBe('reader')
+    await userEvent.click(await nav.findByRole('link', { name: 'Claude 授權' }))
+    expect(layout()).toBe('single')
   })
 
   it('single 路由（找不到頁面）不畫兩欄', async () => {

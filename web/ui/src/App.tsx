@@ -16,10 +16,10 @@ export function App() {
       <Routes>
         <Route element={<Layout variant="reader" />}>
           <Route index element={<TodayPage />} />
+          <Route path="reports" element={<ReportListPage />} />
           <Route path="reports/:date" element={<ReportPage />} />
         </Route>
         <Route element={<Layout variant="single" />}>
-          <Route path="reports" element={<ReportListPage />} />
           <Route path="feedback/:uid" element={<FeedbackPage />} />
           <Route path="auth" element={<AuthPage />} />
           <Route path="*" element={<NotFoundPage />} />
