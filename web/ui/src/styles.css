@@ -77,6 +77,18 @@ body {
 .page {
   padding: var(--page-pad-y) var(--page-pad-x);
 }
+/* 離線橫幅：標頭下方一條。內容跟卡片的內文欄對齊；沒內容（有網路）時整條不佔空間 */
+.offline-bar {
+  box-sizing: border-box;
+  padding: 8px var(--gutter);
+  background: #fef3c7;
+  color: #92400e; /* 比 --warn 深：12px 小字在淺黃底上要有 6:1 以上的對比 */
+  font-size: var(--fs-small);
+  text-align: center;
+}
+.offline-bar:empty {
+  display: none;
+}
 
 /* 標頭列：白底、下緣一條細線，滿版（卡片才受 --content-w 限制） */
 header {

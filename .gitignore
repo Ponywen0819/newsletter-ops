@@ -44,6 +44,7 @@
 !/web/ui/tsconfig.json
 !/web/ui/vite.config.ts
 !/web/ui/src/**
+!/web/ui/public/**
 
 # 設定：主設定、興趣檔、來源清單
 !/config/*.json
