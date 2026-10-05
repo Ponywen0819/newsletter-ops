@@ -3,6 +3,7 @@ import { groupReport, type Unit } from '../reportUnits'
 import type { Block, ListItem, Mark, Marks, Report } from '../types'
 import { FeedbackButtons } from './FeedbackButtons'
 import { Inline } from './Inline'
+import { ReaderShell } from './ReaderShell'
 
 type OnMark = (uid: string, mark: Mark) => void
 
@@ -198,36 +199,39 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
   ]
 
   return (
-    <article ref={articleRef} className="report reader">
-      <div className="reader-side">
-        {grouped.title && <BlockView block={grouped.title} votes={{ marks, onMark }} />}
-        <nav ref={navRef} className="reader-nav" aria-label="新聞目錄">
-          {navGroups.map((group, gi) => (
-            <div key={gi}>
-              {group.label && <p className="reader-nav-title">{group.label}</p>}
-              <ul>
-                {group.units.map((unit) => (
-                  <li key={unit.id}>
-                    <a
-                      href={`#${unit.id}`}
-                      title={unit.label}
-                      aria-current={unit.id === activeId ? 'true' : undefined}
-                      onClick={(e) => {
-                        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return // 新分頁開啟照舊
-                        e.preventDefault()
-                        goTo(unit.id)
-                      }}
-                    >
-                      <span>{unit.label}</span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </nav>
-      </div>
-      <div className="reader-body">
+    <article ref={articleRef} className="report">
+      <ReaderShell
+        side={
+          <>
+            {grouped.title && <BlockView block={grouped.title} votes={{ marks, onMark }} />}
+            <nav ref={navRef} className="reader-nav" aria-label="新聞目錄">
+              {navGroups.map((group, gi) => (
+                <div key={gi}>
+                  {group.label && <p className="reader-nav-title">{group.label}</p>}
+                  <ul>
+                    {group.units.map((unit) => (
+                      <li key={unit.id}>
+                        <a
+                          href={`#${unit.id}`}
+                          title={unit.label}
+                          aria-current={unit.id === activeId ? 'true' : undefined}
+                          onClick={(e) => {
+                            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return // 新分頁開啟照舊
+                            e.preventDefault()
+                            goTo(unit.id)
+                          }}
+                        >
+                          <span>{unit.label}</span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </nav>
+          </>
+        }
+      >
         {grouped.callout && <BlockView block={grouped.callout} votes={{ marks, onMark }} />}
         {grouped.groups.map((group, gi) => (
           <div key={gi} className="group">
@@ -242,7 +246,7 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
           </div>
         ))}
         {grouped.sources && <UnitView unit={grouped.sources} sources={report.sources} marks={marks} onMark={onMark} />}
-      </div>
+      </ReaderShell>
     </article>
   )
 }
