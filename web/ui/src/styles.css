@@ -632,6 +632,19 @@ header nav a[aria-current='page'] {
     color: var(--link);
   }
 
+  /* 歷史晨報的月份目錄：月份在左、份數靠右（份數是次要資訊，muted、不跟著 aria-current 變色變粗） */
+  .reader-nav-months a {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .reader-nav-count {
+    flex: none;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+
   /* 右欄：就是原本的白色卡片，一整頁往下捲 */
   .reader-body {
     box-sizing: border-box;
@@ -639,8 +652,10 @@ header nav a[aria-current='page'] {
     background: var(--card);
     border-radius: var(--card-radius);
   }
-  /* 歷史列表的 16px 上邊距是留給它上面的 h1 的；桌機版 h1 在左欄，列表是白卡的第一個東西，不再多空一段 */
-  .reader-body > .reports {
+  /* 歷史列表的 16px 上邊距（分月份時是第一個月份小標的 28px）是留給它上面的 h1 的；
+     桌機版 h1 在左欄，列表／第一個月份是白卡的第一個東西，不再多空一段 */
+  .reader-body > .reports,
+  .reader-body > .unit:first-child > h2 {
     margin-top: 0;
   }
   /* 點目錄／j／k 捲過去時，停在 sticky 標頭的下面，而不是被它蓋住 */
