@@ -8,7 +8,7 @@ const open = (heartbeatStatus: () => number) => {
   const net = mockFetch({ 'GET /api/heartbeat': () => ({ status: heartbeatStatus(), json: { ok: true } }) })
   render(
     <MemoryRouter>
-      <Layout />
+      <Layout variant="single" />
     </MemoryRouter>,
   )
   return net

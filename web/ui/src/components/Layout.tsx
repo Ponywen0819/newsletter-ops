@@ -10,11 +10,16 @@ const BANNER: Record<Exclude<Status, 'ok'>, string> = {
   login: '登入已逾時', // 資料請求此時不回快取（見 api.ts），畫面會是「讀取失敗」；按鈕整頁重載，讓瀏覽器走 Access 登入
 }
 
-export function Layout() {
+/**
+ * reader：桌機寬度是「左側欄＋右側內文」（首頁、歷史晨報、單日晨報），頁面要自己用 ReaderShell 畫兩欄。
+ * single：單欄卡片（確認頁、授權、找不到頁面）。
+ * 由 App.tsx 的路由指定，不看內容渲染了什麼，所以載入中、出錯時外框也一樣。
+ */
+export function Layout({ variant }: { variant: 'reader' | 'single' }) {
   const session = useSession()
   const connectivity = useConnectivity()
   return (
-    <>
+    <div data-layout={variant}>
       <header>
         <nav>
           <span className="site-name">晨報</span>
@@ -41,6 +46,6 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
-    </>
+    </div>
   )
 }

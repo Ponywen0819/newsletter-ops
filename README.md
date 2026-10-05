@@ -151,7 +151,8 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
 ### Web 前端（`web/ui/`）
 
 Vite + React + TypeScript。後端 `newsletter-web`（`web/server`）只出 JSON，頁面全由前端畫；晨報是 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
-版面是自適應的（手機單欄、筆電左側目錄＋內文，樣式在 `web/ui/src/styles.css`）；email 吃同一份結構，由 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
+版面是自適應的（手機單欄、筆電左側欄＋內文，樣式在 `web/ui/src/styles.css`）。筆電版面由路由決定、不看內容：`/`、`/reports`、`/reports/<date>` 是左側欄＋內文（頁面用 `ReaderShell`，載入中與出錯也一樣，站內切換外框才不會跳），
+`/feedback`、`/auth`、找不到頁面維持單欄卡片（`App.tsx` 的兩組 layout route）；email 吃同一份結構，由 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
 cd web/ui
