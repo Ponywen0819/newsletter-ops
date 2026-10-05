@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { useFetch, useOnline } from './hooks'
+import { useConnectivity, useFetch } from './hooks'
+import { mockFetch } from './test/fetchMock'
 
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -31,23 +32,22 @@ describe('useFetch', () => {
   })
 })
 
-describe('useOnline', () => {
-  it('跟著 navigator.onLine 與 online／offline 事件', () => {
-    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
-    const { result } = renderHook(() => useOnline())
-    expect(result.current).toBe(true)
+describe('useConnectivity', () => {
+  it('跟著 heartbeat 的結果與 online／offline 事件', async () => {
+    let heartbeat = 502
+    mockFetch({ 'GET /api/heartbeat': () => ({ status: heartbeat, json: { ok: true } }) })
+    const { result } = renderHook(() => useConnectivity())
+    expect(result.current).toBe('ok') // 還沒探測完：樂觀
+    await waitFor(() => expect(result.current).toBe('unreachable'))
 
-    act(() => {
-      onLine.mockReturnValue(false)
-      window.dispatchEvent(new Event('offline'))
-    })
-    expect(result.current).toBe(false)
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    act(() => void window.dispatchEvent(new Event('offline')))
+    expect(result.current).toBe('offline')
 
-    act(() => {
-      onLine.mockReturnValue(true)
-      window.dispatchEvent(new Event('online'))
-    })
-    expect(result.current).toBe(true)
+    heartbeat = 200
+    onLine.mockReturnValue(true)
+    act(() => void window.dispatchEvent(new Event('online')))
+    await waitFor(() => expect(result.current).toBe('ok'))
     onLine.mockRestore()
   })
 })

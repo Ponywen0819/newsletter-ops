@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { build } from 'vite'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { API_CACHE } from './cacheName'
 
 // 鎖住「我們的設定」：真的跑一次 Vite build（輸出到暫存目錄，不動 dist/），檢查產物。
 // Workbox 自己的行為（precache、NetworkFirst）是現成且有測試的，不在這裡重測。
@@ -78,8 +79,13 @@ describe('sw.js', () => {
     expect(source()).toContain('api/(today|reports(/')
   })
 
-  it('絕不碰會寫入或因請求而異的 API：auth、session、feedback', () => {
-    expect(source()).not.toMatch(/api\/(auth|session|feedback)/)
+  it('絕不碰會寫入、因請求而異、或必須打到網路的 API：auth、session、feedback、heartbeat', () => {
+    expect(source()).not.toMatch(/api\/(auth|session|feedback|heartbeat)/)
+  })
+
+  it('頁面（api.ts）離線時讀的 cache 就是這裡寫的那個；NetworkFirst 有保險逾時', () => {
+    expect(source()).toMatch(new RegExp(`cacheName:\\s*["'\`]${API_CACHE}["'\`]`)) // 壓縮後引號會變成反引號
+    expect(source()).toMatch(/networkTimeoutSeconds:\s*\d/)
   })
 })
 

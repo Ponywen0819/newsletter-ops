@@ -30,7 +30,7 @@ describe('/auth', () => {
     expect(await screen.findByRole('heading', { name: '找不到頁面' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Claude 授權' })).toBeNull()
     expect(screen.queryByLabelText('OAuth token')).toBeNull()
-    expect(net.calls.map((c) => c.path)).toEqual(['/api/session'])
+    expect(net.calls.map((c) => c.path).filter((p) => p !== '/api/heartbeat')).toEqual(['/api/session'])
   })
 
   it('本機：顯示狀態與表單；token 欄位是密碼欄', async () => {

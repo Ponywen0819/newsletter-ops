@@ -3,11 +3,11 @@ import { api } from '../api'
 import { Loading, Notice } from '../components/Notice'
 import { ReaderShell } from '../components/ReaderShell'
 import { ReportPanel } from '../components/ReportView'
-import { useDocumentTitle, useFetch } from '../hooks'
+import { useDocumentTitle, useFetch, useRecovered } from '../hooks'
 
 // 晨報以外的狀態沒有左欄內容，但一樣放在 ReaderShell：外框從載入中到載入完成都不變
 export function TodayPage() {
-  const { data, error } = useFetch(api.today, [])
+  const { data, error } = useFetch(api.today, [useRecovered()])
   useDocumentTitle(data?.report ? `每日晨間簡報 ${data.date}` : '每日晨間簡報')
 
   if (error)
