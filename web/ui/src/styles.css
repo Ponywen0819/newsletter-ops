@@ -507,15 +507,16 @@ header nav a[aria-current='page'] {
   display: none;
 }
 @media (min-width: 1100px) {
-  /* 卡片在這一頁只是容器：寬度放到「左欄 280 ＋ 間距 24 ＋ 右欄 720」，白底改由右欄承擔 */
-  main.card:has(> .reader) {
+  /* 卡片在這幾頁只是容器：寬度放到「左欄 280 ＋ 間距 24 ＋ 右欄 720」，白底改由右欄承擔。
+     哪幾頁是 reader 由路由決定（Layout 的 data-layout），不看內容，所以載入中、出錯時外框也一樣 */
+  [data-layout='reader'] main.card {
     max-width: 1024px;
     padding: 0;
     background: transparent;
     border-radius: 0;
   }
   /* 標頭內容跟著放寬、貼齊左欄左緣，不然站名與連結會縮在中間 720px 那一欄 */
-  header:has(~ .page .reader) nav {
+  [data-layout='reader'] header nav {
     max-width: 1024px;
     padding: 0;
   }
