@@ -72,6 +72,12 @@ describe('路由', () => {
     expect(nav.getByRole('link', { name: '歷史晨報' })).toBeInTheDocument()
   })
 
+  it('導覽有配色切換，每個頁面都有（包含找不到頁面）', async () => {
+    open('/nope', {})
+    await screen.findByRole('heading', { name: '找不到頁面' })
+    expect(within(screen.getByRole('navigation')).getByRole('combobox', { name: '配色' })).toBeInTheDocument()
+  })
+
   it('導覽有站名「晨報」，是純文字、不是連結（免得跟「今日晨報」重複）', async () => {
     open('/nope', {})
     await screen.findByRole('heading', { name: '找不到頁面' })

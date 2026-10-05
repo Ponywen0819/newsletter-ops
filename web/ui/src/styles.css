@@ -9,18 +9,25 @@
  * 元素的基本樣式用 :where() 壓低優先權，下面各元件的 class 才不用互相較量。
  */
 
+/* 配色：light-dark(淺, 深)。沒有 data-theme ＝ 跟系統；public/theme-init.js 與 ThemeSelect 才會設 data-theme。 */
 :root {
-  --text: #1f2937;
-  --heading: #111827;
-  --muted: #6b7280;
-  --link: #2563eb;
-  --danger: #dc2626;
-  --ok: #15803d;
-  --warn: #b45309;
-  --border: #d1d5db;
-  --rule: #e5e7eb;
-  --page: #f3f4f6;
-  --card: #ffffff;
+  color-scheme: light dark;
+  --text: light-dark(#1f2937, #e5e7eb);
+  --heading: light-dark(#111827, #f9fafb);
+  --muted: light-dark(#6b7280, #9ca3af);
+  --link: light-dark(#2563eb, #60a5fa);
+  --danger: light-dark(#dc2626, #f87171);
+  --ok: light-dark(#15803d, #4ade80);
+  --warn: light-dark(#b45309, #fbbf24);
+  --border: light-dark(#d1d5db, #374151);
+  --rule: light-dark(#e5e7eb, #2d3748);
+  --page: light-dark(#f3f4f6, #0b0f19);
+  --card: light-dark(#ffffff, #1f2937);
+  --callout-bg: light-dark(#fff7ed, #2a1d10);
+  --callout-bar: light-dark(#f97316, #fb923c);
+  --link-soft: light-dark(#eff6ff, #172554);
+  --danger-soft: light-dark(#fef2f2, #3b1212);
+  --on-link: light-dark(#ffffff, #0b1220);
   --mono: Menlo, Consolas, monospace;
 
   /* 版面（預設＝手機：卡片滿版、貼齊螢幕左右、無圓角） */
@@ -39,6 +46,13 @@
   --fs-h1: 24px;
   --fs-h2: 18px;
   --lh-body: 1.8; /* 中文長文行高要比英文鬆：1.6 讀久了字會擠在一起 */
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }
 
 /* 平板：卡片置中、圓角、四邊留白加大；內文欄 720px（扣掉左右 40px 後每行約 40 個全形字） */
@@ -131,6 +145,22 @@ header nav a {
 header nav a[aria-current='page'] {
   font-weight: 600;
 }
+/* 配色切換：推到導覽列右端；顏色吃變數，展開的原生選單由 color-scheme 跟著變 */
+.theme-select {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+@media (pointer: coarse) {
+  .theme-select {
+    min-height: 44px;
+  }
+}
 
 .card {
   /* --content-w 是含 padding 的卡片總寬：不加 border-box 的話，720px 會變成內文 720px、卡片 800px */
@@ -188,8 +218,8 @@ header nav a[aria-current='page'] {
   margin: 0 0 8px;
   /* 手機寬度寶貴：callout 左邊框＋左右 padding 已吃掉 30px 以上，padding 收緊一點給文字 */
   padding: 12px 14px;
-  background: #fff7ed;
-  border-left: 4px solid #f97316;
+  background: var(--callout-bg);
+  border-left: 4px solid var(--callout-bar);
   border-radius: 6px;
   font-size: var(--fs-body);
   line-height: var(--lh-body);
@@ -259,7 +289,7 @@ header nav a[aria-current='page'] {
   padding: 7px 14px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: #fff;
+  background: var(--card);
   color: var(--muted);
   cursor: pointer;
 }
@@ -271,12 +301,12 @@ header nav a[aria-current='page'] {
 }
 .fb-btn[aria-pressed='true'] {
   color: var(--link);
-  background: #eff6ff;
+  background: var(--link-soft);
   border-color: var(--link);
 }
 .fb-btn[data-mark='-'][aria-pressed='true'] {
   color: var(--danger);
-  background: #fef2f2;
+  background: var(--danger-soft);
   border-color: var(--danger);
 }
 .fb-msg {
@@ -452,7 +482,7 @@ header nav a[aria-current='page'] {
   font-size: 14px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--card);
   cursor: pointer;
 }
 .auth-btn:disabled {
@@ -462,7 +492,7 @@ header nav a[aria-current='page'] {
 .auth-primary {
   background: var(--link);
   border-color: var(--link);
-  color: #fff;
+  color: var(--on-link);
 }
 .auth-danger {
   color: var(--danger);
