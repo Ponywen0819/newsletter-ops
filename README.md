@@ -40,7 +40,7 @@ notify/                    通知（標準庫）
 web/
   server/src/newsletter_web/web.py   Web 後端：JSON API（/api/*）＋提供 web/ui/dist；有用／沒用 寫進 feedback.jsonl；
                                      /auth 貼 OAuth token（標準庫，無登入）（newsletter-web）
-  ui/                      Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth）；建置產物 web/ui/dist 不進版控
+  ui/                      Web 前端：Vite + React + TypeScript（晨報、歷史列表、/auth），可安裝成 PWA；建置產物 web/ui/dist 不進版控
 config/interests.md        關注範圍（自然語言），報告判讀的依據
 config/config.json         執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json    來源清單，一個主題一個檔
@@ -178,6 +178,46 @@ npm run typecheck
 
 **建議由人確認，不自動套用。** 會自己調參數的系統，出錯時你查不出它為什麼開始推垃圾。
 
+### PWA（可安裝，離線讀開過的晨報）
+
+網頁可以裝成 App：Android／桌機 Chrome 選「安裝應用程式」（桌機在網址列右側），iOS Safari 用「分享 → 加入主畫面」。裝好後以獨立視窗開啟，圖示是藍底的「報」。
+需要 HTTPS 或 `localhost`（Tunnel 的網域本來就是 HTTPS）。**只有 `npm run build` 的產物有 service worker**，`npm run dev` 不註冊，免得開發時被舊快取干擾。
+
+- **離線**：開過的今日晨報、歷史列表、單日晨報，沒網路時仍能打開，標頭下方出現「離線中」；沒開過的日期顯示「讀取失敗」。有網路時永遠先拿最新的（標記狀態、新產出的晨報不會被舊快取蓋住）。離線時按「有用／沒用」會顯示「儲存失敗」，不會排隊補送。
+- **更新**：新版 service worker 直接接手（`skipWaiting`＋`clientsClaim`），不提示重新整理；舊版的 precache 自動清掉。
+- **檔案**：`web/ui/vite.config.ts`（`vite-plugin-pwa`：manifest、註冊）、`web/ui/src/sw.ts`（service worker 的路由）、`web/ui/public/icons/`（`icon.svg` 是來源，另有 192、512、maskable 512、apple-touch-icon 180 的 PNG；換圖示就重新輸出這四張）。
+  `public/` 的檔案原樣複製到 `dist/` 根目錄；它被 `.gitignore`、`.dockerignore` 放行，`Dockerfile` 也有 `COPY web/ui/public`，新增這類目錄時三處都要加。
+
+**`sw.ts` 的原則**（改它之前先讀）
+
+- **只快取** `GET /api/today`、`/api/reports`、`/api/reports/<date>`，且只存 200。`POST`、`/api/session`（`local` 因請求而異）、`/api/auth*`（能寫入憑證）、`/api/feedback/*` **不註冊路由、不經過 service worker**；新增路由前先確認不會碰到它們。
+- **導覽一律先走網路**，只有網路錯誤才回 precache 的 `index.html`。Access 逾時時回的 302 要原樣交給瀏覽器去登入，不能拿快取的畫面蓋掉；導覽的回應不進任何快取，登入頁不可能被存起來。
+  導覽路由必須排在 precache 的路由**前面**（路由先註冊的先贏；否則 `/` 會直接吃快取），所以用 `precache()`＋`addRoute()`，不要改回 `precacheAndRoute()`。
+- manifest 的 `<link>` 要帶 `crossorigin="use-credentials"`（設定裡的 `useCredentials: true`）：瀏覽器抓 manifest 預設不帶 cookie，會被 Access 擋成登入頁，在正式站就裝不起來。這在本機測不出來。
+- 註冊用外部的 `registerSW.js`（`injectRegister: 'script'`）；不能改成行內，CSP 不允許行內 `<script>`。
+- PWA 的檔案（`manifest.webmanifest`、`sw.js`、圖示）也在 Access 後面，不要為了安裝方便而對它們開 bypass。
+
+**已知限制**
+
+- Access 登入逾時後，已經開著的頁面背景請求會被跨來源 redirect 擋掉、看起來像離線而顯示快取內容；畫面上有日期可以辨識。重新開啟 app 時導覽會被導去登入，登入後回到晨報。
+- 「離線中」橫幅看的是 `navigator.onLine`，只反映有沒有網路（飛航模式、斷線），伺服器掛了但網路還在時不會出現。
+- 訊號極差時，讀取要等瀏覽器自己放棄才回退快取（`NetworkFirst` 沒設逾時）。
+
+**測試**：`npm test` 的 `pwa.test.ts` 會建置到暫存目錄（不動 `dist/`），檢查 manifest 欄位、`crossorigin`、沒有行內 script、service worker 的路由範圍與順序；
+`uv run newsletter-web --selftest` 檢查 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`。
+
+**正式站驗收**（Docker 與 systemd 兩種部署共用；Access 的行為只有在真實網域上測得到）
+
+| 檢查 | 預期 |
+| --- | --- |
+| **未登入**：`curl -sI https://news.example.com/manifest.webmanifest`、`curl -sI https://news.example.com/sw.js` | 都是 `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200**（PWA 的檔案也要在 Access 後面） |
+| Android Chrome 登入後開首頁 | 選單出現「安裝應用程式」；裝好後以獨立視窗開到今日晨報 |
+| iOS Safari 登入後「分享 → 加入主畫面」 | 圖示是藍底「報」（不是預設的字母）；以獨立視窗開啟 |
+| 手機開飛航模式，開已安裝的 app | 看得到最近開過的晨報，標頭下方有「離線中」 |
+| 清掉 Access 登入（或等逾時）後開 app | 被帶到 Access 登入頁，登入後回到晨報（不是白畫面，也不是舊的畫面停住） |
+
+iOS 主畫面的圖示若是預設字母，很可能是 iOS 抓圖示時沒帶 Access 登入；可以在 Access 對 `/icons/*` 加一條 bypass policy。圖示不含機密，但這是改安全設定，範圍請只限 `/icons/*`。
+
 ## 排程
 
 正式排程見「部署到家用 host」。`run_daily.sh` 是唯一的排程入口，Docker 的 scheduler 容器、systemd timer 與 cron 都呼叫它：
@@ -289,7 +329,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。
 ```
 
 - `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，各成員以 editable 裝進同一個環境，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`web/ui/`），
-  只把 `web/ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼要放行才進得了 build context。
+  只把 `web/ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `web/ui/public/`（圖示）要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。compose 沒有 `ports:`，host 不會開任何 port；
@@ -337,6 +377,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up，PORTS 欄�
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
 | **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的「有用」 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
+| 裝成 PWA、離線、Access 逾時 | 照「PWA」一節的「正式站驗收」表 |
 | `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的「👍 有用」連結 | 先經 Access 登入，再看到「確認標為 有用」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
 | `docker compose run --rm scheduler uv run newsletter-agent --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
@@ -444,6 +485,7 @@ Application domain 填 `news.example.com`；Policy 一條就好：Action = Allow
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
 | **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的「有用」 | host 上 `tail -n1 ~/newsletter-ops/state/feedback.jsonl` 多一行 |
+| 裝成 PWA、離線、Access 逾時 | 照「PWA」一節的「正式站驗收」表 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上 `uv run newsletter-agent`
 （或上面的手動排程）先產一份。

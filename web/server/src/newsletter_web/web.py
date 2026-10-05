@@ -83,6 +83,7 @@ STATIC_TYPES = {  # 副檔名白名單：dist 裡只有這些會被提供
     ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".json": "application/json; charset=utf-8",
+    ".webmanifest": "application/manifest+json",
     ".svg": "image/svg+xml",
     ".png": "image/png",
     ".ico": "image/x-icon",
@@ -545,6 +546,10 @@ def selftest() -> None:
         (root / "web" / "ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
         (root / "web" / "ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
         (root / "web" / "ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")  # PWA
+        (root / "web" / "ui" / "dist" / "sw.js").write_text("self.skipWaiting()", encoding="utf-8")
+        (root / "web" / "ui" / "dist" / "icons").mkdir()
+        (root / "web" / "ui" / "dist" / "icons" / "icon-192.png").write_text("png", encoding="utf-8")
         (root / "web" / "ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
         (root / "web" / "secret.txt").write_text("dist 之外", encoding="utf-8")  # 一層 .. 就到
         (root / "secret.txt").write_text("dist 之外", encoding="utf-8")          # 三層 .. 才到
@@ -619,6 +624,12 @@ def selftest() -> None:
             assert req("GET", "/assets/app-abc123.css")[1]["content-type"] == "text/css; charset=utf-8"
             status, headers, _ = req("GET", "/favicon.svg")
             assert status == 200 and headers["content-type"] == "image/svg+xml" and headers["cache-control"] == "no-cache"
+            # PWA：manifest、service worker、圖示都要每次確認（sw.js 被長期快取就永遠換不了新版）
+            for path, ctype in (("/manifest.webmanifest", "application/manifest+json"),
+                                ("/sw.js", "text/javascript; charset=utf-8"), ("/icons/icon-192.png", "image/png")):
+                status, headers, _ = req("GET", path)
+                assert status == 200 and headers["content-type"] == ctype, (path, status, headers["content-type"])
+                assert headers["cache-control"] == "no-cache" and headers["x-content-type-options"] == "nosniff", path
             # 擋掉：不存在的檔案給純文字 404（不是 HTML）、dist 之外、副檔名不在白名單、目錄
             for path in ("/assets/missing.js", "/../secret.txt", "/assets/../../secret.txt", "/assets/../../../secret.txt",
                          "/assets/..%2F..%2Fsecret.txt", "/%2e%2e/secret.txt", "/secret.txt", "/build.py", "/assets", "/assets/"):

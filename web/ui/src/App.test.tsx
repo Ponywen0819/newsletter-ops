@@ -1,7 +1,7 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { mockFetch } from './test/fetchMock'
 import { report, UID_A } from './test/fixtures'
@@ -89,5 +89,37 @@ describe('路由', () => {
     open('/', { 'GET /api/session': () => ({ status: 502, json: {} }), 'GET /api/today': () => ({ json: { date: '2026-09-28', latest: null, report, marks: {} } }) })
     expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Claude 授權' })).toBeNull()
+  })
+})
+
+describe('離線橫幅', () => {
+  it('離線時標頭下方出現「離線中」，恢復連線後消失', async () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
+    open('/reports', { 'GET /api/reports': () => ({ json: { reports: [] } }) })
+    await screen.findByRole('heading', { name: '歷史晨報' })
+    expect(screen.queryByText(/離線中/)).toBeNull()
+
+    act(() => {
+      onLine.mockReturnValue(false)
+      window.dispatchEvent(new Event('offline'))
+    })
+    const bar = screen.getByText(/離線中/)
+    expect(bar).toHaveAttribute('role', 'status')
+    expect(bar).toHaveTextContent('上次載入的內容')
+
+    act(() => {
+      onLine.mockReturnValue(true)
+      window.dispatchEvent(new Event('online'))
+    })
+    expect(screen.queryByText(/離線中/)).toBeNull()
+    onLine.mockRestore()
+  })
+
+  it('一開始就離線：直接顯示橫幅；導覽與 /auth 連結的判斷不受影響', async () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    open('/nope', {}, true)
+    expect(screen.getByText(/離線中/)).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Claude 授權' })).toBeInTheDocument()
+    onLine.mockRestore()
   })
 })

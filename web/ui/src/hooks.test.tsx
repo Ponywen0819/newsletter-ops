@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
-import { useFetch } from './hooks'
+import { describe, expect, it, vi } from 'vitest'
+import { useFetch, useOnline } from './hooks'
 
 function deferred<T>() {
   let resolve!: (v: T) => void
@@ -28,5 +28,26 @@ describe('useFetch', () => {
     await waitFor(() => expect(result.current.data).toBe('第二次'))
     await act(async () => slow.resolve('第一次（太晚）'))
     expect(result.current.data).toBe('第二次')
+  })
+})
+
+describe('useOnline', () => {
+  it('跟著 navigator.onLine 與 online／offline 事件', () => {
+    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
+    const { result } = renderHook(() => useOnline())
+    expect(result.current).toBe(true)
+
+    act(() => {
+      onLine.mockReturnValue(false)
+      window.dispatchEvent(new Event('offline'))
+    })
+    expect(result.current).toBe(false)
+
+    act(() => {
+      onLine.mockReturnValue(true)
+      window.dispatchEvent(new Event('online'))
+    })
+    expect(result.current).toBe(true)
+    onLine.mockRestore()
   })
 })
