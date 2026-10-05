@@ -42,7 +42,8 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate run
+    # 強制 http2（TCP）：預設的 QUIC（UDP）在 Docker Desktop／家用網路上每 10 分鐘左右逾時斷線重連
+    command: tunnel --no-autoupdate --protocol http2 run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN（Cloudflare Zero Trust 建立 Tunnel 時取得）}
     # Tunnel 的 Public Hostname 要填的 Service 是 http://web:8787
