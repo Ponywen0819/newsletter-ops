@@ -629,8 +629,10 @@ header nav a[aria-current='page'] {
     background: var(--card);
     border-radius: var(--card-radius);
   }
-  /* 歷史列表的 16px 上邊距是留給它上面的 h1 的；桌機版 h1 在左欄，列表是白卡的第一個東西，不再多空一段 */
-  .reader-body > .reports {
+  /* 歷史列表的 16px 上邊距（分月份時是第一個月份小標的 28px）是留給它上面的 h1 的；
+     桌機版 h1 在左欄，列表／第一個月份是白卡的第一個東西，不再多空一段 */
+  .reader-body > .reports,
+  .reader-body > .unit:first-child > h2 {
     margin-top: 0;
   }
   /* 點目錄／j／k 捲過去時，停在 sticky 標頭的下面，而不是被它蓋住 */
