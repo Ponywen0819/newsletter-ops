@@ -1,7 +1,7 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { mockFetch } from './test/fetchMock'
 import { report, UID_A } from './test/fixtures'
@@ -200,7 +200,7 @@ describe('離線橫幅', () => {
       onLine.mockReturnValue(true)
       window.dispatchEvent(new Event('online'))
     })
-    expect(screen.queryByText(/離線中/)).toBeNull()
+    await waitFor(() => expect(screen.queryByText(/離線中/)).toBeNull()) // online 之後要 heartbeat 通過才算恢復
     onLine.mockRestore()
   })
 
@@ -210,5 +210,46 @@ describe('離線橫幅', () => {
     expect(screen.getByText(/離線中/)).toBeInTheDocument()
     expect(await screen.findByRole('link', { name: 'Claude 授權' })).toBeInTheDocument()
     onLine.mockRestore()
+  })
+})
+
+describe('heartbeat 與快取', () => {
+  const stale = { date: '2026-09-27', latest: '2026-09-27', report, marks: {} }
+  const fresh = { ...stale, date: '2026-09-28', latest: '2026-09-28' }
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('伺服器正常：載入一頁只多一次 heartbeat，而且不會因為什麼都沒變就重抓', async () => {
+    const net = open('/', { 'GET /api/today': () => ({ json: fresh }) })
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-28'))
+    act(() => void document.dispatchEvent(new Event('visibilitychange'))) // 回到前景：重探，但結果沒變
+    await vi.waitFor(() => expect(net.calls.filter((c) => c.path === '/api/heartbeat').length).toBe(2))
+    expect(net.calls.filter((c) => c.path === '/api/today')).toHaveLength(1)
+    expect(net.calls.slice(0, 3).map((c) => c.path).filter((p) => p !== '/api/session')).toEqual(['/api/heartbeat', '/api/today'])
+  })
+
+  it('連不上：直接顯示快取；伺服器回來、回到前景後換成最新的', async () => {
+    vi.stubGlobal('caches', { match: async (path: string) => (path === '/api/today' ? new Response(JSON.stringify(stale)) : undefined) })
+    let up = false
+    const net = open('/', {
+      'GET /api/heartbeat': () => ({ status: up ? 200 : 502, json: { ok: true } }),
+      'GET /api/today': () => ({ json: fresh }),
+    })
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-27'))
+    expect(await screen.findByText('連不上伺服器，顯示的是上次載入的內容')).toBeInTheDocument()
+    expect(net.calls.some((c) => c.path === '/api/today')).toBe(false) // 沒有等資料請求逾時
+
+    up = true
+    act(() => void document.dispatchEvent(new Event('visibilitychange')))
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-28'))
+    expect(document.querySelector('.offline-bar')).toBeEmptyDOMElement() // 晨報裡也有 status 區，所以用 class 找橫幅
+  })
+
+  it('登入逾時：不顯示快取，顯示「讀取失敗」與重新登入', async () => {
+    vi.stubGlobal('caches', { match: async () => new Response(JSON.stringify(stale)) })
+    open('/', { 'GET /api/heartbeat': () => ({ status: 403, json: {} }) })
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    expect(screen.getByText('登入已逾時，請重新登入')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新登入' })).toBeInTheDocument()
+    expect(document.title).not.toContain('2026-09-27')
   })
 })

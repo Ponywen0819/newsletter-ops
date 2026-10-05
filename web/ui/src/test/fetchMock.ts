@@ -6,8 +6,10 @@ type Handler = (body: unknown) => Reply | Promise<Reply>
 /**
  * 換掉全域 fetch：routes 的 key 是 "METHOD /path"，沒列到的一律 404。
  * 測試走真正的 api.ts，只假造網路那一層。calls 記錄每次請求（含解析過的 JSON body）。
+ * GET /api/heartbeat 預設是正常（要測連不上就在 routes 裡覆寫）。
  */
 export function mockFetch(routes: Record<string, Handler>) {
+  routes = { 'GET /api/heartbeat': () => ({ json: { ok: true } }), ...routes }
   const calls: { method: string; path: string; body: unknown; headers: Record<string, string> }[] = []
   const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method ?? 'GET'

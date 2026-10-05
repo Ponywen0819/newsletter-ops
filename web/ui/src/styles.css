@@ -103,6 +103,16 @@ body {
 .offline-bar:empty {
   display: none;
 }
+.offline-bar button {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 /* 標頭列：白底、下緣一條細線，滿版（卡片才受 --content-w 限制） */
 header {

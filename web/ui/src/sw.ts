@@ -4,6 +4,7 @@ import { clientsClaim } from 'workbox-core'
 import { addRoute, cleanupOutdatedCaches, createHandlerBoundToURL, precache } from 'workbox-precaching'
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 import { NetworkFirst } from 'workbox-strategies'
+import { API_CACHE } from './cacheName'
 
 // __WB_MANIFEST 由 vite-plugin-pwa 在建置時換成 precache 清單（index.html、/assets/* …，檔名帶內容 hash）
 declare const self: ServiceWorkerGlobalScope & {
@@ -40,12 +41,15 @@ registerRoute(
 addRoute()
 
 // 只快取讀取用的 API：有網路永遠拿最新（標記狀態會變），離線讀上次的；只存 200。
-// 其餘路徑一律不註冊 → 不經過 SW：POST、/api/session（local 因請求而異）、/api/auth*（能寫入憑證）、/api/feedback/*。
-// 新增路由前先確認不會碰到這些。
-// ponytail: 沒設 networkTimeoutSeconds，訊號極差（lie-fi）時要等瀏覽器自己放棄才回退快取；要改就設逾時。
-// ponytail: Access 逾時後，已開著的頁面背景 fetch 會被跨來源 redirect 擋掉，看起來像離線而顯示快取；
-//   畫面上有日期可辨識，重新開啟 app 時導覽會被導去登入。要根治就讓 SW 回報「這是快取」給 UI。
+// 其餘路徑一律不註冊 → 不經過 SW：POST、/api/session（local 因請求而異）、/api/auth*（能寫入憑證）、/api/feedback/*，
+// 還有 /api/heartbeat（連線探測，一定要打到網路，不能被快取）。新增路由前先確認不會碰到這些。
+// 連不連得上由頁面先用 heartbeat 判斷（connectivity.ts、api.ts）：連不上時頁面直接讀這個 cache，不會走到這裡。
+// 這裡的逾時只是保險：heartbeat 通過後、請求途中才斷線（或變很慢）時，不用等瀏覽器自己放棄；有快取才會在逾時後回快取。
 registerRoute(
   ({ sameOrigin, url }) => sameOrigin && /^\/api\/(today|reports(\/\d{4}-\d{2}-\d{2})?)$/.test(url.pathname),
-  new NetworkFirst({ cacheName: 'api', plugins: [new CacheableResponsePlugin({ statuses: [200] })] }),
+  new NetworkFirst({
+    cacheName: API_CACHE,
+    networkTimeoutSeconds: 4,
+    plugins: [new CacheableResponsePlugin({ statuses: [200] })],
+  }),
 )

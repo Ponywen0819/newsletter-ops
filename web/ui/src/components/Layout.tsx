@@ -1,7 +1,14 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { useOnline } from '../hooks'
+import type { Status } from '../connectivity'
+import { useConnectivity } from '../hooks'
 import { useSession } from '../session'
 import { ThemeSelect } from './ThemeSelect'
+
+const BANNER: Record<Exclude<Status, 'ok'>, string> = {
+  offline: '離線中，顯示的是上次載入的內容',
+  unreachable: '連不上伺服器，顯示的是上次載入的內容',
+  login: '登入已逾時', // 資料請求此時不回快取（見 api.ts），畫面會是「讀取失敗」；按鈕整頁重載，讓瀏覽器走 Access 登入
+}
 
 /**
  * reader：桌機寬度是「左側欄＋右側內文」（首頁、歷史晨報、單日晨報），頁面要自己用 ReaderShell 畫兩欄。
@@ -10,7 +17,7 @@ import { ThemeSelect } from './ThemeSelect'
  */
 export function Layout({ variant }: { variant: 'reader' | 'single' }) {
   const session = useSession()
-  const online = useOnline()
+  const connectivity = useConnectivity()
   return (
     <div data-layout={variant}>
       <header>
@@ -27,7 +34,12 @@ export function Layout({ variant }: { variant: 'reader' | 'single' }) {
       </header>
       {/* 常駐的 status 區：內容從無到有，輔助科技才會唸出來；沒內容時 CSS 把它藏起來 */}
       <div className="offline-bar" role="status">
-        {!online && '離線中，顯示的是上次載入的內容'}
+        {connectivity !== 'ok' && BANNER[connectivity]}
+        {connectivity === 'login' && (
+          <button type="button" onClick={() => location.reload()}>
+            重新登入
+          </button>
+        )}
       </div>
       <div className="page">
         <main className="card">

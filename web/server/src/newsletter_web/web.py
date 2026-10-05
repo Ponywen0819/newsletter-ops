@@ -11,6 +11,7 @@ port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
 API（都是 JSON；前端的型別在 web/ui/src/types.ts）：
   GET  /api/session           {local}                 這個請求是不是從本機來（前端據此決定要不要顯示「Claude 授權」）
+  GET  /api/heartbeat         {ok}                    連線探測（no-store、不讀檔、不寫入）；前端用它區分離線、連不上伺服器、Access 登入逾時
   GET  /api/today             {date, latest, report, marks}   當日晨報；還沒產出時 report 是 null、latest 是最新一份的日期
   GET  /api/reports           {reports: [{date, headline}]}   歷史列表，新到舊
   GET  /api/reports/<date>    {date, report, marks}   report 是 report_data.parse_report() 的結構（不是 HTML）
@@ -404,6 +405,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/session":
                 payload = {"local": self._local()}
+            elif path == "/api/heartbeat":
+                payload = {"ok": True}  # 前端探測連線用：不讀檔、不寫入
             elif path == "/api/today":
                 payload = self.site.today_payload()
             elif path == "/api/reports":
@@ -598,6 +601,14 @@ def selftest() -> None:
                                                           {"date": "2026-09-27", "headline": "某事發生，見 來源。"}]}, data
             assert get("/api/reports/2026-01-01")[0] == 404 and get("/api/reports/..%2Fconfig")[0] == 404
             assert get("/api/nope") == (404, {"error": "not found"}) and get("/api/reports/")[0] == 200
+
+            # heartbeat：200 {ok}、no-store、不寫入任何東西（檔案清單與 mtime 前後相同）、只有 GET
+            def tree() -> dict[Path, int]:
+                return {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+            before = tree()
+            status, headers, text = req("GET", "/api/heartbeat")
+            assert (status, json.loads(text), headers["cache-control"]) == (200, {"ok": True}, "no-store")
+            assert req("POST", "/api/heartbeat", None, {})[0] == 404 and tree() == before
 
             # 格式不符的報告：單日回 500 與原因，列表照樣能列出（頭條抓不到就留空）
             (root / "reports" / "2026-09-26.md").write_text("# 壞掉的報告\n", encoding="utf-8")
@@ -827,6 +838,7 @@ def selftest_auth() -> None:
             # 一般功能不受影響：經 Tunnel（公開網域）一樣能讀報告、按 👍／👎
             tunnel = {"Host": "news.example.com", "Cf-Ray": "abc"}
             assert get("/api/today", tunnel)[0] == 200 and req("GET", "/", tunnel)[0] == 200
+            assert get("/api/heartbeat", tunnel) == (200, {"ok": True})
             assert post("/api/feedback", {"uid": uid, "mark": "+"}, tunnel)[0] == 200
 
             # 輸入檢查：不呼叫 checker

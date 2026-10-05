@@ -1,8 +1,12 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterEach } from 'vitest'
+import { resetConnectivity } from '../connectivity'
 
 // jsdom 沒實作 scrollTo（呼叫會印 "Not implemented"）；閱讀器切換單位時會用到
 window.scrollTo = () => {}
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  resetConnectivity() // 連線狀態是模組層級的，不能從上一個測試漏到下一個
+})
