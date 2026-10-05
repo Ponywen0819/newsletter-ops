@@ -9,6 +9,10 @@
 !/.gitignore
 !/README.md
 !/ISSUES.md
+!/agent/ISSUES.md
+!/shared/ISSUES.md
+!/*/README.md
+!/web/ui/README.md
 !/run_daily.sh
 !/pyproject.toml
 !/uv.lock

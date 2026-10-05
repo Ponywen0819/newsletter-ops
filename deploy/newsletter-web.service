@@ -1,4 +1,4 @@
-# systemd --user 單元。安裝見 README「部署到家用 host」。repo 預設放在 ~/newsletter-ops。
+# systemd --user 單元。安裝見 deploy/README.md。repo 預設放在 ~/newsletter-ops。
 [Unit]
 Description=newsletter-ops web (127.0.0.1:8787)
 

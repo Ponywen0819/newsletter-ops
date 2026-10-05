@@ -1,6 +1,6 @@
-# 已知問題
+# agent 已知問題
 
-最後更新：2026-09-28。每則格式：現象 → 原因 → 建議。解決後移到文末「已解決」並寫日期。
+最後更新：2026-09-28。每則格式：現象 → 原因 → 建議。解決後移到文末「已解決」並寫日期。編號沿用原本根目錄 `ISSUES.md` 的，不重排。
 
 ## 未解決
 
@@ -37,12 +37,6 @@
 - 現象：荷莫茲海峽的事件發生在 9/26，超過 24 小時窗，但 9/28 仍是最重要的國際新聞。
 - 建議：暫時維持靠 skill 的「搜尋補充」處理；如果常發生，world 的 `lookback_hours` 可以放寬到 36 小時。
 
-**15. `reports/` 裡 09-19～09-26 的 8 份報告不見了**
-- 現象：2026-09-28 對話開始時還在，後來只剩 `2026-09-28.md` 和 `.html`；垃圾桶裡也沒有。
-- 原因：不明。所有 Claude session 紀錄裡都沒有刪除 `reports/` 的指令，是在 Claude 之外被移除的。
-- 影響：那幾天報告裡的 mark 標記如果還沒用 `feedback.py` 收集，就遺失了。`data/curated` 還在，需要的話可以重寫報告。
-- 決定（2026-10-02）：`reports/`、`state/feedback.jsonl` 等生成物都不進版控也不備份（見 README「資料保存」），不放行 `!/reports/*.md`。
-
 ### 低：已知限制，先記錄
 
 **9. arXiv 會議判斷的誤判情境**（`curate.venue_of`）
@@ -61,15 +55,11 @@
 - 原因：5 個 arXiv 來源穿插之後，仍有 4 個排在清單最後、彼此相連，每兩個之間要等 3 秒。
 - 建議：把 arXiv 平均分散到整個清單，或讓不同網域並行抓取。目前效益不大。
 
-**12. Metrics 算不到 WebFetch 內部的 token**
-- WebFetch 用來摘要網頁的小模型不在 session 紀錄裡，拿不到。替代指標是 `tools.WebFetch` 的呼叫次數與秒數。
-
 ## 已解決（2026-09-28）
 
 - **Anthropic RSS 404**：官網根本沒有 RSS，原設定的網址是猜的。已改用社群 feed，見第 10 點。
 - **Nature、Science 抓到 0 則**：它們用 RSS 1.0（RDF）格式，解析器找不到項目。`fetch.parse_feed` 現在會先去掉預設 namespace，再用 RSS 2.0 的方式解析。
 - **「DocInsights at EMNLP」被判成主會議**：會議判斷改成三個固定清單（conference／journal／minor_tracks），加上「名稱 at 會議」規則，並直接產出中文 `label`。
 - **抓取 50 秒裡有 30 秒在等待**：請求間隔改成只套用在同一網域，並把同網域的來源穿插排開。arXiv 依 API 規範改為間隔 3 秒。抓取時間降到 23.7 秒。
-- **報告格式和排程 prompt 互相衝突**（散文 vs 條列）：skill 改成條列版晨間簡報，email 版型交給 `render_email.py`。
+- **報告格式和排程 prompt 互相衝突**（散文 vs 條列）：skill 改成條列版晨間簡報，email 版型交給 `render_email.py`（notify）。
 - **英文關鍵字比對不到複數**（原第 3 點）：`curate._kw_matcher` 結尾允許 `s`／`es`，`agent` 現在會命中 `agents`。代價是「federal agents」這類新聞也會拿到 `agent` 的低權重加分（boost_low），靠門檻與 Claude 判讀擋掉。不規則複數與同義詞直接在 `config.json` 多列一個關鍵字。
-- **Metrics 測試紀錄被刪、同一天多次執行只剩最後一筆**（原第 12 點）：測試紀錄會和正式紀錄混在同一個檔、分不出來，所以之前測試完都被手動刪掉。現在每筆紀錄帶 `label`（`NEWSLETTER_RUN_LABEL`，預設 `prod`），`summary` 每次執行一行、預設只列 prod。`model_seconds` 改名 `non_tool_seconds`。
