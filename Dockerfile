@@ -10,6 +10,7 @@ COPY web/ui/package.json web/ui/package-lock.json ./
 RUN npm ci
 COPY web/ui/index.html web/ui/tsconfig.json web/ui/vite.config.ts ./
 COPY web/ui/src ./src
+COPY web/ui/public ./public
 RUN npm run build
 
 FROM python:3.11-slim-bookworm

@@ -169,6 +169,10 @@ npm run typecheck
 - 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
+- 深色模式：預設跟系統（`prefers-color-scheme`），頁首「配色」可改成淺色／深色，選擇存在瀏覽器的 localStorage（key `theme`，只收 `light`／`dark`，沒有＝自動），後端不知道。
+  `<html data-theme>` 是唯一真相；顏色在 `styles.css` 的 `:root` 用 `light-dark(淺, 深)` 定義（需要 2024 年中以後的瀏覽器）。
+  `web/ui/public/theme-init.js` 在 `<head>` 同步套用儲存的主題，避免先閃一下錯的顏色；CSP 不許行內腳本，所以它必須是外部檔。
+  放進 `web/ui/public/` 的檔案要同時放行 `.gitignore`（白名單）、`.dockerignore`，並在 `Dockerfile` 的前端階段 COPY，否則不會進版控或映像。
 - 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時**只改 `report_data.py`**：網頁與 email 共用同一個解析器。哪些條目可以投票
   （`list`／`mark` 區塊的 `votable`：主要新聞才有、「其餘收錄」沒有）也在那裡決定，兩邊版型只負責照畫。
   `uv run python -m newsletter_shared.report_data --selftest` 驗證解析與 `votable`，`uv run newsletter-render --selftest` 驗證 email 輸出。
