@@ -2,10 +2,10 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { Loading, Notice } from '../components/Notice'
 import { ReportPanel } from '../components/ReportView'
-import { useDocumentTitle, useFetch } from '../hooks'
+import { useDocumentTitle, useFetch, useRecovered } from '../hooks'
 
 export function TodayPage() {
-  const { data, error } = useFetch(api.today, [])
+  const { data, error } = useFetch(api.today, [useRecovered()])
   useDocumentTitle(data?.report ? `每日晨間簡報 ${data.date}` : '每日晨間簡報')
 
   if (error) return <Notice title="讀取失敗">{error.message}</Notice>

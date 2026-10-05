@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
+import { getRecoveries, getStatus, subscribe, type Status } from './connectivity'
 
 export interface Fetched<T> {
   data?: T
@@ -30,19 +31,12 @@ export function useDocumentTitle(title: string): void {
   }, [title])
 }
 
-function subscribeOnline(notify: () => void) {
-  window.addEventListener('online', notify)
-  window.addEventListener('offline', notify)
-  return () => {
-    window.removeEventListener('online', notify)
-    window.removeEventListener('offline', notify)
-  }
+/** 連線狀態（見 connectivity.ts）：離線、連不上伺服器、Access 登入逾時。 */
+export function useConnectivity(): Status {
+  return useSyncExternalStore(subscribe, getStatus, () => 'ok')
 }
 
-/**
- * 瀏覽器有沒有網路（navigator.onLine）。
- * ponytail: 只反映「有沒有網路」（飛航模式、斷線），不代表伺服器連得到；伺服器掛了時不會變成 false。
- */
-export function useOnline(): boolean {
-  return useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true)
+/** 從連不上／離線／登入逾時恢復的次數。放進 useFetch 的 deps，恢復後畫面會自己換成最新資料；一直正常時不會變。 */
+export function useRecovered(): number {
+  return useSyncExternalStore(subscribe, getRecoveries, () => 0)
 }

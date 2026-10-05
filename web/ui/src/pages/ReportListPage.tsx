@@ -1,10 +1,10 @@
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { Loading, Notice } from '../components/Notice'
-import { useDocumentTitle, useFetch } from '../hooks'
+import { useDocumentTitle, useFetch, useRecovered } from '../hooks'
 
 export function ReportListPage() {
-  const { data, error } = useFetch(api.reports, [])
+  const { data, error } = useFetch(api.reports, [useRecovered()])
   useDocumentTitle('歷史晨報')
 
   if (error) return <Notice title="讀取失敗">{error.message}</Notice>
