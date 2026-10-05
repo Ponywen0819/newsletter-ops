@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
 
 // 與 styles.css 的閱讀器斷點同一個值。沒有 matchMedia（jsdom）時當作寬螢幕，鍵盤切換才測得到
 export const isWide = () => window.matchMedia?.('(min-width: 1100px)').matches ?? true
@@ -39,6 +39,16 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
       scrollToUnit(id)
     },
     [scrollToUnit],
+  )
+
+  // 目錄連結的 onClick：一般左鍵攔下來自己捲；Ctrl／⌘／Shift／Alt＋點（新分頁開啟）照舊
+  const onLinkClick = useCallback(
+    (id: string) => (e: MouseEvent) => {
+      if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
+      e.preventDefault()
+      goTo(id)
+    },
+    [goTo],
   )
 
   // 網址帶 hash 開頁：直接捲到那一則
@@ -91,5 +101,5 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     else if (rect.bottom > box.bottom) nav.scrollTop += rect.bottom - box.bottom
   }, [activeId, navRef])
 
-  return { activeId, goTo }
+  return { activeId, goTo, onLinkClick }
 }

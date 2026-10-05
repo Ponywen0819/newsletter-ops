@@ -622,6 +622,19 @@ header nav a[aria-current='page'] {
     color: var(--link);
   }
 
+  /* 歷史晨報的月份目錄：月份在左、份數靠右（份數是次要資訊，muted、不跟著 aria-current 變色變粗） */
+  .reader-nav-months a {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .reader-nav-count {
+    flex: none;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+
   /* 右欄：就是原本的白色卡片，一整頁往下捲 */
   .reader-body {
     box-sizing: border-box;

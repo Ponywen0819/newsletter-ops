@@ -97,7 +97,7 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
   const ids = useMemo(() => grouped.units.map((u) => u.id), [grouped])
   const articleRef = useRef<HTMLElement>(null)
   const navRef = useRef<HTMLElement>(null)
-  const { activeId, goTo } = useSectionNav(ids, articleRef, navRef)
+  const { activeId, goTo, onLinkClick } = useSectionNav(ids, articleRef, navRef)
 
   // j／k 跳到下一則／上一則。方向鍵不碰，留給一般捲動
   useEffect(() => {
@@ -137,11 +137,7 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
                           href={`#${unit.id}`}
                           title={unit.label}
                           aria-current={unit.id === activeId ? 'true' : undefined}
-                          onClick={(e) => {
-                            if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return // 新分頁開啟照舊
-                            e.preventDefault()
-                            goTo(unit.id)
-                          }}
+                          onClick={onLinkClick(unit.id)}
                         >
                           <span>{unit.label}</span>
                         </a>
