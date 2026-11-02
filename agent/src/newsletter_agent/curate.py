@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
@@ -66,14 +68,24 @@ def _hits(text: str, keyword: str) -> bool:
 def load_seen(retention_days: int = 30) -> dict:
     if not STATE.exists():
         return {}
-    data = json.loads(STATE.read_text(encoding="utf-8"))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-    return {k: v for k, v in data.items() if v >= cutoff}
+    try:
+        return {k: v for k, v in json.loads(STATE.read_text(encoding="utf-8")).items() if v >= cutoff}
+    except (ValueError, AttributeError, TypeError):  # 不是合法 JSON（含空檔）或不是 {uid: 時間} 的形狀
+        print(f"[curate] {STATE.name} 讀不了，當作空的重來（時間窗內已報過的新聞會再出現一次）", file=sys.stderr)
+        return {}
 
 
 def save_seen(seen: dict) -> None:
+    """先寫暫存檔、fsync，再整個換掉 seen.json：寫到一半被中斷（kill、斷電、磁碟滿），舊檔仍完整。
+    # ponytail: 中途失敗會留下 seen.json.<pid>.tmp，不自動清；檔名帶 pid 只是避免兩個程序寫同一個暫存檔"""
     STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps(seen, ensure_ascii=False, indent=0), encoding="utf-8")
+    tmp = STATE.with_name(f"{STATE.name}.{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(seen, fh, ensure_ascii=False, indent=0)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, STATE)
 
 
 def in_window(item: dict, default_hours: int) -> bool:
@@ -228,8 +240,11 @@ def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
     return kept, dropped
 
 
-def curate(items: list[dict], config: dict) -> tuple[list[dict], dict]:
+def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], dict]:
+    """redo：同一天重跑時，上一次收錄的 uid。它們當作沒看過，否則第二次只剩第二梯隊，頭條全不見。"""
     seen = load_seen()
+    for uid in redo:
+        seen.pop(uid, None)
     default_hours = config.get("lookback_hours", 24)
     fresh = [i for i in items if in_window(i, default_hours) and i["uid"] not in seen]
 
@@ -286,4 +301,39 @@ if __name__ == "__main__":  # 自我檢查：uv run python -m newsletter_agent.c
     assert not _hits("agentic workflows", "agent") and not _hits("agentsx", "agent")
     item = {"title": "x", "summary": "", "venue_note": "ICLR 2026 camera-ready"}
     assert score(item, {}, V)[0] == 2.0 and item["venue"]["status"] == "main"
+
+    # 同日重跑：沒有 redo 時第二次拿到第二梯隊；帶上次的 uid 就拿回同一批
+    import tempfile
+    from pathlib import Path
+    STATE = Path(tempfile.mkdtemp()) / "seen.json"  # 不碰真的 state/seen.json
+    now = datetime.now(timezone.utc).isoformat()
+    batch = lambda: [{"uid": f"u{n}", "title": t, "url": f"https://x.example/{n}", "source": "s", "topic": "t",
+                      "summary": "", "published": now, "weight": 1.0, "baseline_relevance": 2.0 + n / 10}
+                     for n, t in enumerate(["alpha quantum", "bravo reactor", "charlie harvest", "delta voyage"])]
+    uids = lambda r: {i["uid"] for i in r[0]}
+    cfg = {"min_relevance": 0.8, "quota": {"t": 2}}
+    first = curate(batch(), cfg)
+    assert uids(first) == {"u3", "u2"}
+    assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
+    assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的：沒帶 redo 才會往下一梯隊走
+
+    # 寫入中斷：舊的 seen.json 要完好；寫成功時不留暫存檔
+    save_seen({"old": now})
+    assert list(STATE.parent.glob("*.tmp")) == [] and load_seen() == {"old": now}
+    real_dump = json.dump
+    def boom(*args, **kwargs): raise OSError("disk full")
+    json.dump = boom
+    try:
+        save_seen({"new": now})
+        raise AssertionError("寫入失敗時應該丟出例外")
+    except OSError:
+        pass
+    finally:
+        json.dump = real_dump
+    assert load_seen() == {"old": now}
+
+    # 壞檔當作空的：空檔、寫到一半、形狀不對
+    for bad in ("", '{"a": "2026-10-', "[]", '{"a": 1}'):
+        STATE.write_text(bad, encoding="utf-8")
+        assert load_seen() == {}, bad
     print("ok")

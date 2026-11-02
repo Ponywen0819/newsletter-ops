@@ -132,7 +132,7 @@ Docker（`docker compose up -d --build`）與不用 Docker 的 systemd + cloudfl
 ## 資料保存：不保存
 
 生成物——`reports/`、`data/`、`state/`（含 `state/feedback.jsonl`）、`logs/`——不備份、不進版控（Docker 部署時放在 volume `newsletter-data`，見 [deploy/README.md](deploy/README.md)），
-壞了就重來：抓取結果可以重跑，`seen.json` 沒了只會讓時間窗內已報過的新聞再出現一次，
+壞了就重來：抓取結果可以重跑，`seen.json` 沒了或壞了（讀不了時當作空的）只會讓時間窗內已報過的新聞再出現一次，
 `feedback.jsonl` 只是改 `config/interests.md` 時參考的中間產物（本 repo 是 public，標記含標題與來源，更不該推上來）。
 
 版控裡只有程式、設定與 `interests.md`；這些是唯一需要「持續更新」的內容，`git pull` 後重 build 即可。
