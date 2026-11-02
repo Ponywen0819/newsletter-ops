@@ -21,6 +21,7 @@ import json
 import math
 import os
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
@@ -67,9 +68,12 @@ def _hits(text: str, keyword: str) -> bool:
 def load_seen(retention_days: int = 30) -> dict:
     if not STATE.exists():
         return {}
-    data = json.loads(STATE.read_text(encoding="utf-8"))
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-    return {k: v for k, v in data.items() if v >= cutoff}
+    try:
+        return {k: v for k, v in json.loads(STATE.read_text(encoding="utf-8")).items() if v >= cutoff}
+    except (ValueError, AttributeError, TypeError):  # 不是合法 JSON（含空檔）或不是 {uid: 時間} 的形狀
+        print(f"[curate] {STATE.name} 讀不了，當作空的重來（時間窗內已報過的新聞會再出現一次）", file=sys.stderr)
+        return {}
 
 
 def save_seen(seen: dict) -> None:
@@ -327,4 +331,9 @@ if __name__ == "__main__":  # 自我檢查：uv run python -m newsletter_agent.c
     finally:
         json.dump = real_dump
     assert load_seen() == {"old": now}
+
+    # 壞檔當作空的：空檔、寫到一半、形狀不對
+    for bad in ("", '{"a": "2026-10-', "[]", '{"a": 1}'):
+        STATE.write_text(bad, encoding="utf-8")
+        assert load_seen() == {}, bad
     print("ok")
