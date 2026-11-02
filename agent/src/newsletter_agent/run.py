@@ -46,6 +46,14 @@ def load_config(config_path: Path) -> dict:
     return config
 
 
+def prior_uids(path: Path) -> set[str]:
+    """同一天重跑時，當天 curated 上次收錄的 uid；檔案不存在或壞掉就當沒有。"""
+    try:
+        return {i["uid"] for i in json.loads(path.read_text(encoding="utf-8"))["items"]}
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只抓取並印統計，不寫 state / 報告")
@@ -107,8 +115,12 @@ def main() -> int:
         for row in raw:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
+    curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
+    redo = prior_uids(curated_path)
+    if redo:
+        print(f"[curate] 同日重跑：沿用上次收錄的 {len(redo)} 則重新排名", file=sys.stderr)
     with metrics.timed("curate") as m:
-        ranked, stats = curate_mod.curate(raw, config)
+        ranked, stats = curate_mod.curate(raw, config, redo)
         m.update({k: stats[k] for k in ("fetched", "in_window_new", "passed_relevance",
                                         "after_dedupe_and_quota")})
     payload = {
@@ -119,7 +131,6 @@ def main() -> int:
                           ("lookback_hours", "min_relevance", "quota", "max_items_in_report")},
         "items": ranked,
     }
-    curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
     curated_path.parent.mkdir(parents=True, exist_ok=True)
     curated_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[curate] 收錄 {len(ranked)} 則 → {curated_path}", file=sys.stderr)

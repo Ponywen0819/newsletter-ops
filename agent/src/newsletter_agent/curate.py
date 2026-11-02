@@ -228,8 +228,11 @@ def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
     return kept, dropped
 
 
-def curate(items: list[dict], config: dict) -> tuple[list[dict], dict]:
+def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], dict]:
+    """redo：同一天重跑時，上一次收錄的 uid。它們當作沒看過，否則第二次只剩第二梯隊，頭條全不見。"""
     seen = load_seen()
+    for uid in redo:
+        seen.pop(uid, None)
     default_hours = config.get("lookback_hours", 24)
     fresh = [i for i in items if in_window(i, default_hours) and i["uid"] not in seen]
 
@@ -286,4 +289,19 @@ if __name__ == "__main__":  # 自我檢查：uv run python -m newsletter_agent.c
     assert not _hits("agentic workflows", "agent") and not _hits("agentsx", "agent")
     item = {"title": "x", "summary": "", "venue_note": "ICLR 2026 camera-ready"}
     assert score(item, {}, V)[0] == 2.0 and item["venue"]["status"] == "main"
+
+    # 同日重跑：沒有 redo 時第二次拿到第二梯隊；帶上次的 uid 就拿回同一批
+    import tempfile
+    from pathlib import Path
+    STATE = Path(tempfile.mkdtemp()) / "seen.json"  # 不碰真的 state/seen.json
+    now = datetime.now(timezone.utc).isoformat()
+    batch = lambda: [{"uid": f"u{n}", "title": t, "url": f"https://x.example/{n}", "source": "s", "topic": "t",
+                      "summary": "", "published": now, "weight": 1.0, "baseline_relevance": 2.0 + n / 10}
+                     for n, t in enumerate(["alpha quantum", "bravo reactor", "charlie harvest", "delta voyage"])]
+    uids = lambda r: {i["uid"] for i in r[0]}
+    cfg = {"min_relevance": 0.8, "quota": {"t": 2}}
+    first = curate(batch(), cfg)
+    assert uids(first) == {"u3", "u2"}
+    assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
+    assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的：沒帶 redo 才會往下一梯隊走
     print("ok")

@@ -30,6 +30,8 @@ uv run newsletter-fetch --list-sources   # 不連網，列出來源載入結果�
 uv run newsletter-agent               # 依 skill 寫報告並驗收，見下方「無人值守」
 ```
 
+同一天可以重跑 `newsletter-fetch`：當天 `data/curated/<date>.json` 上次收錄的項目不算「看過」，會重新排名，所以頭條不會因為重跑而消失。
+
 agent（`agent_run.py`，或在對話裡手動跑 skill）只負責寫 `reports/<date>.md` 並驗證格式，**不產 email HTML、也不寄信**；
 要 email 就用 notify（`uv run newsletter-render | uv run newsletter-send`，排程由根目錄的 `run_daily.sh` 代勞）。
 
