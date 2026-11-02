@@ -1,4 +1,5 @@
 import { Route, Routes } from 'react-router-dom'
+import { AuthHealthProvider } from './authHealth'
 import { Layout } from './components/Layout'
 import { SessionProvider } from './session'
 import { AuthPage } from './pages/AuthPage'
@@ -13,18 +14,20 @@ import { TodayPage } from './pages/TodayPage'
 export function App() {
   return (
     <SessionProvider>
-      <Routes>
-        <Route element={<Layout variant="reader" />}>
-          <Route index element={<TodayPage />} />
-          <Route path="reports" element={<ReportListPage />} />
-          <Route path="reports/:date" element={<ReportPage />} />
-        </Route>
-        <Route element={<Layout variant="single" />}>
-          <Route path="feedback/:uid" element={<FeedbackPage />} />
-          <Route path="auth" element={<AuthPage />} />
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
+      <AuthHealthProvider>
+        <Routes>
+          <Route element={<Layout variant="reader" />}>
+            <Route index element={<TodayPage />} />
+            <Route path="reports" element={<ReportListPage />} />
+            <Route path="reports/:date" element={<ReportPage />} />
+          </Route>
+          <Route element={<Layout variant="single" />}>
+            <Route path="feedback/:uid" element={<FeedbackPage />} />
+            <Route path="auth" element={<AuthPage />} />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </AuthHealthProvider>
     </SessionProvider>
   )
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Web 層：JSON API ＋ 提供前端（web/，Vite + React）的建置結果。晨報每則旁邊按 👍／👎，直接寫進 state/feedback.jsonl。
 
-用法：uv run newsletter-web [--host 127.0.0.1] [--port 8787] [--selftest]
+用法：uv run newsletter-web [--host 127.0.0.1] [--port 8787] [--auth-check-interval 3600] [--selftest]
 port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
 
 前端是 web/ui/ 底下的 Vite + React 專案，要先建置：`cd web/ui && npm install && npm run build`，
@@ -17,6 +17,7 @@ API（都是 JSON；前端的型別在 web/ui/src/types.ts）：
   GET  /api/reports/<date>    {date, report, marks}   report 是 report_data.parse_report() 的結構（不是 HTML）
   GET  /api/feedback/<uid>    {uid, date, title, mark}  email 連結的確認頁用：這則的標題與目前標記（只讀，不寫入）
   POST /api/feedback          {uid, mark}             👍／👎
+  GET  /api/auth-health       {state, kind, checked_at}   認證是否還能用（定時驗證的最近結果；不含訊息與 token，給所有人看，前端據此顯示橫幅）
   GET  /api/auth              {state, ...}            OAuth token 的狀態（只限本機）
   POST /api/auth/token|test|revoke                    貼上、測試、刪除 OAuth token（只限本機）
 晨報的 Markdown 由 report_data.py 解析成結構（網頁與 email 共用同一份），版型由前端負責；email 版型由 render_email.py 排版，兩者互不影響。
@@ -44,6 +45,13 @@ cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以光看來源
 或直接在 host 上設環境變數 CLAUDE_CODE_OAUTH_TOKEN。
 貼上的 token 先交給 `newsletter-agent --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
 token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK（由 newsletter-agent 帶進來），用 `uv run newsletter-web` 啟動就有。
+
+定時驗證：啟動時與之後每 --auth-check-interval 秒（預設 3600，環境變數 NEWSLETTER_AUTH_CHECK_INTERVAL，0＝不定時驗證），
+背景用目前的認證來源（儲存的 token > 這個程序自己環境裡的 CLAUDE_CODE_OAUTH_TOKEN，排程的環境不同就不準）跑一次 `--auth-check`，
+結果只放在記憶體（重啟後第一輪就補上）。
+每次驗證都是一次真的呼叫，用掉極少的訂閱額度；手動「測試連線」、貼上新 token 成功也會更新這個結果。
+/api/auth-health 的 state：ok／expiring（通過，但依一年效期推算快到期）／missing（沒有任何認證來源）／
+invalid（kind 是 auth 或 api_key：要重新授權）／unknown（無法確認：額度用完、逾時、尚未檢查…，不代表授權失效）。
 """
 from __future__ import annotations
 
@@ -57,7 +65,7 @@ import subprocess
 import sys
 import threading
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -75,6 +83,7 @@ UID_RE = re.compile(r"[0-9a-f]{16}")
 MARKS = {"+", "-", ""}  # "" ＝ 取消
 MAX_BODY = 4096
 CHECK_TIMEOUT = 90  # 秒；驗證 token 的子程序最多等這麼久（無效 token 約 2 秒，有效的幾秒；卡住要放棄）
+CHECK_INTERVAL = 3600  # 秒；定時驗證的間隔
 
 # 前端的路由（web/ui/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
 SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
@@ -187,6 +196,7 @@ class Site:
         self.token_path = auth_store.token_path(root)
         self.checker = checker or run_auth_check  # selftest 換成假的，不真的呼叫 Claude
         self._check_lock = threading.Lock()       # 同時只跑一個驗證，避免被連按開出一堆子程序
+        self.last_check: dict | None = None       # 最近一次驗證 {ok, kind, at}；還沒驗證過、或認證來源被刪光＝None
 
     # ---- 前端的建置結果 ----
 
@@ -313,16 +323,57 @@ class Site:
             return ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, f"額度用完，現在無法驗證：{msg}（稍後再試）")
         return ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, f"驗證失敗：{msg}")
 
-    def _verify(self, token: str) -> None:
-        """跑一次驗證；沒通過就丟 ApiError。"""
+    def _record(self, result: dict) -> None:
+        self.last_check = {"ok": bool(result.get("ok")), "kind": str(result.get("kind", "other")),
+                           "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+    def _verify(self, token: str, stored: bool = False) -> None:
+        """跑一次驗證；沒通過就丟 ApiError。stored：驗的是已儲存的 token。"""
         if not self._check_lock.acquire(blocking=False):
             raise ApiError(HTTPStatus.CONFLICT, "另一個驗證正在進行，請稍候再試")
         try:
             result = self.checker(token)
         finally:
             self._check_lock.release()
+        if stored or result.get("ok"):  # 新貼的 token 沒通過時，生效的還是舊的，這次結果不能算在它頭上
+            self._record(result)
         if not result.get("ok"):
             raise self._failure(result)
+
+    def check_now(self) -> None:
+        """用目前的認證來源（儲存的 token > 環境變數）驗證一次，結果記在 last_check。沒有來源就清掉。"""
+        auth = auth_store.resolve(os.environ, self.token_path)
+        if auth is None:
+            self.last_check = None
+        elif self._check_lock.acquire(blocking=False):  # 有人正在手動驗證：這輪略過，下一輪再說
+            try:
+                result = self.checker(auth.token)
+            finally:
+                self._check_lock.release()
+            self._record(result)
+
+    def monitor(self, interval: float, stop: threading.Event) -> None:
+        """背景執行緒：先驗證一次，之後每 interval 秒一次，直到 stop。"""
+        while True:
+            try:
+                self.check_now()
+            except Exception:
+                traceback.print_exc()  # 一輪出錯不能讓整個定時驗證停掉
+            if stop.wait(interval):
+                return
+
+    def auth_health(self) -> dict:
+        """給所有人看的粗略狀態；不含驗證訊息與 token。state 的意思見模組說明。"""
+        if auth_store.resolve(os.environ, self.token_path) is None:
+            return {"state": "missing", "kind": "missing", "checked_at": None}
+        last = self.last_check
+        if last is None:
+            return {"state": "unknown", "kind": "unchecked", "checked_at": None}
+        if last["ok"]:
+            state = "expiring" if self.auth_status()["state"] in ("expiring", "expired") else "ok"
+        else:
+            state = "invalid" if last["kind"] in ("auth", "api_key") else "unknown"
+        return {"state": state, "kind": last["kind"], "checked_at": last["at"]}
 
     def submit_token(self, raw: str) -> dict:
         """貼上新的 token：先驗證，通過才覆寫。無效的 token 不會洗掉原本可用的。"""
@@ -337,12 +388,13 @@ class Site:
         rec = auth_store.load(self.token_path)
         if rec is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "還沒有儲存的 token")
-        self._verify(rec["token"])
+        self._verify(rec["token"], stored=True)
         return {"message": "連線正常", "status": self.auth_status()}
 
     def revoke_token(self) -> dict:
         """只刪掉這裡儲存的檔；token 在 Anthropic 端仍然有效。"""
         removed = auth_store.delete(self.token_path)
+        self.last_check = None  # 驗的是剛刪掉的那個；若還有環境變數的 token，下一輪定時驗證會補上
         return {"message": "已刪除儲存的 token" if removed else "本來就沒有儲存的 token", "status": self.auth_status()}
 
 
@@ -415,6 +467,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self.site.report_payload(m[1])
             elif m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
                 payload = self.site.feedback_target(m[1])
+            elif path == "/api/auth-health":
+                payload = self.site.auth_health()
             elif path == "/api/auth" and self._local():
                 payload = self.site.auth_status()
             else:
@@ -835,6 +889,11 @@ def selftest_auth() -> None:
                     status, body = post(path, {"token": secret}, hdr)
                     assert status == 404 and body == {"error": "not found"}, (hdr, path)
             assert not checked and not site.token_path.exists()  # 被擋的請求沒有觸發驗證、沒有寫檔
+
+            # 認證健康狀態是給所有人看的（橫幅用）：非本機也讀得到；沒有任何認證來源＝missing
+            missing = {"state": "missing", "kind": "missing", "checked_at": None}
+            assert get("/api/auth-health") == (200, missing)
+            assert get("/api/auth-health", {"Host": "news.example.com", "Cf-Ray": "abc"}) == (200, missing)
             # 一般功能不受影響：經 Tunnel（公開網域）一樣能讀報告、按 👍／👎
             tunnel = {"Host": "news.example.com", "Cf-Ray": "abc"}
             assert get("/api/today", tunnel)[0] == 200 and req("GET", "/", tunnel)[0] == 200
@@ -859,6 +918,8 @@ def selftest_auth() -> None:
             assert auth_store.load(site.token_path)["token"] == secret
             assert stat.S_IMODE(site.token_path.stat().st_mode) == 0o600
             assert get("/api/auth")[1] == body["status"] and secret not in req("GET", "/api/auth")[1]
+            status, health = get("/api/auth-health")
+            assert status == 200 and health["state"] == "ok" and health["kind"] == "ok" and health["checked_at"], health
 
             # 驗證失敗：各種原因都不能洗掉原本的 token
             other = "sk-ant-oat01-" + "Zz1" * 14
@@ -872,6 +933,7 @@ def selftest_auth() -> None:
                 assert status == want and text in body["error"] and other not in body["error"], (v, status, body)
                 assert auth_store.load(site.token_path)["token"] == secret, v
             assert checked[-1] == other
+            assert get("/api/auth-health")[1] == health  # 新 token 沒通過：生效的還是舊的，結果不動
 
             # 驗證正在進行時再送一個：409，不另開子程序
             outcome["v"] = {"ok": True, "kind": "ok", "message": ""}
@@ -889,13 +951,26 @@ def selftest_auth() -> None:
             outcome["v"] = {"ok": False, "kind": "auth", "message": "401"}
             status, body = post("/api/auth/test", {})
             assert status == 422 and auth_store.load(site.token_path)["token"] == secret
+            assert get("/api/auth-health")[1]["state"] == "invalid" and get("/api/auth-health")[1]["kind"] == "auth"
+            outcome["v"] = {"ok": False, "kind": "quota", "message": "SECRET-DETAIL"}
+            post("/api/auth/test", {})
+            status, text = req("GET", "/api/auth-health")
+            assert json.loads(text)["state"] == "unknown" and "SECRET-DETAIL" not in text  # 額度用完不等於授權失效；訊息不外露
+            outcome["v"] = {"ok": False, "kind": "api_key", "message": "x"}
+            post("/api/auth/test", {})
+            assert get("/api/auth-health")[1]["state"] == "invalid"
+            outcome["v"] = {"ok": True, "kind": "ok", "message": ""}
+            post("/api/auth/test", {})
+            assert get("/api/auth-health")[1]["state"] == "ok"
 
             # 即將到期的提醒（以儲存時間推算）
             auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=345))
             status, st = get("/api/auth")
             assert st["state"] == "expiring" and 0 <= st["days_left"] <= 30, st
+            assert get("/api/auth-health")[1]["state"] == "expiring"  # 驗證通過，但依效期推算快到了
             auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=400))
             assert get("/api/auth")[1]["state"] == "expired"
+            assert get("/api/auth-health")[1]["state"] == "expiring"
 
             # 刪除：只移除本機檔案；沒有 token 時 test 是 404
             status, body = post("/api/auth/revoke", {})
@@ -904,6 +979,46 @@ def selftest_auth() -> None:
             status, body = post("/api/auth/revoke", {})
             assert status == 200 and "本來就沒有" in body["message"]
             assert post("/api/auth/test", {})[0] == 404
+            assert get("/api/auth-health")[1] == missing
+
+            # 定時驗證：用目前的認證來源（儲存的 token > 環境變數）驗一次；沒有來源就不呼叫
+            n = len(checked)
+            site.check_now()
+            assert len(checked) == n and site.last_check is None
+            env_token = "env-" + "e" * 20
+            with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}):
+                assert get("/api/auth-health")[1]["kind"] == "unchecked"
+                site.check_now()
+                assert checked[-1] == env_token and get("/api/auth-health")[1]["state"] == "ok"
+                auth_store.save(secret, site.token_path)
+                site.check_now()
+                assert checked[-1] == secret  # 儲存的優先於環境變數
+                n = len(checked)
+                assert site._check_lock.acquire(blocking=False)  # 使用者正在手動驗證：這輪略過
+                try:
+                    site.check_now()
+                finally:
+                    site._check_lock.release()
+                assert len(checked) == n
+            auth_store.delete(site.token_path)
+
+            # 迴圈：先驗一次、之後每隔一段時間；某一輪丟例外也不會停
+            stop, calls = threading.Event(), []
+
+            def flaky(token: str) -> dict:
+                calls.append(token)
+                if len(calls) == 1:
+                    raise RuntimeError("boom")
+                if len(calls) >= 3:
+                    stop.set()
+                return {"ok": True, "kind": "ok", "message": ""}
+
+            site.checker = flaky
+            with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}), mock.patch.object(traceback, "print_exc"):
+                t = threading.Thread(target=site.monitor, args=(0.01, stop))
+                t.start()
+                t.join(10)
+            assert not t.is_alive() and calls == [env_token] * 3
 
             # 完整 token 不能出現在任何回應裡
             assert not any(secret in text or other in text for text in seen)
@@ -915,6 +1030,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="晨報瀏覽與 👍／👎 回饋")
     ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}，不要綁到對外位址（沒有登入）")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WEB_PORT", DEFAULT_PORT)))
+    ap.add_argument("--auth-check-interval", type=int, metavar="SECONDS",
+                    default=int(os.environ.get("NEWSLETTER_AUTH_CHECK_INTERVAL", CHECK_INTERVAL)),
+                    help="每隔幾秒背景驗證一次 Claude 認證（會實際呼叫一次）；0＝不驗證。預設 %(default)s")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
     if args.selftest:
@@ -927,11 +1045,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[web] 找不到 web/ui/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
     server = make_server(site, args.host, args.port)
     print(f"[web] http://{args.host}:{server.server_address[1]}/  （Ctrl-C 結束）", file=sys.stderr)
+    stop = threading.Event()
+    if args.auth_check_interval > 0:
+        threading.Thread(target=site.monitor, args=(args.auth_check_interval, stop), daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        stop.set()
         server.server_close()
     return 0
 

@@ -30,7 +30,8 @@ describe('/auth', () => {
     expect(await screen.findByRole('heading', { name: '找不到頁面' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Claude 授權' })).toBeNull()
     expect(screen.queryByLabelText('OAuth token')).toBeNull()
-    expect(net.calls.map((c) => c.path).filter((p) => p !== '/api/heartbeat')).toEqual(['/api/session'])
+    // auth-health 是公開的（橫幅用），其餘 /api/auth* 一個都不能碰
+    expect(net.calls.map((c) => c.path).filter((p) => p !== '/api/heartbeat' && p !== '/api/auth-health')).toEqual(['/api/session'])
   })
 
   it('本機：顯示狀態與表單；token 欄位是密碼欄', async () => {
@@ -114,5 +115,45 @@ describe('/auth', () => {
     expect(await screen.findByText('已刪除儲存的 token')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('尚未授權')).toBeInTheDocument())
     expect(within(document.querySelector('.auth-status') as HTMLElement).queryByText('Token')).toBeNull()
+  })
+
+  it('最近檢查：顯示時間與結果；測試連線後重新讀取', async () => {
+    let health = { state: 'invalid', kind: 'auth', checked_at: '2026-11-02T01:00:00+00:00' }
+    const net = open({
+      'GET /api/auth': () => ({ json: saved() }),
+      'GET /api/auth-health': () => ({ json: health }),
+      'POST /api/auth/test': () => {
+        health = { state: 'ok', kind: 'ok', checked_at: '2026-11-02T02:00:00+00:00' }
+        return { json: { message: '連線正常', status: saved() } }
+      },
+    })
+    const row = async () => (await screen.findByText('最近檢查')).nextElementSibling as HTMLElement
+    expect(await row()).toHaveTextContent('授權失效')
+    expect(screen.getByText('Claude 授權已失效，下次晨報會失敗')).toBeInTheDocument()
+    expect(screen.getByText('驗證失敗，請重新貼上新的 token')).toHaveClass('auth-expired') // 不再顯示綠色的「已授權」
+    expect(screen.queryByText('已授權')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: '測試連線' }))
+    await waitFor(async () => expect(await row()).toHaveTextContent('通過'))
+    expect(screen.queryByText('Claude 授權已失效，下次晨報會失敗')).toBeNull()
+    expect(screen.getByText('已授權')).toBeInTheDocument()
+    expect(net.calls.filter((c) => c.path === '/api/auth-health')).toHaveLength(2)
+  })
+
+  it('還沒檢查過：寫尚未檢查；沒有認證來源就不顯示這一列', async () => {
+    open({
+      'GET /api/auth': () => ({ json: saved() }),
+      'GET /api/auth-health': () => ({ json: { state: 'unknown', kind: 'unchecked', checked_at: null } }),
+    })
+    expect(await screen.findByText('尚未檢查')).toBeInTheDocument()
+  })
+
+  it('沒有認證來源：只有「尚未授權」，沒有最近檢查', async () => {
+    open({
+      'GET /api/auth': () => ({ json: missing }),
+      'GET /api/auth-health': () => ({ json: { state: 'missing', kind: 'missing', checked_at: null } }),
+    })
+    await screen.findByText('尚未授權')
+    expect(screen.queryByText('最近檢查')).toBeNull()
   })
 })

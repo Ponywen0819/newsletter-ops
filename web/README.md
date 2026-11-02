@@ -16,7 +16,8 @@ ui/                                前端：Vite + React + TypeScript（晨報�
 ```bash
 (cd web/ui && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
 uv run newsletter-web               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
-uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制
+uv run newsletter-web --auth-check-interval 1800   # 背景驗證 Claude 認證的間隔（秒），預設 3600；0＝不驗證
+uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制、定時驗證
 ```
 
 `/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則主要新聞末尾有「有用／沒用」兩顆按鈕（上／下箭頭圖示），按下即 append 一行到
@@ -38,11 +39,18 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
   「沒有 `Cf-*` / `X-Forwarded-*` 等代理標頭」「`Origin`（若有）是本機」，否則回 404。
   遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>`，再用自己電腦的瀏覽器開 `http://localhost:8787/auth`。
   token 的取得與政策見 [agent/README.md](../agent/README.md)「認證」。
+- **Claude 認證的定時驗證**：啟動時與之後每隔 `--auth-check-interval`（或 `NEWSLETTER_AUTH_CHECK_INTERVAL`，秒；預設 3600、0＝關閉），
+  背景用目前的認證來源（儲存的 token > **web 程序自己環境裡的** `CLAUDE_CODE_OAUTH_TOKEN`）跑一次 `newsletter-agent --auth-check`。
+  每次都是真的呼叫一次 Claude，用掉極少的訂閱額度；結果只放在記憶體（重啟後第一輪補上），手動「測試連線」、貼上新 token 成功也會更新。
+  `GET /api/auth-health` 回 `{state, kind, checked_at}`（不含驗證訊息與 token，所有人讀得到），前端在有問題時於頁面頂端顯示橫幅：
+  `invalid`（`kind` 是 `auth`／`api_key`：要重新授權）、`missing`（沒有任何來源）、`expiring`（驗證通過，但依一年效期推算快到期）、
+  `unknown`（額度用完、逾時等無法確認，**不代表失效**；剛啟動還沒驗證過的不提醒）。經 Tunnel 看到的橫幅只說要回主機授權，沒有連結。
+  限制：排程（`newsletter-agent`）的環境若和 web 程序不同（例如排程另外設了別的環境變數 token），這裡驗的就不是排程實際用的那個。
 
 ## API 與路由
 
 - API（細節見 `server/src/newsletter_web/web.py` 開頭的說明、型別見 `ui/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
-  `/api/reports/<date>`、`/api/feedback/<uid>`、`/api/auth`；`POST /api/feedback`、`/api/auth/token|test|revoke`；`GET /api/heartbeat`（連線偵測，見 [ui/README.md](ui/README.md)「PWA」）。
+  `/api/reports/<date>`、`/api/feedback/<uid>`、`/api/auth`、`/api/auth-health`；`POST /api/feedback`、`/api/auth/token|test|revoke`；`GET /api/heartbeat`（連線偵測，見 [ui/README.md](ui/README.md)「PWA」）。
 - 頁面路由（清單見 [ui/README.md](ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`web.py` 的 `SPA_ROUTES` 要同步。
 - `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../notify/README.md)。
 
@@ -52,4 +60,4 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
 uv run newsletter-web --selftest
 ```
 
-涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、`/auth` 的本機限制，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](ui/README.md)。
+涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、`/auth` 的本機限制、定時驗證與 `/api/auth-health`，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](ui/README.md)。

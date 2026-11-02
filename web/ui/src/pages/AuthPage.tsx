@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { useAuthHealth } from '../authHealth'
 import { Loading } from '../components/Notice'
 import { useDocumentTitle, useFetch } from '../hooks'
 import { useSession } from '../session'
-import type { AuthResult, AuthStatus } from '../types'
+import type { AuthHealth, AuthResult, AuthStatus } from '../types'
 import { NotFoundPage } from './NotFoundPage'
 
 const STATE_LABEL = {
@@ -12,7 +13,15 @@ const STATE_LABEL = {
   expired: () => '預計已過期，請重新貼上新的 token',
 }
 
-function StatusView({ status }: { status: AuthStatus }) {
+const CHECK_RESULT = { ok: '通過', expiring: '通過', invalid: '授權失效', unknown: '無法確認', missing: '' }
+
+function checkedText(h: AuthHealth): string {
+  if (!h.checked_at) return '尚未檢查'
+  return `${new Date(h.checked_at).toLocaleString('zh-TW', { hour12: false })}　${CHECK_RESULT[h.state]}`
+}
+
+function StatusView({ status, health }: { status: AuthStatus; health: AuthHealth | null }) {
+  const invalid = health?.state === 'invalid' // 實際驗證失敗，比依日期推算的「已授權」更準
   return (
     <>
       <dl className="auth-status">
@@ -21,7 +30,9 @@ function StatusView({ status }: { status: AuthStatus }) {
           <dd className="auth-state auth-missing">尚未授權</dd>
         ) : (
           <>
-            <dd className={`auth-state auth-${status.state}`}>{STATE_LABEL[status.state](status.days_left)}</dd>
+            <dd className={`auth-state auth-${invalid ? 'expired' : status.state}`}>
+              {invalid ? '驗證失敗，請重新貼上新的 token' : STATE_LABEL[status.state](status.days_left)}
+            </dd>
             <dt>Token</dt>
             <dd>
               <code>…{status.tail}</code>（只顯示尾 4 碼）
@@ -32,6 +43,15 @@ function StatusView({ status }: { status: AuthStatus }) {
             <dd>
               {status.expires_at}
               <span className="auth-hint">（以一年效期推算，實際以伺服器為準）</span>
+            </dd>
+          </>
+        )}
+        {health && health.state !== 'missing' && (
+          <>
+            <dt>最近檢查</dt>
+            <dd>
+              {checkedText(health)}
+              <span className="auth-hint">（伺服器定時檢查；測試連線也會更新）</span>
             </dd>
           </>
         )}
@@ -56,6 +76,7 @@ function AuthPanel() {
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<Message>()
+  const { health, refresh } = useAuthHealth()
   const status = updated ?? loaded
 
   async function run(action: () => Promise<AuthResult>): Promise<boolean> {
@@ -71,6 +92,7 @@ function AuthPanel() {
       return false
     } finally {
       setBusy(false)
+      refresh() // 橫幅與「最近檢查」跟著更新（失敗的測試連線也會改變後端記的結果）
     }
   }
 
@@ -91,7 +113,7 @@ function AuthPanel() {
         ，也不會因為額度用完而自動改用別的認證方式。這個頁面只能從本機開啟。
       </p>
       <div aria-live="polite">
-        {status ? <StatusView status={status} /> : loadError ? null : <Loading />}
+        {status ? <StatusView status={status} health={health} /> : loadError ? null : <Loading />}
       </div>
       <h2>貼上 token</h2>
       <ol className="auth-steps">

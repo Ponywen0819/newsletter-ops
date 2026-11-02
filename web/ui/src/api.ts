@@ -1,6 +1,6 @@
 import { API_CACHE } from './cacheName'
 import { check } from './connectivity'
-import type { AuthResult, AuthStatus, FeedbackTarget, Mark, ReportPayload, ReportSummary, Session, TodayPayload } from './types'
+import type { AuthHealth, AuthResult, AuthStatus, FeedbackTarget, Mark, ReportPayload, ReportSummary, Session, TodayPayload } from './types'
 
 /** 伺服器回了非 2xx。message 是伺服器給的 error 文字（沒有就是狀態碼）。 */
 export class ApiError extends Error {
@@ -61,6 +61,8 @@ const feedback = (uid: string, mark: Mark) => request<{ uid: string; mark: Mark 
 
 export const api = {
   session: () => request<Session>('/api/session'),
+  /** 不在 auth 底下：/api/auth* 只限本機，這個給所有人看（橫幅用） */
+  authHealth: () => request<AuthHealth>('/api/auth-health'),
   today: () => cachedRead<TodayPayload>('/api/today'),
   reports: () => cachedRead<{ reports: ReportSummary[] }>('/api/reports').then((r) => r.reports),
   report: (date: string) => cachedRead<ReportPayload>(`/api/reports/${encodeURIComponent(date)}`),

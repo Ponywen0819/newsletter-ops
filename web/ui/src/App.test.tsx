@@ -224,7 +224,11 @@ describe('heartbeat 與快取', () => {
     act(() => void document.dispatchEvent(new Event('visibilitychange'))) // 回到前景：重探，但結果沒變
     await vi.waitFor(() => expect(net.calls.filter((c) => c.path === '/api/heartbeat').length).toBe(2))
     expect(net.calls.filter((c) => c.path === '/api/today')).toHaveLength(1)
-    expect(net.calls.slice(0, 3).map((c) => c.path).filter((p) => p !== '/api/session')).toEqual(['/api/heartbeat', '/api/today'])
+    // session 與 auth-health 是載入時各問一次的（橫幅用），不在這個測試要看的探測／快取順序裡
+    expect(net.calls.slice(0, 4).map((c) => c.path).filter((p) => p !== '/api/session' && p !== '/api/auth-health')).toEqual([
+      '/api/heartbeat',
+      '/api/today',
+    ])
   })
 
   it('連不上：直接顯示快取；伺服器回來、回到前景後換成最新的', async () => {
