@@ -20,7 +20,9 @@ exit code：0 成功
 認證：只用 OAuth（訂閱額度），**不支援 API key**。token 來源見 auth_store.py：/auth 頁面存的，或環境變數
 CLAUDE_CODE_OAUTH_TOKEN；都沒有就以 exit 2 結束，不退回本機登入。環境裡的 ANTHROPIC_API_KEY 等
 優先序高於 OAuth 的來源會先被移除，否則 claude CLI 會優先用 key 而悄悄開始計費。
---auth-check：只做一次最小呼叫驗證 token，stdout 印一行 JSON（ok / kind / message / source）；
+--auth-check：只做一次最小呼叫驗證 token，stdout 印一行 JSON（ok / kind / message / source / api_key_source）；
+api_key_source 是 CLI 在 init 訊息回報的 apiKeySource：none＝實際沒用 API key；不是 none（例如 ANTHROPIC_API_KEY）就算
+失敗（kind: api_key，exit 1），因為呼叫成功本身分不出是 OAuth 還是悄悄走了 API key 計費。
 web.py 用它驗證貼上的 token。--token-from-env 只用環境變數 CLAUDE_CODE_OAUTH_TOKEN（驗證尚未儲存的候選 token）。
 用量寫進 logs/metrics/<date>.jsonl（stage: claude, runner: sdk），遵守 debug 開關
 （NEWSLETTER_DEBUG=1 或 config.json 的 debug），label 沿用 NEWSLETTER_RUN_LABEL。
@@ -68,6 +70,7 @@ class Usage:
         self.models: dict[str, int] = {}
         self.error: str | None = None       # AssistantMessage.error：authentication_failed / rate_limit ...
         self.error_text: str = ""           # 帶著 error 的那則訊息的文字（CLI 產生的說明）
+        self.api_key_source: str | None = None  # init 訊息的 apiKeySource：none＝沒用 API key，否則是來源（如 ANTHROPIC_API_KEY）
         self._pending: dict[str, tuple[str, float]] = {}
         self._seen: set[str] = set()
 
@@ -75,6 +78,9 @@ class Usage:
         now = time.monotonic() if now is None else now
         if isinstance(msg, sdk.ResultMessage):
             self.result = msg
+            return
+        if isinstance(msg, sdk.SystemMessage) and msg.subtype == "init":
+            self.api_key_source = msg.data.get("apiKeySource")
             return
         if not isinstance(msg, (sdk.AssistantMessage, sdk.UserMessage)) or not isinstance(msg.content, list):
             return
@@ -165,7 +171,9 @@ def pick_auth() -> auth_store.Auth | None:
 
 
 async def probe(token: str) -> dict:
-    """用 token 做一次最小的呼叫：不載入 skill、不開任何工具、只一個回合。回傳 {ok, kind, message}。"""
+    """用 token 做一次最小的呼叫：不載入 skill、不開任何工具、只一個回合。回傳 {ok, kind, message, api_key_source}。
+    api_key_source 是 CLI 自己回報的（init 訊息）：不是 none 就代表 SDK 實際在用 API key，不管呼叫成不成功都算失敗
+    （kind: api_key）——光是「呼叫成功」分不出是 OAuth 還是悄悄走了 API key 計費。"""
     options = sdk.ClaudeAgentOptions(
         cwd=ROOT, setting_sources=[], tools=[], max_turns=1, permission_mode="dontAsk",
         env={auth_store.TOKEN_ENV: token},
@@ -176,11 +184,14 @@ async def probe(token: str) -> dict:
             usage.feed(msg)
     except Exception as exc:  # noqa: BLE001  錯誤結果會在 ResultMessage 之後丟 ResultError，內容已在 usage 裡
         error = f"{type(exc).__name__}: {exc}"
-    r = usage.result
+    r, src = usage.result, usage.api_key_source
+    if src not in (None, "none"):  # None＝沒收到 init（呼叫在啟動前就失敗），沒有證據就不亂判
+        return {"ok": False, "kind": "api_key", "api_key_source": src,
+                "message": f"SDK 正在使用 API key（來源：{src}），不是 OAuth 訂閱額度"}
     if r is not None and not r.is_error and r.subtype == "success":
-        return {"ok": True, "kind": "ok", "message": "驗證通過"}
+        return {"ok": True, "kind": "ok", "message": "驗證通過", "api_key_source": src}
     message = usage.error_text or (r.result if r is not None else None) or error or "沒有收到結果"
-    return {"ok": False, "kind": usage.failure_kind(), "message": message.replace(token, "***")}
+    return {"ok": False, "kind": usage.failure_kind(), "message": message.replace(token, "***"), "api_key_source": src}
 
 
 def auth_check(from_env: bool) -> int:
@@ -441,13 +452,25 @@ def selftest_auth() -> None:
     auth_msg = sdk.AssistantMessage(content=[sdk.TextBlock(f"Failed to authenticate: {secret}")],
                                     model="<synthetic>", error="authentication_failed")
     with mock.patch.object(sdk, "query", stream(ok)):
-        assert asyncio.run(probe(secret)) == {"ok": True, "kind": "ok", "message": "驗證通過"}
+        assert asyncio.run(probe(secret)) == {"ok": True, "kind": "ok", "message": "驗證通過", "api_key_source": None}
     with mock.patch.object(sdk, "query", stream(auth_msg, bad, raises=RuntimeError("ResultError"))):
         res = asyncio.run(probe(secret))
     assert res["ok"] is False and res["kind"] == "auth" and secret not in res["message"] and "***" in res["message"], res
     with mock.patch.object(sdk, "query", stream(raises=RuntimeError("spawn failed"))):
         res = asyncio.run(probe(secret))
-    assert res == {"ok": False, "kind": "other", "message": "RuntimeError: spawn failed"}, res
+    assert res == {"ok": False, "kind": "other", "message": "RuntimeError: spawn failed", "api_key_source": None}, res
+
+    # apiKeySource：init 說沒用 API key（none）才算通過；用了 API key 就算呼叫成功也是失敗
+    def init(src):
+        return sdk.SystemMessage(subtype="init", data={"apiKeySource": src})
+    with mock.patch.object(sdk, "query", stream(init("none"), ok)):
+        assert asyncio.run(probe(secret)) == {"ok": True, "kind": "ok", "message": "驗證通過", "api_key_source": "none"}
+    with mock.patch.object(sdk, "query", stream(init("ANTHROPIC_API_KEY"), ok)):
+        res = asyncio.run(probe(secret))
+    assert res["ok"] is False and res["kind"] == "api_key" and res["api_key_source"] == "ANTHROPIC_API_KEY", res
+    with mock.patch.object(sdk, "query", stream(init("none"), auth_msg, bad, raises=RuntimeError("ResultError"))):
+        res = asyncio.run(probe(secret))  # 認證失敗但沒用 API key：照原本分類，並帶出 apiKeySource
+    assert res["kind"] == "auth" and res["api_key_source"] == "none", res
 
 
 def selftest_main() -> None:
