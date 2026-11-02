@@ -15,7 +15,7 @@ src/newsletter_notify/
 uv run newsletter-render | uv run newsletter-send   # 寄出當日 email
 ```
 
-`render_email.py` 的 stdout 是一行 JSON，`send_email.py` 從 stdin 讀它；排程（根目錄的 `run_daily.sh`）先收進變數再餵給 `send_email.py`。
+`render_email.py` 的 stdout 是一行 JSON，`send_email.py` 從 stdin 讀它；排程（`newsletter-run`，見 [pipeline/README.md](../pipeline/README.md)）把前者的 stdout 原封不動餵給 `send_email.py`。
 
 `send_email.py` 讀環境變數 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（Google 帳號的應用程式密碼，需先開兩步驟驗證）、
 `NEWSLETTER_MAIL_TO`（逗號分隔，沒設就寄給自己）。加 `--dry-run` 只印標頭不寄。

@@ -21,15 +21,14 @@
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
 import sys
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from newsletter_shared.lock import locked
 from newsletter_shared.paths import ROOT
 
 MARK_RE = re.compile(r"<!--\s*mark:\s*([+-]{0,2})\s*uid=([0-9a-f]{16})\s*-->")
@@ -93,19 +92,9 @@ def read_feedback(path: Path) -> dict[str, dict]:
     return rows
 
 
-@contextmanager
-def locked(path: Path):
-    """跨程序的獨占鎖。web 與 collect 都是「先讀再 append」，要排隊才不會依過期的狀態做決定。
-    不可巢狀使用（flock 對同一支程式裡的第二次開檔也會擋）。"""
-    lock = path.parent / (path.name + ".lock")
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    with lock.open("a") as fh:  # 關檔時自動解鎖
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        yield
-
-
 def append_rows(path: Path, rows: list[dict]) -> None:
-    """只往後加，從不改寫舊內容。呼叫端要在 locked(path) 裡。"""
+    """只往後加，從不改寫舊內容。web 與 collect 都是「先讀再 append」，呼叫端要在 lock.locked(path) 裡排隊，
+    才不會依過期的狀態做決定。"""
     data = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("ab+") as fh:

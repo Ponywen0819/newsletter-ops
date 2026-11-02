@@ -40,6 +40,8 @@
 !/notify/src/**/*.py
 !/web/server/pyproject.toml
 !/web/server/src/**/*.py
+!/pipeline/pyproject.toml
+!/pipeline/src/**/*.py
 
 # Web 前端（Vite + React）：只放行原始碼、設定與鎖檔
 !/web/ui/index.html
