@@ -13,6 +13,8 @@ monorepo，用 [uv workspace](https://docs.astral.sh/uv/concepts/projects/worksp
 shared ◄── agent ◄── web
    ▲
    └────── notify
+
+pipeline ──▶ shared、agent、notify    只負責編排每日流程；沒有任何成員依賴它
 ```
 
 | 模組 | 職責 | 文件 |
@@ -21,6 +23,7 @@ shared ◄── agent ◄── web
 | [agent/](agent/) | 核心：抓取 → 整理 → Claude 寫報告。唯一的第三方依賴 `claude-agent-sdk` 在這裡，**不認得 email** | [README](agent/README.md) |
 | [notify/](notify/) | 外圍：報告 → email → 寄出；之後加別的通知管道放這裡 | [README](notify/README.md) |
 | [web/](web/) | 晨報網頁：後端 JSON API（`server/`）＋前端 Vite + React PWA（`ui/`）；依賴 `agent` 只為了驗證 OAuth token | [README](web/README.md)、[前端](web/ui/README.md) |
+| [pipeline/](pipeline/) | 每日流程編排：fetch → agent → render → send 四步串起來，整條握一把防重疊的鎖；排程與手動補跑都走它 | [README](pipeline/README.md) |
 
 分工原則：**確定性的部分交給 Python，判斷性的部分交給 Claude。**
 抓取、去重、排序、arXiv 會議判斷、HTML 版型全部可重現；挑選重點與條列改寫由 Claude
@@ -29,12 +32,12 @@ shared ◄── agent ◄── web
 ### 目錄
 
 ```
-shared/ agent/ notify/ web/    四個模組，內容見上表；已知問題在各模組的 ISSUES.md
+shared/ agent/ notify/ web/ pipeline/    五個模組，內容見上表；已知問題在各模組的 ISSUES.md
 config/interests.md            關注範圍（自然語言），報告判讀的依據
 config/config.json             執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json        來源清單，一個主題一個檔
 .claude/skills/news-digest/    報告撰寫的 skill，隨專案進版控
-run_daily.sh                   排程入口：載入 env 檔 → 抓取 → agent → render → send，失敗留 log、exit 非 0
+run_daily.sh                   排程入口：補 PATH、載入 env 檔、輸出導向 log，然後 exec newsletter-run（四步與鎖都在 pipeline/）
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume
 deploy/                        部署說明（README）、systemd 單元、cloudflared 設定、env 範本；check_boundaries.py 依賴方向檢查
 pyproject.toml, uv.lock        workspace 的根（只列成員）與整個 workspace 的鎖檔；.python-version 固定直譯器版本
@@ -47,6 +50,7 @@ reports/<date>.html            email 版（newsletter-render 產生）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
+state/pipeline.lock            newsletter-run 的防重疊鎖（空檔，只是鎖的載體）
 logs/<YYYY-MM>.log             排程執行紀錄
 ```
 
@@ -71,6 +75,7 @@ uv run newsletter-fetch --dry-run     # 只測來源連通性
 uv run newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run newsletter-agent               # Claude 依 skill 寫 reports/<date>.md 並驗收（需要 OAuth token）
 uv run newsletter-render | uv run newsletter-send   # 轉成 email 並寄出
+uv run newsletter-run                 # 整條流程一次跑完（抓取 → agent → render → 寄信），排程跑的就是它；有防重疊的鎖
 (cd web/ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
 uv run newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
 uv run newsletter-feedback            # 收集報告裡填的標記
@@ -86,13 +91,15 @@ uv run newsletter-feedback            # 收集報告裡填的標記
 0 8 * * * $HOME/newsletter-ops/run_daily.sh
 ```
 
-它依序跑 `newsletter-fetch --no-report` → `agent_run.py` → `render_email.py` → `send_email.py`（`render_email.py` 的 stdout 是一行 JSON，
-先收進變數再餵給 `send_email.py`）。任一步失敗就停下、以該步的 exit code 結束（`agent_run.py` 的 1～6 見 [agent/README.md](agent/README.md)「exit code」），
-並在 `logs/<YYYY-MM>.log` 留一行失敗紀錄。額外參數（如 `--lookback 72`）轉給 `newsletter-fetch`。
+它只負責讓環境對：補 PATH、載入 env 檔、把輸出導向 `logs/<YYYY-MM>.log`，然後 `exec uv run --locked newsletter-run`。
+`newsletter-run`（[pipeline/](pipeline/README.md)）依序跑 `newsletter-fetch --no-report` → `newsletter-agent` → `newsletter-render` → `newsletter-send`
+（render 的 stdout 是一行 JSON，原封不動餵給 send）。任一步失敗就停下、以該步的 exit code 結束（`newsletter-agent` 的 1～6 見 [agent/README.md](agent/README.md)「exit code」），
+並在 log 留一行失敗紀錄。額外參數（如 `--lookback 72`）轉給 `newsletter-fetch`。
 先由 `newsletter-fetch` 抓好當日 curated JSON，agent 讀到的就是今天的檔，不必自己再抓一次。
 
-內部用 `uv run --locked` 執行，並替 cron 精簡的 PATH 補上 uv 常見的安裝位置（`~/.local/bin`、`~/.cargo/bin`、Homebrew）。
-`--locked` 讓鎖檔與 `pyproject.toml` 對不上時直接失敗，不會在排程裡自己改鎖檔。
+整條流程握著 `state/pipeline.lock`：手動補跑撞上排程（或反過來）時，後到的那條不排隊，直接 exit 75 放棄，log 留一行說明。
+
+`--locked` 讓鎖檔與 `pyproject.toml` 對不上時直接失敗，不會在排程裡自己改鎖檔。PATH 補的是 uv 常見的安裝位置（`~/.local/bin`、`~/.cargo/bin`、Homebrew）。
 
 機密從 env 檔載入（預設 `~/.config/newsletter-ops/env`，`NEWSLETTER_ENV_FILE` 可改，範本在 `deploy/newsletter.env.example`），
 權限必須是 `600`，太鬆會拒絕執行（exit 78）。env 檔是 shell 語法，值含空格（Gmail 應用程式密碼）要加引號。

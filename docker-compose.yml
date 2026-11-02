@@ -1,6 +1,6 @@
 # 三個容器、一個 volume：
 #   web         晨報網頁（沒有登入；不 publish 任何 port，只有這個 compose 網路上的容器連得到）
-#   scheduler   每天 08:00 跑 run_daily.sh（抓取 → agent 寫報告 → 寄信）
+#   scheduler   每天 08:00 跑 run_daily.sh → newsletter-run（抓取 → agent 寫報告 → 寄信；整條握一把防重疊的鎖）
 #   cloudflared 出站連到 Cloudflare，再轉給 http://web:8787；Access 是唯一的防線
 # 機密放 .env（從 .env.example 複製，chmod 600，不進版控）。
 

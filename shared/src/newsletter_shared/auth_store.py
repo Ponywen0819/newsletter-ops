@@ -13,7 +13,7 @@ token 只有一個來源：web.py 的 /auth 頁面（只服務本機）貼上後
 Claude CLI 自己的優先順序是 ANTHROPIC_API_KEY 高於 CLAUDE_CODE_OAUTH_TOKEN，非互動模式只要有 key 就用 key，
 所以環境裡留著 key 會悄悄開始計費。scrub_environ() 把「排在 OAuth token 前面的來源」整批移掉。
 
-token 只放在 state/oauth_token.json（權限 600，以暫存檔＋os.replace 原子更新，與 feedback 共用檔案鎖）。
+token 只放在 state/oauth_token.json（權限 600，以暫存檔＋os.replace 原子更新，用 lock.py 的檔案鎖排隊）。
 .gitignore 是白名單模式，這個檔案預設不進版控。Auth 的 repr、status() 都不含 token（status 最多給尾 4 碼）。
 只用 stdlib。
 """
@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, MutableMapping
 
-from newsletter_shared import feedback  # 只借用 feedback.locked（跨程序檔案鎖）
+from newsletter_shared import lock
 from newsletter_shared.paths import ROOT
 
 TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
@@ -84,7 +84,7 @@ def save(token: str, path: Path, now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
     payload = json.dumps({"token": token, "saved_at": now.isoformat()})
     path.parent.mkdir(parents=True, exist_ok=True)
-    with feedback.locked(path):
+    with lock.locked(path):
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")  # mkstemp 建的檔是 600
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -113,7 +113,7 @@ def load(path: Path) -> dict | None:
 
 
 def delete(path: Path) -> bool:
-    with feedback.locked(path):
+    with lock.locked(path):
         try:
             path.unlink()
         except FileNotFoundError:

@@ -1,0 +1,24 @@
+[project]
+name = "newsletter-pipeline"
+version = "0.1.0"
+description = "newsletter-ops 的每日流程編排：抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡"
+requires-python = ">=3.10"
+# 純標準庫。四個步驟都用 `python -m` 另開程序跑，所以不 import agent／notify，但執行時它們都得裝著（所以宣告依賴）。
+# 站在依賴圖最上層：沒有任何成員可以依賴它（deploy/check_boundaries.py 會檢查）。
+dependencies = [
+    "newsletter-shared",
+    "newsletter-agent",
+    "newsletter-notify",
+]
+
+[project.scripts]
+newsletter-run = "newsletter_pipeline.daily:main"
+
+[tool.uv.sources]
+newsletter-shared = { workspace = true }
+newsletter-agent = { workspace = true }
+newsletter-notify = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12"]
+build-backend = "uv_build"

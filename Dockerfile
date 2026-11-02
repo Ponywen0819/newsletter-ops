@@ -42,11 +42,13 @@ COPY --chown=app:app shared/pyproject.toml ./shared/pyproject.toml
 COPY --chown=app:app agent/pyproject.toml ./agent/pyproject.toml
 COPY --chown=app:app notify/pyproject.toml ./notify/pyproject.toml
 COPY --chown=app:app web/server/pyproject.toml ./web/server/pyproject.toml
+COPY --chown=app:app pipeline/pyproject.toml ./pipeline/pyproject.toml
 RUN uv sync --locked --no-install-workspace
 COPY --chown=app:app shared ./shared
 COPY --chown=app:app agent ./agent
 COPY --chown=app:app notify ./notify
 COPY --chown=app:app web/server ./web/server
+COPY --chown=app:app pipeline ./pipeline
 RUN uv sync --locked
 
 COPY --chown=app:app run_daily.sh ./
