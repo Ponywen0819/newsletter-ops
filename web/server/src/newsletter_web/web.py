@@ -27,7 +27,7 @@ GET 只畫確認頁（信箱的安全掃描會自動開連結，所以 GET 絕�
 回饋規則：只有 `+`（👍）、`-`（👎）兩級；再按一次同一顆＝取消，按另一顆＝覆蓋。
 一律 append 一行到 feedback.jsonl，以同一 uid 的最後一筆為準；取消寫成 mark ""。
 欄位與 feedback.py 相同（共用 feedback.build_row）。
-寫入與 feedback.py 的 collect() 共用 feedback.locked / append_rows：都只 append，可以同時跑。
+寫入與 feedback.py 的 collect() 共用 lock.locked / feedback.append_rows：都只 append，可以同時跑。
 
 不做登入：預設只 bind 127.0.0.1，對外交給 Cloudflare Tunnel + Access。
 POST 只收 Content-Type: application/json（跨站表單送不出這種請求，順便擋 CSRF）。
@@ -65,7 +65,7 @@ from typing import Callable, Iterator, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from newsletter_shared import auth_store, feedback, report_data
+from newsletter_shared import auth_store, feedback, lock, report_data
 from newsletter_shared.paths import ROOT
 
 DEFAULT_HOST = "127.0.0.1"
@@ -224,7 +224,7 @@ class Site:
         """uid → 目前的標記（'+' / '-'；沒標或已取消的不在裡面）。"""
         if not self.feedback_path.exists():
             return {}
-        with feedback.locked(self.feedback_path):  # 避免讀到另一個程序寫到一半的列
+        with lock.locked(self.feedback_path):  # 避免讀到另一個程序寫到一半的列
             rows = feedback.read_feedback(self.feedback_path)
         return {uid: m for uid, row in rows.items() if (m := level(row.get("mark", "")))}
 
@@ -291,7 +291,7 @@ class Site:
         if date is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "任何一份報告裡都找不到這個 uid")
         row = feedback.build_row(uid, mark, f"{date}.md", self._curated_item(date, uid))
-        with feedback.locked(self.feedback_path):
+        with lock.locked(self.feedback_path):
             feedback.append_rows(self.feedback_path, [row])
         return row
 
