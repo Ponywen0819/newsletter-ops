@@ -41,16 +41,16 @@ HTML 回應帶 Content-Security-Policy（只許同源的腳本與樣式），前
   3. 沒有 Cf-*、X-Forwarded-*、X-Real-IP、Forwarded、Via、Cdn-Loop 等代理標頭
   4. 有 Origin 的話，也必須是本機
 cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以光看來源位址擋不住 Tunnel，要靠 2、3。
-遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth，
-或直接在 host 上設環境變數 CLAUDE_CODE_OAUTH_TOKEN。
+遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth；
+Docker 部署裡請求不是從 loopback 來，改在容器裡對 127.0.0.1 送（見 deploy/README.md）。
+token 只存在 /auth 存的檔，**不讀環境變數 CLAUDE_CODE_OAUTH_TOKEN**（理由見 shared 的 auth_store.py）。
 貼上的 token 先交給 `newsletter-agent --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
 token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK（由 newsletter-agent 帶進來），用 `uv run newsletter-web` 啟動就有。
 
 定時驗證：啟動時與之後每 --auth-check-interval 秒（預設 3600，環境變數 NEWSLETTER_AUTH_CHECK_INTERVAL，0＝不定時驗證），
-背景用目前的認證來源（儲存的 token > 這個程序自己環境裡的 CLAUDE_CODE_OAUTH_TOKEN，排程的環境不同就不準）跑一次 `--auth-check`，
-結果只放在記憶體（重啟後第一輪就補上）。
+背景用儲存的 token 跑一次 `--auth-check`（沒有儲存的 token 就不呼叫），結果只放在記憶體（重啟後第一輪就補上）。
 每次驗證都是一次真的呼叫，用掉極少的訂閱額度；手動「測試連線」、貼上新 token 成功也會更新這個結果。
-/api/auth-health 的 state：ok／expiring（通過，但依一年效期推算快到期）／missing（沒有任何認證來源）／
+/api/auth-health 的 state：ok／expiring（通過，但依一年效期推算快到期）／missing（沒有儲存的 token）／
 invalid（kind 是 auth 或 api_key：要重新授權）／unknown（無法確認：額度用完、逾時、尚未檢查…，不代表授權失效）。
 """
 from __future__ import annotations
@@ -341,8 +341,8 @@ class Site:
             raise self._failure(result)
 
     def check_now(self) -> None:
-        """用目前的認證來源（儲存的 token > 環境變數）驗證一次，結果記在 last_check。沒有來源就清掉。"""
-        auth = auth_store.resolve(os.environ, self.token_path)
+        """用儲存的 token 驗證一次，結果記在 last_check。沒有儲存的 token 就清掉。"""
+        auth = auth_store.resolve(self.token_path)
         if auth is None:
             self.last_check = None
         elif self._check_lock.acquire(blocking=False):  # 有人正在手動驗證：這輪略過，下一輪再說
@@ -364,7 +364,7 @@ class Site:
 
     def auth_health(self) -> dict:
         """給所有人看的粗略狀態；不含驗證訊息與 token。state 的意思見模組說明。"""
-        if auth_store.resolve(os.environ, self.token_path) is None:
+        if auth_store.resolve(self.token_path) is None:
             return {"state": "missing", "kind": "missing", "checked_at": None}
         last = self.last_check
         if last is None:
@@ -394,7 +394,7 @@ class Site:
     def revoke_token(self) -> dict:
         """只刪掉這裡儲存的檔；token 在 Anthropic 端仍然有效。"""
         removed = auth_store.delete(self.token_path)
-        self.last_check = None  # 驗的是剛刪掉的那個；若還有環境變數的 token，下一輪定時驗證會補上
+        self.last_check = None  # 驗的是剛刪掉的那個
         return {"message": "已刪除儲存的 token" if removed else "本來就沒有儲存的 token", "status": self.auth_status()}
 
 
@@ -873,7 +873,7 @@ def selftest_auth() -> None:
 
             # 本機：session、狀態、頁面
             assert get("/api/session") == (200, {"local": True})
-            assert get("/api/auth") == (200, {"state": "missing", "env_token": False})
+            assert get("/api/auth") == (200, {"state": "missing"})
             assert req("GET", "/auth")[0] == 200
 
             # 非本機（公開網域的 Host、代理標頭、跨站 Origin）：/auth 與 /api/auth* 全部是 404，session 說不是本機
@@ -981,26 +981,24 @@ def selftest_auth() -> None:
             assert post("/api/auth/test", {})[0] == 404
             assert get("/api/auth-health")[1] == missing
 
-            # 定時驗證：用目前的認證來源（儲存的 token > 環境變數）驗一次；沒有來源就不呼叫
+            # 定時驗證：用儲存的 token 驗一次；沒有就不呼叫。環境變數裡的 OAuth token 不算來源
             n = len(checked)
-            site.check_now()
-            assert len(checked) == n and site.last_check is None
             env_token = "env-" + "e" * 20
             with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}):
-                assert get("/api/auth-health")[1]["kind"] == "unchecked"
                 site.check_now()
-                assert checked[-1] == env_token and get("/api/auth-health")[1]["state"] == "ok"
-                auth_store.save(secret, site.token_path)
+                assert len(checked) == n and site.last_check is None
+                assert get("/api/auth-health")[1] == missing and get("/api/auth") == (200, {"state": "missing"})
+            auth_store.save(secret, site.token_path)
+            assert get("/api/auth-health")[1]["kind"] == "unchecked"
+            site.check_now()
+            assert checked[-1] == secret and get("/api/auth-health")[1]["state"] == "ok"
+            n = len(checked)
+            assert site._check_lock.acquire(blocking=False)  # 使用者正在手動驗證：這輪略過
+            try:
                 site.check_now()
-                assert checked[-1] == secret  # 儲存的優先於環境變數
-                n = len(checked)
-                assert site._check_lock.acquire(blocking=False)  # 使用者正在手動驗證：這輪略過
-                try:
-                    site.check_now()
-                finally:
-                    site._check_lock.release()
-                assert len(checked) == n
-            auth_store.delete(site.token_path)
+            finally:
+                site._check_lock.release()
+            assert len(checked) == n
 
             # 迴圈：先驗一次、之後每隔一段時間；某一輪丟例外也不會停
             stop, calls = threading.Event(), []
@@ -1014,11 +1012,12 @@ def selftest_auth() -> None:
                 return {"ok": True, "kind": "ok", "message": ""}
 
             site.checker = flaky
-            with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}), mock.patch.object(traceback, "print_exc"):
+            with mock.patch.object(traceback, "print_exc"):
                 t = threading.Thread(target=site.monitor, args=(0.01, stop))
                 t.start()
                 t.join(10)
-            assert not t.is_alive() and calls == [env_token] * 3
+            assert not t.is_alive() and calls == [secret] * 3
+            auth_store.delete(site.token_path)
 
             # 完整 token 不能出現在任何回應裡
             assert not any(secret in text or other in text for text in seen)

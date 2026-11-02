@@ -74,10 +74,9 @@ export interface Session {
 }
 
 export type AuthStatus =
-  | { state: 'missing'; env_token: boolean }
+  | { state: 'missing' }
   | {
       state: 'ok' | 'expiring' | 'expired'
-      env_token: boolean
       /** token 的尾 4 碼；完整的 token 不會回傳 */
       tail: string
       saved_at: string

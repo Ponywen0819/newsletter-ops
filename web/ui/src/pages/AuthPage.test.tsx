@@ -7,9 +7,9 @@ import { mockFetch } from '../test/fetchMock'
 import type { AuthStatus } from '../types'
 
 const TOKEN = 'sk-ant-oat01-' + 'Ab1'.repeat(14)
-const missing: AuthStatus = { state: 'missing', env_token: false }
+const missing: AuthStatus = { state: 'missing' }
 const saved = (over: Partial<Extract<AuthStatus, { tail: string }>> = {}): AuthStatus => ({
-  state: 'ok', env_token: false, tail: 'Ab1', saved_at: '2026-10-02', expires_at: '2027-10-02', days_left: 365, ...over,
+  state: 'ok', tail: 'Ab1', saved_at: '2026-10-02', expires_at: '2027-10-02', days_left: 365, ...over,
 })
 
 function open(routes: Parameters<typeof mockFetch>[0], local = true) {
@@ -40,11 +40,6 @@ describe('/auth', () => {
     expect(screen.getByLabelText('OAuth token')).toHaveAttribute('type', 'password')
     expect(screen.getByRole('link', { name: 'Claude 授權' })).toBeInTheDocument()
     expect(document.title).toBe('Claude 授權')
-  })
-
-  it('環境有 token、頁面沒存：提示排程用的是環境變數', async () => {
-    open({ 'GET /api/auth': () => ({ json: { state: 'missing', env_token: true } }) })
-    expect(await screen.findByText(/排程若也設了同一個環境變數/)).toBeInTheDocument()
   })
 
   it('貼上有效 token：送出、狀態更新（只有尾碼）、清空輸入框', async () => {

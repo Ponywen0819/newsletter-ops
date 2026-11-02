@@ -89,7 +89,7 @@ describe('不經過閘門的請求：行為不變', () => {
     const net = mockFetch({
       'GET /api/heartbeat': () => ({ status: 502, json: {} }),
       'GET /api/session': () => ({ json: { local: false } }),
-      'GET /api/auth': () => ({ json: { state: 'missing', env_token: false } }),
+      'GET /api/auth': () => ({ json: { state: 'missing' } }),
       'GET /api/feedback/abc': () => ({ json: { uid: 'abc' } }),
       'POST /api/feedback': () => ({ json: { uid: 'abc', mark: '+' } }),
     })

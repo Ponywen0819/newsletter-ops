@@ -60,7 +60,7 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run newsletter-fetch --no-report
 
 只負責 token 的儲存與來源解析，`agent`（`agent_run`）與 `web`（`/auth` 頁面）共用。使用政策（只走訂閱額度、不使用 API key）與取得方式見 [agent/README.md](../agent/README.md)「認證」。
 
-- **來源的優先序**：`state/oauth_token.json`（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑，權限 600、不進版控）→ 環境變數 `CLAUDE_CODE_OAUTH_TOKEN`。
+- **來源只有一個**：`state/oauth_token.json`（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑，權限 600、不進版控）。不讀環境變數 `CLAUDE_CODE_OAUTH_TOKEN`，理由見 [agent/README.md](../agent/README.md)「認證」。
 
 ```bash
 uv run python -m newsletter_shared.auth_store --selftest

@@ -96,7 +96,7 @@ uv run newsletter-feedback            # 收集報告裡填的標記
 
 機密從 env 檔載入（預設 `~/.config/newsletter-ops/env`，`NEWSLETTER_ENV_FILE` 可改，範本在 `deploy/newsletter.env.example`），
 權限必須是 `600`，太鬆會拒絕執行（exit 78）。env 檔是 shell 語法，值含空格（Gmail 應用程式密碼）要加引號。
-排程需要 OAuth token（環境變數 `CLAUDE_CODE_OAUTH_TOKEN`，或 `/auth` 頁面存的檔，見 [agent/README.md](agent/README.md)「認證」）；兩者都沒有時 `agent_run.py` 直接 exit 2。
+排程需要 OAuth token，只讀 `/auth` 頁面存的檔（`state/oauth_token.json`，見 [agent/README.md](agent/README.md)「認證」），不讀環境變數；沒有時 `agent_run.py` 直接 exit 2。
 macOS 的 cron 需要「完整磁碟取用權」，或改用 launchd。
 
 ## 讓它跟著你的研究重心走
