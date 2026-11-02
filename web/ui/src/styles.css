@@ -114,6 +114,27 @@ body {
   cursor: pointer;
 }
 
+/* 授權橫幅：有問題才出現（壞＝紅、可能有問題＝黃）。顏色寫死，亮暗主題都夠對比（同離線橫幅） */
+.auth-bar {
+  box-sizing: border-box;
+  padding: 8px var(--gutter);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+.auth-bar-warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+.auth-bar-bad {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.auth-bar a {
+  margin-left: 8px;
+  color: inherit;
+  text-decoration: underline;
+}
+
 /* 標頭列：白底、下緣一條細線，滿版（卡片才受 --content-w 限制） */
 header {
   background: var(--card);

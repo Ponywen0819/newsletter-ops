@@ -85,6 +85,16 @@ export type AuthStatus =
       days_left: number
     }
 
+/** 後端定時驗證的最近結果（GET /api/auth-health，所有人都讀得到，所以不含驗證訊息） */
+export interface AuthHealth {
+  /** ok／expiring（通過，但依一年效期推算快到期）／missing（沒有認證來源）／invalid（要重新授權）／unknown（無法確認，不代表失效） */
+  state: 'ok' | 'expiring' | 'missing' | 'invalid' | 'unknown'
+  /** 最近一次驗證的分類：ok／auth／api_key／quota／timeout／env／other；另有 missing、unchecked（還沒驗證過） */
+  kind: string
+  /** 最近一次驗證的時間（ISO）；還沒驗證過是 null */
+  checked_at: string | null
+}
+
 export interface AuthResult {
   message: string
   status: AuthStatus
