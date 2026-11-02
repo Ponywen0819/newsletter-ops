@@ -7,7 +7,7 @@
   1. 成員原始碼的 `import newsletter_x` 只能是自己，或下表允許的成員
   2. 成員 pyproject.toml 宣告的 newsletter-* 依賴要與下表完全一致
   3. `__file__` 只准出現在 shared 的 paths.py（repo 根只從那裡取）
-  4. 四個成員目錄都要存在；repo 根不得有 src/；根 pyproject.toml 只是 workspace 的根（沒有 [project]、members 與成員一致）
+  4. 五個成員目錄都要存在；repo 根不得有 src/；根 pyproject.toml 只是 workspace 的根（沒有 [project]、members 與成員一致）
 只用標準庫。
 """
 from __future__ import annotations
@@ -26,6 +26,7 @@ MEMBERS = {
     "agent": (ROOT / "agent", {"shared"}),
     "notify": (ROOT / "notify", {"shared"}),
     "web": (ROOT / "web" / "server", {"shared", "agent"}),
+    "pipeline": (ROOT / "pipeline", {"shared", "agent", "notify"}),  # 編排；沒有人可以依賴它
 }
 
 

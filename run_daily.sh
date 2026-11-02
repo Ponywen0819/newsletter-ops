@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# 排程入口（systemd timer / cron 都呼叫這支）。每日依序：
-#   1. newsletter-fetch --no-report      抓取 → data/curated/<date>.json
-#   2. newsletter-agent        Claude Agent SDK 依 news-digest skill 寫 reports/<date>.md，並驗收（有更新、格式正確）
-#   3. newsletter-render       reports/<date>.md → reports/<date>.html；stdout 是一行 JSON
-#   4. newsletter-send         讀上一步的 JSON，寄出
-# 任一步失敗就停下並以該步的 exit code 結束（systemd 會標成 failed），過程全進 logs/<YYYY-MM>.log。
-# 機密從 env 檔載入，預設 ~/.config/newsletter-ops/env（NEWSLETTER_ENV_FILE 可改），權限必須是 600。
-# 額外參數（如 --lookback 72）會轉給 newsletter-fetch。
+# 排程入口（systemd timer / cron / docker 的 scheduler 都呼叫這支）。它只負責讓環境對，然後交給 newsletter-run：
+#   1. 補上 uv 常見的 PATH（cron／systemd 的 PATH 很精簡）
+#   2. 載入機密：env 檔預設 ~/.config/newsletter-ops/env（NEWSLETTER_ENV_FILE 可改），權限必須是 600
+#   3. 輸出全導向 logs/<YYYY-MM>.log，再 exec uv run newsletter-run
+# 每日四步（fetch → agent → render → send）、失敗語意與防重疊的鎖都在 Python：pipeline/src/newsletter_pipeline/daily.py。
+# 額外參數（如 --lookback 72）會轉給 newsletter-fetch。exit code 就是失敗那一步的；75 是另一條 pipeline 正在跑。
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p logs
@@ -27,20 +25,8 @@ if [ -e "$ENV_FILE" ]; then
   set +a
 fi
 
-# 之後的輸出全進 log。不能用「{ ...; } >> log || ...」：bash 會在 || 左邊的群組裡停用 set -e，
-# 失敗的步驟會被吞掉、整支腳本照樣 exit 0。改用 exec 導向 + ERR trap，set -e 才會生效。
+# 之後的輸出全進 log：newsletter-run 的進度行與各步驟的 stdout／stderr 都繼承這個導向。
 exec >> "$LOG" 2>&1
-trap 'status=$?; stamp "失敗，exit $status：$BASH_COMMAND"; exit $status' ERR
 
 # --locked：uv.lock 跟 pyproject.toml 對不上就直接失敗，不要在排程裡自己改鎖檔
-stamp "uv run newsletter-fetch --no-report $*"
-uv run --locked newsletter-fetch --no-report "$@"
-stamp "uv run newsletter-agent"
-uv run --locked newsletter-agent
-stamp "uv run newsletter-render"
-# 不用 render | send：pipefail 下 render 失敗時 send 也會因讀不到 JSON 而崩，
-# 蓋掉 render 的 exit code 並多印一段無關的 traceback。先收進變數，失敗就停在這裡。
-meta=$(uv run --locked newsletter-render)
-stamp "uv run newsletter-send"
-printf '%s\n' "$meta" | uv run --locked newsletter-send
-stamp "完成"
+exec uv run --locked newsletter-run "$@"

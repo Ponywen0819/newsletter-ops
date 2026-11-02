@@ -6,7 +6,7 @@
       uv run python -m newsletter_agent.agent_run --selftest
 
 抓取、寫報告都由 agent 依 SKILL.md 完成，寫完用 newsletter-report-check 驗證格式；本程式負責啟動、記錄用量、
-驗收產出（報告有更新、格式正確）。轉成 email 與寄出不是這裡的事，由 run_daily.sh 接著處理。
+驗收產出（報告有更新、格式正確）。轉成 email 與寄出不是這裡的事，由 newsletter-run（pipeline 成員）接著處理。
 stdout 保持空，所有訊息一律走 stderr（cron 會收進 logs）；--auth-check 例外，它的結果是 stdout 的一行 JSON。
 
 exit code：0 成功
