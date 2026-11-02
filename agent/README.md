@@ -144,6 +144,10 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
 - **為什麼要移除環境變數**：claude CLI 自己的優先順序是 `ANTHROPIC_API_KEY` 高於 OAuth token，非互動模式只要有 key
   就用 key。所以 `agent_run.py` 啟動時會把排在 OAuth 前面的來源（`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、
   `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY`）從環境中移除，並在 stderr 說明。
+- **確認 SDK 實際用哪種認證**：`uv run newsletter-agent --auth-check` 印一行 JSON，`source` 是 token 來源（`stored-token` / `env-token`），
+  `api_key_source` 是 claude CLI 在 init 訊息裡回報的 `apiKeySource`——`none` 表示這次呼叫沒有用 API key（走的是 OAuth token）。
+  不是 `none`（例如 `ANTHROPIC_API_KEY`）就算失敗（`kind: api_key`，exit 1），即使呼叫本身成功也一樣：成功的呼叫分不出是 OAuth 還是悄悄走了 API key 計費。
+  結果範例：`{"ok": true, "kind": "ok", "message": "驗證通過", "api_key_source": "none", "source": "stored-token"}`。
 - **額度用完不會備援**：訂閱有使用額度，用完時晨報以 exit 6 失敗，不會自動換成 API key。
   若帳號開了「額外用量」（[extra usage](https://support.claude.com/en/articles/12429409-extra-usage-for-paid-claude-plans)）
   之類的自動付費設定，額度用完後仍可能產生費用，請到帳號設定確認。
