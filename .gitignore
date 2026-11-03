@@ -51,6 +51,7 @@
 !/web/ui/package-lock.json
 !/web/ui/tsconfig.json
 !/web/ui/vite.config.ts
+!/web/ui/.oxlintrc.json
 !/web/ui/src/**
 !/web/ui/public/**
 

@@ -89,6 +89,7 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     const rect = item.getBoundingClientRect()
     if (rect.top < box.top) nav.scrollTop -= box.top - rect.top
     else if (rect.bottom > box.bottom) nav.scrollTop += rect.bottom - box.bottom
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- activeId 變了要重新對齊
   }, [activeId, navRef])
 
   return { activeId, goTo, onLinkClick }
