@@ -86,7 +86,7 @@ docker compose logs -f scheduler                  # 排程輸出；run_daily.sh 
 docker compose exec web ls reports                # volume 裡的報告
 docker compose run --rm scheduler ./run_daily.sh  # 手動跑一次完整流程（抓取 → agent → render → 寄信）
 docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test scheduler uv run newsletter-agent   # 只產報告、不寄信
-git pull && docker compose up -d --build          # 更新（host 停在 main＝發行版，分支規則見 ../CLAUDE.md；interests.md、config/、程式都在映像裡，要重 build）
+git pull && docker compose up -d --build          # 更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
 
 - 每天 08:00（Asia/Taipei，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器停機時錯過的那一次不會補跑，要補就手動跑。
