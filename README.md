@@ -22,7 +22,7 @@ pipeline ──▶ shared、agent、notify    只負責編排每日流程；沒�
 | [shared/](shared/) | 共用底層（標準庫）：repo 路徑、報告格式的解析與驗證、回饋標記、量測、OAuth token 儲存 | [README](shared/README.md) |
 | [agent/](agent/) | 核心：抓取 → 整理 → Claude 寫報告。唯一的第三方依賴 `claude-agent-sdk` 在這裡，**不認得 email** | [README](agent/README.md) |
 | [notify/](notify/) | 外圍：報告 → email → 寄出；之後加別的通知管道放這裡 | [README](notify/README.md) |
-| [web/](web/) | 晨報網頁：後端 JSON API（`server/`）＋前端 Vite + React PWA（`ui/`）；依賴 `agent` 只為了驗證 OAuth token | [README](web/README.md)、[前端](web/ui/README.md) |
+| [web/](web/) | 晨報網頁：後端 JSON API（`server/`）＋前端 Vite + React PWA（`ui/`）；依賴 `agent` 只為了驗證 OAuth token（以子程序跑 `newsletter-agent --auth-check`：貼上時、以及背景定時，預設每小時） | [README](web/README.md)、[前端](web/ui/README.md) |
 | [pipeline/](pipeline/) | 每日流程編排：fetch → agent → render → send 四步串起來，整條握一把防重疊的鎖；排程與手動補跑都走它 | [README](pipeline/README.md) |
 
 分工原則：**確定性的部分交給 Python，判斷性的部分交給 Claude。**
@@ -85,7 +85,14 @@ uv run newsletter-feedback            # 收集報告裡填的標記
 
 ## 排程
 
-正式排程見[部署](#部署)。`run_daily.sh` 是唯一的排程入口，Docker 的 scheduler 容器、systemd timer 與 cron 都呼叫它：
+正式排程見[部署](#部署)。`run_daily.sh` 是唯一的排程入口，三種觸發方式都呼叫它，但語意不同：
+
+| 觸發 | 時間 | 錯過了（停機、關機） |
+| --- | --- | --- |
+| Docker 的 scheduler 容器（`docker/scheduler.sh`，bash 迴圈） | 每天 08:00，`.env` 的 `NEWSLETTER_RUN_AT` 可改 | **不補跑**，要補就手動跑 |
+| systemd timer（`deploy/newsletter-daily.timer`） | 每天 08:00（寫在 timer 裡） | 開機後補跑（`Persistent=true`） |
+| cron | 自己寫，例如下面這行 | 不補跑 |
+
 
 ```cron
 0 8 * * * $HOME/newsletter-ops/run_daily.sh
@@ -105,6 +112,8 @@ uv run newsletter-feedback            # 收集報告裡填的標記
 權限必須是 `600`，太鬆會拒絕執行（exit 78）。env 檔是 shell 語法，值含空格（Gmail 應用程式密碼）要加引號。
 排程需要 OAuth token，只讀 `/auth` 頁面存的檔（`state/oauth_token.json`，見 [agent/README.md](agent/README.md)「認證」），不讀環境變數；沒有時 `agent_run.py` 直接 exit 2。
 macOS 的 cron 需要「完整磁碟取用權」，或改用 launchd。
+
+**規劃中、尚未實作**：把 scheduler 升級成常駐服務（內建時鐘、同日補跑、內網的執行／狀態介面）見 [#41](https://github.com/Ponywen0819/newsletter-ops/issues/41)；Claude 認證的定時驗證從 web 搬過去見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。目前兩者都還沒有程式。
 
 ## 讓它跟著你的研究重心走
 
@@ -131,6 +140,7 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-f
 ```
 手機／筆電 ──https──▶ Cloudflare（Access：只放行你的 email）──Tunnel──▶ cloudflared 容器 ──▶ web 容器
                                                                     scheduler 容器：每天 08:00 跑 run_daily.sh
+host 本機的瀏覽器 ──http://127.0.0.1:8788/auth──▶ web 容器的管理 port（貼 OAuth token；不經 Cloudflare）
 ```
 
 `web` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Cloudflare Access**；Tunnel 的網域一定要先掛上 Access 再對外使用，也不要為了方便而 publish 主 port（唯一 publish 的是只綁 `127.0.0.1` 的管理 port，貼 OAuth token 用）。
