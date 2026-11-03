@@ -23,46 +23,38 @@ function checkedText(h: AuthHealth): string {
 function StatusView({ status, health }: { status: AuthStatus; health: AuthHealth | null }) {
   const invalid = health?.state === 'invalid' // 實際驗證失敗，比依日期推算的「已授權」更準
   return (
-    <>
-      <dl className="auth-status">
-        <dt>狀態</dt>
-        {status.state === 'missing' ? (
-          <dd className="auth-state auth-missing">尚未授權</dd>
-        ) : (
-          <>
-            <dd className={`auth-state auth-${invalid ? 'expired' : status.state}`}>
-              {invalid ? '驗證失敗，請重新貼上新的 token' : STATE_LABEL[status.state](status.days_left)}
-            </dd>
-            <dt>Token</dt>
-            <dd>
-              <code>…{status.tail}</code>（只顯示尾 4 碼）
-            </dd>
-            <dt>儲存日期</dt>
-            <dd>{status.saved_at}</dd>
-            <dt>預計到期</dt>
-            <dd>
-              {status.expires_at}
-              <span className="auth-hint">（以一年效期推算，實際以伺服器為準）</span>
-            </dd>
-          </>
-        )}
-        {health && health.state !== 'missing' && (
-          <>
-            <dt>最近檢查</dt>
-            <dd>
-              {checkedText(health)}
-              <span className="auth-hint">（伺服器定時檢查；測試連線也會更新）</span>
-            </dd>
-          </>
-        )}
-      </dl>
-      {status.state === 'missing' && status.env_token && (
-        <p className="auth-note">
-          這個程序的環境有 <code>CLAUDE_CODE_OAUTH_TOKEN</code>；排程若也設了同一個環境變數，agent_run.py
-          會用它（優先序在這裡儲存的 token 之後）。
-        </p>
+    <dl className="auth-status">
+      <dt>狀態</dt>
+      {status.state === 'missing' ? (
+        <dd className="auth-state auth-missing">尚未授權</dd>
+      ) : (
+        <>
+          <dd className={`auth-state auth-${invalid ? 'expired' : status.state}`}>
+            {invalid ? '驗證失敗，請重新貼上新的 token' : STATE_LABEL[status.state](status.days_left)}
+          </dd>
+          <dt>Token</dt>
+          <dd>
+            <code>…{status.tail}</code>（只顯示尾 4 碼）
+          </dd>
+          <dt>儲存日期</dt>
+          <dd>{status.saved_at}</dd>
+          <dt>預計到期</dt>
+          <dd>
+            {status.expires_at}
+            <span className="auth-hint">（以一年效期推算，實際以伺服器為準）</span>
+          </dd>
+        </>
       )}
-    </>
+      {health && health.state !== 'missing' && (
+        <>
+          <dt>最近檢查</dt>
+          <dd>
+            {checkedText(health)}
+            <span className="auth-hint">（伺服器定時檢查；測試連線也會更新）</span>
+          </dd>
+        </>
+      )}
+    </dl>
   )
 }
 

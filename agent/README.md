@@ -138,15 +138,16 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
    （極小的請求）驗證，**通過才儲存**到 `state/oauth_token.json`（權限 600、不進版控）；貼錯的 token 不會蓋掉原本可用的。
    頁面也顯示授權狀態與預計到期日（以一年效期推算，剩 30 天內會提醒），並可「測試連線」或「刪除已存的 token」
    （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。`/auth` 的使用限制見 [web/README.md](../web/README.md)。
-3. 不想經過網頁（例如遠端 host 沒開網頁）：直接在執行 `agent_run.py` 的環境設 `CLAUDE_CODE_OAUTH_TOKEN`。
+3. Docker 部署的 `/auth` 開不了（請求不是從 loopback 來）：改在 web 容器裡對 `127.0.0.1` 送，指令見 [deploy/README.md](../deploy/README.md)。
 
-- **token 來源的優先序**：`state/oauth_token.json`（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑）→ 環境變數
-  `CLAUDE_CODE_OAUTH_TOKEN`。**都沒有就直接 exit 2**，不會退回本機 `claude` 的登入，也不會用 API key。
-  stderr 會印這次用的來源（`stored-token` / `env-token`）。儲存與解析由 [shared](../shared/README.md) 的 `auth_store.py` 負責。
+- **token 的來源只有 `state/oauth_token.json`**（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑）。**沒有就直接 exit 2**，
+  不會退回本機 `claude` 的登入，也不會用 API key。儲存與讀取由 [shared](../shared/README.md) 的 `auth_store.py` 負責。
+- **不讀環境變數 `CLAUDE_CODE_OAUTH_TOKEN`**：token 效期一年，換新時環境變數得重啟程序（Docker 要重新部署）才生效，
+  而且 web 與排程的環境可能不同、`/auth` 的狀態會對不起來；存成檔案，換新立刻生效，兩邊看到同一份。環境裡還留著它時，`agent_run.py` 會在 stderr 提示已不再讀取。
 - **為什麼要移除環境變數**：claude CLI 自己的優先順序是 `ANTHROPIC_API_KEY` 高於 OAuth token，非互動模式只要有 key
   就用 key。所以 `agent_run.py` 啟動時會把排在 OAuth 前面的來源（`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、
   `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY`）從環境中移除，並在 stderr 說明。
-- **確認 SDK 實際用哪種認證**：`uv run newsletter-agent --auth-check` 印一行 JSON，`source` 是 token 來源（`stored-token` / `env-token`），
+- **確認 SDK 實際用哪種認證**：`uv run newsletter-agent --auth-check` 印一行 JSON，`source` 是 token 來源（驗證儲存的 token 是 `stored-token`；`--token-from-env` 驗證候選 token 時是 `env-token`，web 貼上時用），
   `api_key_source` 是 claude CLI 在 init 訊息裡回報的 `apiKeySource`——`none` 表示這次呼叫沒有用 API key（走的是 OAuth token）。
   不是 `none`（例如 `ANTHROPIC_API_KEY`）就算失敗（`kind: api_key`，exit 1），即使呼叫本身成功也一樣：成功的呼叫分不出是 OAuth 還是悄悄走了 API key 計費。
   結果範例：`{"ok": true, "kind": "ok", "message": "驗證通過", "api_key_source": "none", "source": "stored-token"}`。

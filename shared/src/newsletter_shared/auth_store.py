@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""OAuth token 的儲存與認證來源解析：web.py（貼上、驗證、狀態）與 agent_run.py（執行時取用）共用。
+"""OAuth token 的儲存與讀取：web.py（貼上、驗證、狀態）與 agent_run.py（執行時取用）共用。
 
 用法：uv run python -m newsletter_shared.auth_store --selftest
 
 只用 OAuth（`claude setup-token` 產生、效期一年的 token），**刻意不支援 API key**：不想為了這個專案額外付費。
-token 由 web.py 的 /auth 頁面（只服務本機）貼上；也可以直接設環境變數 CLAUDE_CODE_OAUTH_TOKEN，不經過網頁。
-
-認證來源，優先順序：
-  1. stored-token  state/oauth_token.json（頁面存的；NEWSLETTER_TOKEN_FILE 可改路徑）
-  2. env-token     環境變數 CLAUDE_CODE_OAUTH_TOKEN
-  都沒有就是 None，呼叫端要直接失敗；不退回本機 `/login` 的登入，也不用 API key。
+token 只有一個來源：web.py 的 /auth 頁面（只服務本機）貼上後存的 state/oauth_token.json（NEWSLETTER_TOKEN_FILE 可改路徑）。
+沒有就是 None，呼叫端要直接失敗；不退回本機 `/login` 的登入，也不用 API key。
+**不讀環境變數 CLAUDE_CODE_OAUTH_TOKEN**：token 一年會過期，換新時改環境變數要重啟程序（Docker 要重新部署）才生效，
+而且 web 與排程的環境可能不同、狀態對不起來；存成檔案，換新立刻生效，所有程序看到同一份。
+（這個環境變數只用來把 token 交給 claude CLI 與驗證用的子程序，見 agent_run.py，不是來源。）
 
 Claude CLI 自己的優先順序是 ANTHROPIC_API_KEY 高於 CLAUDE_CODE_OAUTH_TOKEN，非互動模式只要有 key 就用 key，
 所以環境裡留著 key 會悄悄開始計費。scrub_environ() 把「排在 OAuth token 前面的來源」整批移掉。
@@ -54,7 +53,7 @@ TOKEN_RE = re.compile(r"[\x21-\x7e]+")  # 可見的 ASCII，不含空白與換�
 
 @dataclass(frozen=True)
 class Auth:
-    source: str  # "stored-token" / "env-token"
+    source: str  # "stored-token"（--auth-check --token-from-env 驗證候選 token 時是 "env-token"）
     token: str = field(repr=False)
 
 
@@ -122,28 +121,23 @@ def delete(path: Path) -> bool:
     return True
 
 
-def status(path: Path, environ: Mapping[str, str] | None = None, now: datetime | None = None) -> dict:
+def status(path: Path, now: datetime | None = None) -> dict:
     """給頁面與 log 看的狀態，不含 token。state：missing / ok / expiring / expired。"""
-    environ = os.environ if environ is None else environ
     now = now or datetime.now(timezone.utc)
-    env_token = bool(environ.get(TOKEN_ENV, "").strip())
     rec = load(path)
     if rec is None:
-        return {"state": "missing", "env_token": env_token}
+        return {"state": "missing"}
     expires = rec["saved_at"] + timedelta(days=VALID_DAYS)
     left = expires - now
     state = "expired" if left.total_seconds() < 0 else "expiring" if left.days <= WARN_DAYS else "ok"
-    return {"state": state, "env_token": env_token, "tail": rec["token"][-4:],
+    return {"state": state, "tail": rec["token"][-4:],
             "saved_at": rec["saved_at"].date().isoformat(), "expires_at": expires.date().isoformat(),
             "days_left": left.days}
 
 
-def resolve(environ: Mapping[str, str], path: Path) -> Auth | None:
+def resolve(path: Path) -> Auth | None:
     rec = load(path)
-    if rec is not None:
-        return Auth("stored-token", rec["token"])
-    token = environ.get(TOKEN_ENV, "").strip()
-    return Auth("env-token", token) if token else None
+    return Auth("stored-token", rec["token"]) if rec is not None else None
 
 
 def scrub_environ(environ: MutableMapping[str, str]) -> list[str]:
@@ -158,6 +152,7 @@ def scrub_environ(environ: MutableMapping[str, str]) -> list[str]:
 def selftest() -> None:
     import stat
     import tempfile as tf
+    from unittest import mock
 
     # 格式
     assert check_format("") and check_format("short") and check_format("x" * (MAX_LEN + 1))
@@ -169,24 +164,23 @@ def selftest() -> None:
     secret = "sk-ant-oat01-" + "Zx9" * 12
     with tf.TemporaryDirectory() as d:
         path = Path(d) / "state" / "oauth_token.json"
-        assert load(path) is None and status(path, {}, now) == {"state": "missing", "env_token": False}
+        assert load(path) is None and status(path, now) == {"state": "missing"}
         assert delete(path) is False
 
         save(secret, path, now)
         assert stat.S_IMODE(path.stat().st_mode) == 0o600, oct(path.stat().st_mode)
         assert load(path)["token"] == secret
         assert [p.name for p in path.parent.iterdir() if p.name != path.name + ".lock"] == [path.name]  # 沒留暫存檔
-        st = status(path, {}, now)
-        assert st == {"state": "ok", "env_token": False, "tail": secret[-4:], "saved_at": "2026-10-02",
+        st = status(path, now)
+        assert st == {"state": "ok", "tail": secret[-4:], "saved_at": "2026-10-02",
                       "expires_at": "2027-10-02", "days_left": 365}, st
         assert secret not in json.dumps(st)
 
         # 到期狀態
-        assert status(path, {}, now + timedelta(days=334))["state"] == "ok"        # 剩 31 天
-        assert status(path, {}, now + timedelta(days=335))["state"] == "expiring"  # 剩 30 天
-        assert status(path, {}, now + timedelta(days=364))["state"] == "expiring"
-        assert status(path, {}, now + timedelta(days=366))["state"] == "expired"
-        assert status(path, {TOKEN_ENV: "x"}, now)["env_token"] is True
+        assert status(path, now + timedelta(days=334))["state"] == "ok"        # 剩 31 天
+        assert status(path, now + timedelta(days=335))["state"] == "expiring"  # 剩 30 天
+        assert status(path, now + timedelta(days=364))["state"] == "expiring"
+        assert status(path, now + timedelta(days=366))["state"] == "expired"
 
         # 覆寫：權限仍是 600；寫入失敗不能動到舊檔、也不留暫存檔
         save(secret + "2", path, now)
@@ -212,15 +206,14 @@ def selftest() -> None:
             assert load(path) is None, bad
         save(secret, path, now)
 
-        # 認證來源：stored > env > None
-        assert resolve({}, Path(d) / "none.json") is None
-        assert resolve({TOKEN_ENV: "  "}, Path(d) / "none.json") is None
-        assert resolve({TOKEN_ENV: " envtok\n"}, Path(d) / "none.json") == Auth("env-token", "envtok")
-        got = resolve({TOKEN_ENV: "envtok"}, path)
-        assert got.source == "stored-token" and got.token == secret
+        # 認證來源只有儲存的檔；環境變數（OAuth token、API key）一律不算
+        none = Path(d) / "none.json"
+        assert resolve(none) is None
+        with mock.patch.dict(os.environ, {TOKEN_ENV: "envtok", "ANTHROPIC_API_KEY": "sk-ant-api03-x"}):
+            assert resolve(none) is None
+            got = resolve(path)
+            assert got.source == "stored-token" and got.token == secret  # 有檔就用檔，不看環境變數
         assert secret not in repr(got)
-        # 只有 API key 時不算有認證
-        assert resolve({"ANTHROPIC_API_KEY": "sk-ant-api03-x"}, Path(d) / "none.json") is None
 
         # 路徑可由環境變數改
         assert token_path(Path("/r"), {}) == Path("/r/state/oauth_token.json")

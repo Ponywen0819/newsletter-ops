@@ -15,7 +15,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。compose 沒有 `ports:`，host 不會開任何 port；
   請不要為了方便從 host 直接開而加上 `ports:`，那會繞過 Access（host 本機仍連得到容器的內部 IP，所以這台 host 本身要信得過）。Tunnel 的網域一定要先掛上 Access 再對外使用（步驟 2、4）。
-- 機密只放 `.env`：`web` 容器拿不到任何機密，`scheduler` 拿不到 `TUNNEL_TOKEN`。
+- 機密放 `.env`（Gmail 帳密、`TUNNEL_TOKEN`）：`web` 容器拿不到這些，`scheduler` 拿不到 `TUNNEL_TOKEN`。Claude 的 OAuth token 另外存在 volume 的 `state/oauth_token.json`（權限 600），`web` 負責驗證並儲存、`scheduler` 讀取。
 
 本目錄的其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
 
@@ -24,12 +24,11 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
 ```bash
 git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops && cd ~/newsletter-ops
 cp .env.example .env && chmod 600 .env
-$EDITOR .env      # GMAIL_USER、GMAIL_APP_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN；TUNNEL_TOKEN 在下一步取得
+$EDITOR .env      # GMAIL_USER、GMAIL_APP_PASSWORD；TUNNEL_TOKEN 在下一步取得
 ```
 
-`CLAUDE_CODE_OAUTH_TOKEN` 的來源與用法見 [agent/README.md](../agent/README.md)「認證」：在**自己的電腦**執行 `claude setup-token` 取得，效期一年，只走訂閱額度。
-Docker 部署**用不了 web 的 `/auth` 頁面**：它只服務「來源是 loopback、沒有代理標頭」的請求，容器網路裡的請求一律 404，
-所以 token 放在 `.env`。token 到期（`agent_run.py` exit 5）時重新產生，改 `.env` 後 `docker compose up -d`（scheduler 會用新的環境變數重建）。
+Claude 的 OAuth token（`claude setup-token` 取得，效期一年，只走訂閱額度，見 [agent/README.md](../agent/README.md)「認證」）**不放 `.env`、也不讀環境變數**：
+放環境變數的話，一年後換新就得改檔並重新部署。它存在 volume 的 `state/oauth_token.json`，換新立刻生效，做法在步驟 3 之後的「貼上 OAuth token」。
 
 **2. Cloudflare：建立 Tunnel 與 Access（Access 一定要做）**
 
@@ -48,7 +47,24 @@ docker compose up -d --build
 docker compose ps        # web 要是 healthy、cloudflared 是 Up，PORTS 欄全空
 ```
 
-`.env` 缺 `GMAIL_USER`、`GMAIL_APP_PASSWORD`、`CLAUDE_CODE_OAUTH_TOKEN`、`TUNNEL_TOKEN` 任何一個，`docker compose` 會直接報錯並指出缺哪個。
+`.env` 缺 `GMAIL_USER`、`GMAIL_APP_PASSWORD`、`TUNNEL_TOKEN` 任何一個，`docker compose` 會直接報錯並指出缺哪個。
+
+**貼上 OAuth token**（第一次、以及一年後 `agent_run.py` exit 5 或網頁頂端出現「Claude 授權已失效」時）：在**自己的電腦**執行 `claude setup-token`、
+在瀏覽器完成授權，複製它印出的 token（只會印一次；需要 Pro／Max／Team／Enterprise），再在 host 上執行下面的指令並貼上（輸入時不顯示、不進 shell 歷史）。
+`/auth` 網頁在 Docker 裡開不了：它只服務「來源是 loopback、沒有代理標頭」的請求，容器網路裡的請求一律 404；這個指令是在 web 容器**裡面**對 `127.0.0.1` 送同一個 API，所以過得了這道門。
+伺服器會先實際呼叫一次 Claude 驗證（用掉極少的訂閱額度），通過才存進 volume；舊的 token 不會被無效的覆蓋。不用重啟、不用重新部署，scheduler 下一次執行就讀到新的。
+
+```bash
+docker compose exec web python -c "
+import getpass, json, urllib.error as e, urllib.request as u
+r = u.Request('http://127.0.0.1:8787/api/auth/token', json.dumps({'token': getpass.getpass('token: ')}).encode(), {'Content-Type': 'application/json'})
+try:
+    print(u.urlopen(r, timeout=120).read().decode())
+except e.HTTPError as x:
+    print(x.code, x.read().decode())"
+```
+
+成功會印出 `{"message": "驗證通過，已儲存", ...}`；失敗會印出狀態碼與原因（例如 `422` 的授權失敗）。沒做這一步的話，每天的排程會以 exit 2 結束（沒有 OAuth token）。
 
 **4. 驗收**
 
@@ -109,10 +125,10 @@ uv run newsletter-fetch --list-sources             # 不連網，確認設定可
 mkdir -p ~/.config/newsletter-ops
 cp ~/newsletter-ops/deploy/newsletter.env.example ~/.config/newsletter-ops/env
 chmod 600 ~/.config/newsletter-ops/env
-$EDITOR ~/.config/newsletter-ops/env   # GMAIL_USER、GMAIL_APP_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN（或之後開 /auth 貼）
+$EDITOR ~/.config/newsletter-ops/env   # GMAIL_USER、GMAIL_APP_PASSWORD
 ```
 
-只有排程入口會載入這個檔；web service 不載入，網頁程序拿不到這些機密。
+只有排程入口會載入這個檔；web service 不載入，網頁程序拿不到這些機密。Claude 的 OAuth token 不放這裡：web 啟動後（下面的步驟 3）開 `/auth` 貼上，存成 `state/oauth_token.json`。
 
 **3. systemd（user 單元，不需要 root）**
 
@@ -124,6 +140,7 @@ systemctl --user enable --now newsletter-web.service newsletter-daily.timer
 sudo loginctl enable-linger "$USER"   # 沒登入也持續執行，開機自動啟動
 ```
 
+- 貼 Claude 的 OAuth token：在 host 上開 `http://127.0.0.1:8787/auth`（遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>` 後開 `http://localhost:8787/auth`），做法見 [agent/README.md](../agent/README.md)「認證」。沒貼的話排程會以 exit 2 結束。
 - 每天 08:00（Asia/Taipei）跑 `run_daily.sh`；host 當時關機的話，開機後補跑（`Persistent=true`）。
 - 看 web：`journalctl --user -u newsletter-web -f`；看排程：`systemctl --user list-timers`、`logs/<YYYY-MM>.log`。
 - 手動跑一次排程：`systemctl --user start newsletter-daily.service`（會真的呼叫 Claude 並寄信，約數分鐘、有 API 費用），

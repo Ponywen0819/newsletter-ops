@@ -17,13 +17,14 @@ exit code：0 成功
            5 授權失敗（token 無效或已過期）：到 web.py 的 /auth 重新貼上 `claude setup-token` 的 token
            6 額度用完（訂閱的使用額度或帳務問題）：不會自動換成別的認證方式，等額度恢復再跑
 
-認證：只用 OAuth（訂閱額度），**不支援 API key**。token 來源見 auth_store.py：/auth 頁面存的，或環境變數
-CLAUDE_CODE_OAUTH_TOKEN；都沒有就以 exit 2 結束，不退回本機登入。環境裡的 ANTHROPIC_API_KEY 等
-優先序高於 OAuth 的來源會先被移除，否則 claude CLI 會優先用 key 而悄悄開始計費。
+認證：只用 OAuth（訂閱額度），**不支援 API key**。token 只來自 /auth 頁面存的檔（auth_store.py），沒有就以 exit 2 結束，
+不退回本機登入，也不讀環境變數 CLAUDE_CODE_OAUTH_TOKEN（token 會過期，換新要立刻生效，不該靠重啟或重新部署）。
+環境裡的 ANTHROPIC_API_KEY 等優先序高於 OAuth 的來源會先被移除，否則 claude CLI 會優先用 key 而悄悄開始計費。
 --auth-check：只做一次最小呼叫驗證 token，stdout 印一行 JSON（ok / kind / message / source / api_key_source）；
 api_key_source 是 CLI 在 init 訊息回報的 apiKeySource：none＝實際沒用 API key；不是 none（例如 ANTHROPIC_API_KEY）就算
 失敗（kind: api_key，exit 1），因為呼叫成功本身分不出是 OAuth 還是悄悄走了 API key 計費。
-web.py 用它驗證貼上的 token。--token-from-env 只用環境變數 CLAUDE_CODE_OAUTH_TOKEN（驗證尚未儲存的候選 token）。
+web.py 用它驗證貼上的 token。--token-from-env 改驗環境變數 CLAUDE_CODE_OAUTH_TOKEN 裡的候選 token（web.py 用它把
+尚未儲存的 token 傳進來，不上命令列）；沒帶時驗的是儲存的 token。
 用量寫進 logs/metrics/<date>.jsonl（stage: claude, runner: sdk），遵守 debug 開關
 （NEWSLETTER_DEBUG=1 或 config.json 的 debug），label 沿用 NEWSLETTER_RUN_LABEL。
 訂閱方案下 total_cost_usd 只是 SDK 依牌價估的 API 等價費用，不是實際扣款。
@@ -151,22 +152,23 @@ def agent_env(token: str) -> dict[str, str]:
 
 def pick_auth() -> auth_store.Auth | None:
     """選出這次的認證並整理環境；回傳 None 表示沒有可用的 OAuth token（呼叫端要結束，不退回別的方式）。"""
-    auth = auth_store.resolve(os.environ, auth_store.token_path())
+    auth = auth_store.resolve(auth_store.token_path())
     if auth is None:
-        print(f"[agent] 沒有可用的 OAuth token。請在自己的電腦跑 `claude setup-token`，把 token 貼到 web.py 的 /auth 頁面"
-              f"（只能從本機開），或設環境變數 {auth_store.TOKEN_ENV}。本專案不使用 API key，也不退回本機 claude 的登入。",
+        print("[agent] 沒有可用的 OAuth token。請在自己的電腦跑 `claude setup-token`，把 token 貼到 web.py 的 /auth 頁面"
+              "（只能從本機開；Docker 的做法見 deploy/README.md）。本專案不使用 API key，也不退回本機 claude 的登入。",
               file=sys.stderr)
+        if os.environ.get(auth_store.TOKEN_ENV):
+            print(f"[agent] 注意：環境變數 {auth_store.TOKEN_ENV} 已不再讀取（token 要存在 /auth，換新才不用重啟或重新部署）",
+                  file=sys.stderr)
         return None
     removed = auth_store.scrub_environ(os.environ)
     if removed:
         print(f"[agent] 已移除環境變數 {', '.join(removed)}：本專案只用 OAuth 授權，不使用 API key", file=sys.stderr)
     print(f"[agent] 認證來源：{auth.source}", file=sys.stderr)
-    if auth.source == "stored-token":
-        st = auth_store.status(auth_store.token_path())
-        if st["state"] in ("expiring", "expired"):
-            left = "已過期" if st["state"] == "expired" else "剩 %d 天" % st["days_left"]
-            print(f"[agent] 警告：token 預計 {st['expires_at']} 到期（{left}），請到 /auth 重新貼上新的 token",
-                  file=sys.stderr)
+    st = auth_store.status(auth_store.token_path())
+    if st["state"] in ("expiring", "expired"):
+        left = "已過期" if st["state"] == "expired" else "剩 %d 天" % st["days_left"]
+        print(f"[agent] 警告：token 預計 {st['expires_at']} 到期（{left}），請到 /auth 重新貼上新的 token", file=sys.stderr)
     return auth
 
 
@@ -203,7 +205,7 @@ def auth_check(from_env: bool) -> int:
         token = os.environ.get(auth_store.TOKEN_ENV, "").strip()
         auth = auth_store.Auth("env-token", token) if token else None
     else:
-        auth = auth_store.resolve(os.environ, auth_store.token_path())
+        auth = auth_store.resolve(auth_store.token_path())
     if auth is None:
         emit({"ok": False, "kind": "env", "message": "沒有可驗證的 OAuth token", "source": None})
         return 2
@@ -409,15 +411,21 @@ def selftest_auth() -> None:
         assert code == 2 and json.loads(out) == {"ok": False, "kind": "env", "message": "沒有可驗證的 OAuth token",
                                                   "source": None}, out
 
-        # 有 token：排在它前面的來源被移除，其他變數保留
-        os.environ.update({auth_store.TOKEN_ENV: secret, "ANTHROPIC_AUTH_TOKEN": "t", "KEEP_ME": "1"})
+        # 環境變數裡的 OAuth token 不算來源：沒有儲存的檔就是沒有認證，並提示它已不再讀取
+        os.environ.update({auth_store.TOKEN_ENV: secret, "KEEP_ME": "1"})
+        code, out, err = run([])
+        assert code == 2 and "已不再讀取" in err and secret not in err + out, (code, err)
+        code, out, err = run(["--auth-check"])
+        assert code == 2 and json.loads(out)["kind"] == "env", out
+
+        # 有儲存的 token：排在它前面的來源被移除，其他變數保留；環境裡的 token 不影響選擇
+        os.environ.update({"ANTHROPIC_AUTH_TOKEN": "t"})
+        stored = "stored-" + "z" * 30
+        auth_store.save(stored, auth_store.token_path())
         auth = pick_auth()
-        assert auth == auth_store.Auth("env-token", secret)
+        assert auth == auth_store.Auth("stored-token", stored)
         assert "ANTHROPIC_API_KEY" not in os.environ and "ANTHROPIC_AUTH_TOKEN" not in os.environ
-        assert os.environ["KEEP_ME"] == "1" and os.environ[auth_store.TOKEN_ENV] == secret
-        # 儲存的 token 優先於環境變數
-        auth_store.save("stored-" + "z" * 30, auth_store.token_path())
-        assert pick_auth().source == "stored-token"
+        assert os.environ["KEEP_ME"] == "1"
 
         # --auth-check：假的 probe 驗證輸出與 exit code，token 不能出現在 stdout／stderr
         async def fake(result):
@@ -431,7 +439,7 @@ def selftest_auth() -> None:
             assert code == want and json.loads(out) == {**result, "source": "env-token"}, (code, out)
             assert secret not in out + err
         with mock.patch.object(sys.modules[__name__], "probe", lambda token: fake({"ok": True, "kind": "ok", "message": ""})):
-            code, out, _ = run(["--auth-check"])  # 不帶 --token-from-env：走實際會用的來源（儲存的優先）
+            code, out, _ = run(["--auth-check"])  # 不帶 --token-from-env：驗證實際會用的來源（儲存的 token）
         assert json.loads(out)["source"] == "stored-token"
 
     # probe 本身：成功、失敗訊息要遮掉 token、錯誤結果後 SDK 丟的例外不能蓋掉分類
@@ -492,13 +500,14 @@ def selftest_main() -> None:
         (root / "reports").mkdir()
         (root / "data" / "curated" / f"{stamp}.json").write_text('{"items": [{"uid": "x"}]}')
         report = root / "reports" / f"{stamp}.md"
+        auth_store.save(secret, root / "oauth_token.json")
 
         def run(written: str | None) -> tuple[int, str, str]:
             async def fake_agent(prompt, max_turns, usage, token):  # 取代真正呼叫 SDK 的那一步
                 if written is not None:
                     report.write_text(written, encoding="utf-8")
                 usage.feed(result)
-            env = {auth_store.TOKEN_ENV: secret, auth_store.TOKEN_FILE_ENV: str(root / "oauth_token.json")}
+            env = {auth_store.TOKEN_FILE_ENV: str(root / "oauth_token.json")}
             out, err = io.StringIO(), io.StringIO()
             with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(this, "ROOT", root), \
                     mock.patch.object(this, "run_agent", fake_agent), mock.patch.object(metrics, "record"), \
