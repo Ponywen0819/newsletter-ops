@@ -65,6 +65,14 @@ uv add --package newsletter-agent <套件>   # 替某個成員新增依賴（改
 uv lock --upgrade     # 升級鎖定的版本
 ```
 
+Lint（CI 也跑；工具不進依賴，用 `uvx` 直接執行）：
+
+```bash
+uvx ruff@0.17.3 check                                          # Python，規則在 pyproject.toml
+git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
+(cd web/ui && npm run lint)                                    # 前端，規則在 web/ui/.oxlintrc.json
+```
+
 抓取、整理、寄信都只用標準庫，只有 `agent` 成員（`agent_run`）需要第三方套件（`claude-agent-sdk`）。
 skill 裡由 agent 呼叫的指令都是 `uv run --locked …`，要在 repo 根目錄、有 uv 的環境下執行。
 
