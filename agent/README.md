@@ -15,10 +15,6 @@ src/newsletter_agent/
 
 設定在 repo 根的 `config/`（`interests.md`、`config.json`、`sources.d/*.json`），報告撰寫的 skill 在 `.claude/skills/news-digest/`。
 
-分工原則：**確定性的部分交給 Python，判斷性的部分交給 Claude。**
-抓取、去重、排序、arXiv 會議判斷全部可重現；挑選重點與條列改寫由 Claude
-依 `news-digest` skill 讀 `data/curated/<date>.json` 後改寫 `reports/<date>.md`。
-
 ## 使用
 
 ```bash
@@ -120,12 +116,9 @@ Hugging Face / Google Research 給 1.2。數量由配額控制。
 `.claude/skills/news-digest/SKILL.md`，與在對話裡打 `/news-digest` 並存、結果一致。
 
 ```bash
-uv sync                                   # 依 uv.lock 建立 .venv 並裝好依賴（uv run 也會自動做）
-uv run newsletter-web                        # 第一次：開 http://127.0.0.1:8787/auth 貼上 OAuth token（見下方「認證」）
-uv run newsletter-agent                  # 依 skill 寫報告並驗收（有更新、格式正確），約數分鐘
-uv run newsletter-agent --max-turns 80   # 預設 60 回合，超過就中止並視為失敗
-uv run newsletter-render | uv run newsletter-send   # 報告寫好之後：轉成 email 並寄出（notify）
-uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼叫），不跑晨報
+uv run newsletter-agent                  # 依 skill 寫報告並驗收，約數分鐘
+uv run newsletter-agent --max-turns 80   # 預設 60 回合，超過視為失敗
+uv run newsletter-agent --auth-check     # 只驗證 token，不跑晨報
 ```
 
 ### 認證：只用 OAuth（訂閱額度），不使用 API key

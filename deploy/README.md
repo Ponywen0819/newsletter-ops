@@ -142,7 +142,7 @@ uv run newsletter-fetch --list-sources             # 不連網，確認設定可
 mkdir -p ~/.config/newsletter-ops
 cp ~/newsletter-ops/deploy/newsletter.env.example ~/.config/newsletter-ops/env
 chmod 600 ~/.config/newsletter-ops/env
-$EDITOR ~/.config/newsletter-ops/env   # GMAIL_USER、GMAIL_APP_PASSWORD
+$EDITOR ~/.config/newsletter-ops/env   # GMAIL_USER、GMAIL_APP_PASSWORD；shell 語法，值含空格要加引號
 ```
 
 只有排程入口會載入這個檔；web service 不載入，網頁程序拿不到這些機密。Claude 的 OAuth token 不放這裡：web 啟動後（下面的步驟 3）開 `/auth` 貼上，存成 `state/oauth_token.json`。
