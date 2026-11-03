@@ -20,7 +20,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
   萬一 Tunnel 誤指到它，Cloudflare 帶的 `Cf-*` 標頭與公網 `Host` 仍會被拒（`/auth` 照樣 404），但那只是第二道防線。
 - 機密放 `.env`（Gmail 帳密、`TUNNEL_TOKEN`）：`web` 容器拿不到這些，`scheduler` 拿不到 `TUNNEL_TOKEN`。Claude 的 OAuth token 另外存在 volume 的 `state/oauth_token.json`（權限 600），`web` 負責驗證並儲存、`scheduler` 讀取。
 
-本目錄的其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
+`docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是 Docker 部署的自動更新（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
 
 **1. 取得程式與機密**
 
@@ -86,7 +86,7 @@ docker compose logs -f scheduler                  # 排程輸出；run_daily.sh 
 docker compose exec web ls reports                # volume 裡的報告
 docker compose run --rm scheduler ./run_daily.sh  # 手動跑一次完整流程（抓取 → agent → render → 寄信）
 docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test scheduler uv run newsletter-agent   # 只產報告、不寄信
-git pull && docker compose up -d --build          # 更新（interests.md、config/、程式都在映像裡，要重 build）
+git pull && docker compose up -d --build          # 手動更新、不經 GHCR（interests.md、config/、程式都在映像裡，要重 build）
 ```
 
 - 每天 08:00（Asia/Taipei，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器停機時錯過的那一次不會補跑，要補就手動跑。
@@ -94,7 +94,29 @@ git pull && docker compose up -d --build          # 更新（interests.md、conf
   （約 10 毫秒、不需要網路），之後同一個容器就安靜了。這不是錯誤。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
 
-**6. 資料保存：不保存**
+**6. 自動部署（GHCR）**
+
+`main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建映像推到 `ghcr.io/ponywen0819/newsletter-ops`，
+tag 是 `latest` 與 `sha-<完整 commit>`。host 上跑一個 timer 每 10 分鐘拉一次，有新版才重建容器；GitHub 不會連進 host，也不必開 port。
+
+```bash
+# repo 是 private 時 package 也是 private：到 GitHub 建一個只有 read:packages 權限的 classic PAT
+echo <PAT> | docker login ghcr.io -u Ponywen0819 --password-stdin   # 存進 ~/.docker/config.json，之後不必再登
+
+mkdir -p ~/.config/systemd/user
+cp ~/newsletter-ops/deploy/newsletter-autodeploy.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now newsletter-autodeploy.timer
+sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使用者要在 docker 群組
+```
+
+- pipeline 正在跑（`state/pipeline.lock` 被占用）時這輪會跳過，下一輪再更新，不會把跑到一半的 scheduler 換掉。
+- 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
+- **退版**：`.env` 加 `NEWSLETTER_TAG=sha-<commit>`，然後 `docker compose up -d`；要回到自動跟新版就把那行刪掉。
+- timer 只更新映像。`docker-compose.yml` 本身改了的話（新增服務、環境變數），host 要自己 `git pull`。
+- 映像只建 `linux/amd64`；host 是 arm64 的話要先改 release.yml。
+
+**7. 資料保存：不保存**
 
 生成物都在 volume `newsletter-data`（容器內 `/var/lib/newsletter`），換容器、換映像、`docker compose down` 都還在；
 **`docker compose down -v` 或 `docker volume rm` 才會刪掉**。不備份，決定見[根目錄 README](../README.md)「資料保存」。

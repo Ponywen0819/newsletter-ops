@@ -1,0 +1,8 @@
+[Unit]
+Description=newsletter-ops: pull the latest image from GHCR and recreate changed containers
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/newsletter-ops
+ExecStart=%h/newsletter-ops/deploy/docker-autodeploy.sh
+TimeoutStartSec=15min
