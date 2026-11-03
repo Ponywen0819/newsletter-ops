@@ -31,7 +31,6 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   try {
     data = await res.json()
   } catch {
-    // 回應不是 JSON：下面用狀態碼報錯
   }
   if (!res.ok) {
     const error = (data as { error?: unknown } | null)?.error
@@ -47,10 +46,7 @@ async function fromCache<T>(path: string): Promise<T> {
   return (await hit.json()) as T
 }
 
-/**
- * 會被 service worker 快取的讀取（today／reports）：先問連線狀態。連得到照舊（網路優先，SW 更新快取）；
- * 連不上直接回快取，不等請求逾時；登入逾時不回快取。POST 與其他 GET（session、auth、feedback）不走這裡。
- */
+/** today／reports：連不上直接回快取不等逾時；登入逾時不回快取。 */
 async function cachedRead<T>(path: string): Promise<T> {
   const status = await check()
   if (status === 'login') throw new AuthExpiredError()
@@ -69,10 +65,7 @@ export const api = {
   feedbackTarget: (uid: string) => request<FeedbackTarget>(`/api/feedback/${encodeURIComponent(uid)}`),
   /** mark '' ＝ 取消。回傳伺服器實際記下的 mark。 */
   feedback,
-  /**
-   * 一則新聞底下可能有好幾個 uid（併了多篇文章，後端每篇各產一個）：對每個各送一次。
-   * saved 是寫入成功的；有任何一個失敗 failed 就是 true。成功的不會被收回，所以畫面要以 saved 為準。
-   */
+  /** 對每個 uid 各送一次。成功的不會收回，畫面要以 saved 為準。 */
   feedbackAll: async (uids: string[], mark: Mark) => {
     const results = await Promise.allSettled(uids.map((uid) => feedback(uid, mark)))
     const saved = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))

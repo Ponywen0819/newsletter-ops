@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# 容器內的排程：每天 NEWSLETTER_RUN_AT（預設 08:00，時區看 TZ）跑一次 run_daily.sh。
-# 不補跑：容器停機時錯過的那一次就算了，要補請手動 `docker compose run --rm scheduler ./run_daily.sh`。
+# 每天 NEWSLETTER_RUN_AT 跑一次 run_daily.sh；停機錯過的不補跑
 set -uo pipefail
 cd "$(dirname "$0")/.."
 AT="${NEWSLETTER_RUN_AT:-08:00}"
@@ -18,7 +17,7 @@ while true; do
   ./run_daily.sh
   code=$?
   echo "[scheduler] run_daily.sh exit $code"
-  # run_daily.sh 的輸出只進 volume 裡的 logs/，失敗時順手印出來，docker compose logs 才看得到原因
+  # 輸出只進 logs/，失敗時印出來給 docker compose logs 看
   [ "$code" -ne 0 ] && tail -n 20 "logs/$(date +%Y-%m).log"
-  sleep 60   # 跨過這一分鐘，避免同一個時間點重複觸發
+  sleep 60   # 跨過這一分鐘，避免重複觸發
 done

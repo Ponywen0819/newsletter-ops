@@ -62,9 +62,8 @@ function BlockView({ block, votes }: { block: Block; votes: Votes }) {
 }
 
 function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Report['sources']; marks: Marks; onMark: OnMark }) {
-  // 哪些清單可以投票（votable）由後端決定，這裡只照畫
   const votes: Votes = { marks, onMark }
-  // data-unit 而不是 id：網址帶 #s-6 時由 ReportView 自己捲過去（要避開 sticky 標頭），不讓瀏覽器預設的錨點跳轉搶先
+  // 用 data-unit 而不是 id：自己捲動才能避開 sticky 標頭
   return (
     <section className="unit" data-unit={unit.id}>
       {unit.kind === 'sources' ? (
@@ -85,13 +84,7 @@ function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Repor
   )
 }
 
-/**
- * 晨報本體：內容結構沿用 email（render_email.py），每則的 mark 位置換成有用／沒用按鈕；版面由 styles.css 自適應。
- *
- * 一律是一整頁往下捲的長頁（所有「閱讀單位」依序顯示，見 reportUnits.ts）。≥1100px 左側多一份「目錄」：
- * 捲到哪一則就跟著亮起，點一下捲過去，j／k 跳到下一則／上一則。這份目錄只是導覽，不改變內文怎麼顯示，
- * 所以窄螢幕的畫面與行為不變，也不用 matchMedia 渲染兩份。
- */
+/** 晨報本體。≥1100px 左側多一份目錄（scroll-spy、j／k 切換），窄螢幕只是依序排下來。 */
 export function ReportView({ report, marks, onMark }: { report: Report; marks: Marks; onMark: OnMark }) {
   const grouped = useMemo(() => groupReport(report), [report])
   const ids = useMemo(() => grouped.units.map((u) => u.id), [grouped])
@@ -99,7 +92,6 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
   const navRef = useRef<HTMLElement>(null)
   const { activeId, goTo, onLinkClick } = useSectionNav(ids, articleRef, navRef)
 
-  // j／k 跳到下一則／上一則。方向鍵不碰，留給一般捲動
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || !isWide()) return
@@ -114,7 +106,6 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [ids, activeId, goTo])
 
-  // 目錄：各分類一組，資料來源單獨一組放最後
   const navGroups = [
     ...grouped.groups.map((g) => ({ label: g.heading ? g.label : '', units: g.units })),
     ...(grouped.sources ? [{ label: '', units: [grouped.sources] }] : []),
@@ -169,7 +160,7 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
   )
 }
 
-/** 晨報加上它自己的標記狀態：按了有用／沒用以伺服器回傳的結果更新畫面，不必重新載入整頁。 */
+/** 晨報加上標記狀態，以伺服器回傳的結果更新。 */
 export function ReportPanel({ report, marks: initial }: { report: Report; marks: Marks }) {
   const [marks, setMarks] = useState(initial)
   const onMark: OnMark = (uid, mark) => setMarks((current) => ({ ...current, [uid]: mark }))

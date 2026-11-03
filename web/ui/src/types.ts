@@ -20,10 +20,7 @@ export type Block =
   | { type: 'heading'; inline: InlineNode[] }
   | { type: 'callout'; inline: InlineNode[] }
   | { type: 'paragraph'; inline: InlineNode[] }
-  /**
-   * votable：這張清單（或獨立 mark）要不要放有用／沒用。規則在後端 report_data.py，網頁與 email 都只讀這個旗標。
-   * 舊版後端沒有這個欄位：缺少時當作可投票——寧可多一組按鈕，也不要讓整頁的投票消失。
-   */
+  /** 缺少時當作可投票（舊版後端沒有這個欄位） */
   | { type: 'list'; items: ListItem[]; votable?: boolean }
   | { type: 'mark'; uid: string; votable?: boolean }
 
@@ -86,9 +83,8 @@ export type AuthStatus =
 
 /** 後端定時驗證的最近結果（GET /api/auth-health，所有人都讀得到，所以不含驗證訊息） */
 export interface AuthHealth {
-  /** ok／expiring（通過，但依一年效期推算快到期）／missing（沒有認證來源）／invalid（要重新授權）／unknown（無法確認，不代表失效） */
+  /** state 的意思見 web/README.md */
   state: 'ok' | 'expiring' | 'missing' | 'invalid' | 'unknown'
-  /** 最近一次驗證的分類：ok／auth／api_key／quota／timeout／env／other；另有 missing、unchecked（還沒驗證過） */
   kind: string
   /** 最近一次驗證的時間（ISO）；還沒驗證過是 null */
   checked_at: string | null

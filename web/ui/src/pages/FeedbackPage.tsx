@@ -8,11 +8,7 @@ import type { Mark } from '../types'
 const LABEL = { '+': '有用', '-': '沒用' } as const
 const MAX_UIDS = 10 // 一則新聞最多併幾篇；擋掉亂湊的長網址，免得一開頁就打一堆請求
 
-/**
- * email 裡 有用／沒用 連結（/feedback/<uid>?v=…）的落地頁。信箱的安全掃描會自動開連結，
- * 所以開頁面只讀；要按下「確認」才 POST，與晨報頁的按鈕走同一支 API。
- * 併了多篇文章的新聞，連結的 uid 用逗號接起來（/feedback/<uid>,<uid>）：一次確認，對每個 uid 各投一票。
- */
+/** email 連結的落地頁。信箱的安全掃描會自動開連結，所以開頁只讀，按「確認」才寫入。 */
 export function FeedbackPage() {
   const { uid: param = '' } = useParams()
   const uids = [...new Set(param.split(',').filter(Boolean))]
