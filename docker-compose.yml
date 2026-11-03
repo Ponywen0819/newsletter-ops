@@ -9,7 +9,7 @@ name: newsletter-ops
 
 x-app: &app
   build: .
-  image: newsletter-ops:local
+  image: ghcr.io/ponywen0819/newsletter-ops:${NEWSLETTER_TAG:-latest}
   restart: unless-stopped
   init: true
   volumes:
