@@ -3,8 +3,7 @@
 
 # 網頁前端（web/，Vite + React）在這個階段建置，最終映像只帶走 dist：映像裡不留 Node，host 也不必裝。
 # 不建置的話 web.py 找不到 web/ui/dist，所有頁面都回 503。
-# dist 是純靜態檔、跟 CPU 架構無關，所以這一階段固定在建置機的原生平台跑：CI 跨建 arm64 時 npm 不必經 QEMU 模擬
-FROM --platform=$BUILDPLATFORM node:22-slim AS web
+FROM node:22-slim AS web
 WORKDIR /web
 # 依賴先裝：只動前端程式碼時這一層走快取。只複製原始碼與設定，不要整個 COPY web/（會把 host 的 node_modules 蓋過來）
 COPY web/ui/package.json web/ui/package-lock.json ./
