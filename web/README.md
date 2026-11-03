@@ -9,7 +9,7 @@ ui/                                前端：Vite + React + TypeScript（晨報�
 ```
 
 後端 `newsletter-web` 只出 JSON，頁面全由前端畫，前端見 [ui/README.md](ui/README.md)。
-後端依賴 [agent](../agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`），用 `uv run newsletter-web` 啟動就有 SDK。
+後端依賴 [agent](../agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；`web.py` 本身不 import agent），用 `uv run newsletter-web` 啟動就有 SDK。
 
 ## 啟動
 
@@ -37,7 +37,7 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
 - **`/auth`（貼 OAuth token）只能從本機開**：能寫入憑證，而 `web.py` 沒有登入。`cloudflared` 跑在同一台機器、以 `127.0.0.1` 連進來，
   所以光看來源位址擋不住 Tunnel；要同時符合「來源是 loopback」「`Host` 是 `127.0.0.1` / `localhost` / `[::1]`」
   「沒有 `Cf-*` / `X-Forwarded-*` 等代理標頭」「`Origin`（若有）是本機」，否則回 404。
-  遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>`，再用自己電腦的瀏覽器開 `http://localhost:8787/auth`。
+  本機直接跑或 systemd 部署時就開主 port 的 `/auth`；遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>`，再用自己電腦的瀏覽器開 `http://localhost:8787/auth`。
   Docker 部署的請求不是從 loopback 來（是 bridge 閘道），主 port 上開不了，改用 `--admin-port`（`NEWSLETTER_ADMIN_PORT`）另開的**管理 port**：
   只有這個 listener 把 `/auth` 與 `/api/auth*` 當本機（來源只要求是私有位址；`Host`、`Origin`、代理標頭的檢查照舊），主 port 仍一律 404。
   誰連得到它由 compose 決定（只 publish 成 `127.0.0.1:8788`，Tunnel 不指向它），做法見 [deploy/README.md](../deploy/README.md)。
