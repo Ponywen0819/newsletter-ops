@@ -400,27 +400,27 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send_shell(404)
 
-    def _get_api(self, path: str) -> None:  # noqa: C901
+    def _api_payload(self, path: str):
+        fixed = {
+            "/api/session": lambda: {"local": self._local()},
+            "/api/heartbeat": lambda: {"ok": True},
+            "/api/today": self.site.today_payload,
+            "/api/reports": self.site.list_payload,
+            "/api/auth-health": self.site.auth_health,
+        }
+        if path in fixed:
+            return fixed[path]()
+        if m := re.fullmatch(r"/api/reports/(\d{4}-\d{2}-\d{2})", path):
+            return self.site.report_payload(m[1])
+        if m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
+            return self.site.feedback_target(m[1])
+        if path == "/api/auth" and self._local():
+            return self.site.auth_status()
+        raise NotFound(path)
+
+    def _get_api(self, path: str) -> None:
         try:
-            if path == "/api/session":
-                payload = {"local": self._local()}
-            elif path == "/api/heartbeat":
-                payload = {"ok": True}
-            elif path == "/api/today":
-                payload = self.site.today_payload()
-            elif path == "/api/reports":
-                payload = self.site.list_payload()
-            elif m := re.fullmatch(r"/api/reports/(\d{4}-\d{2}-\d{2})", path):
-                payload = self.site.report_payload(m[1])
-            elif m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
-                payload = self.site.feedback_target(m[1])
-            elif path == "/api/auth-health":
-                payload = self.site.auth_health()
-            elif path == "/api/auth" and self._local():
-                payload = self.site.auth_status()
-            else:
-                raise NotFound(path)
-            self._send_json(200, payload)
+            self._send_json(200, self._api_payload(path))
         except NotFound:
             self._send_json(404, {"error": "not found"})
         except ApiError as exc:
@@ -508,7 +508,7 @@ def served(site: Site, admin: bool = False) -> Iterator[Callable[..., tuple[int,
         server.server_close()
 
 
-def selftest() -> None:  # noqa: C901
+def selftest() -> None:
     import tempfile
 
     uid_a, uid_b, uid_c = "0123456789abcdef", "1111111111111111", "2222222222222222"
@@ -560,153 +560,9 @@ def selftest() -> None:  # noqa: C901
         site = Site(root, today=lambda: "2026-09-28")
 
         with served(site) as req:
-            def get(path: str, headers=None) -> tuple[int, dict]:
-                status, _, text = req("GET", path, headers)
-                return status, json.loads(text)
-
-            def post(payload, ctype: str = "application/json") -> tuple[int, dict]:
-                raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-                status, _, text = req("POST", "/api/feedback", {"Content-Type": ctype}, raw)
-                return status, json.loads(text)
-
-            def saved() -> dict[str, dict]:
-                return feedback.read_feedback(root / "state" / "feedback.jsonl")
-
-            def marks(date: str = "2026-09-28") -> dict[str, str]:
-                return get(f"/api/reports/{date}")[1]["marks"]
-
-            # 晨報：回結構，不是 HTML；巢狀子項目不帶 mark，mark 掛在最外層的項目上（與 email 版型一致）
-            status, data = get("/api/reports/2026-09-28")
-            assert status == 200 and data["date"] == "2026-09-28" and data["marks"] == {}, data
-            report = data["report"]
-            assert report["headline"] == "某事發生，見 來源。" and report["subject"] == "測試頭條"
-            assert [b["type"] for b in report["blocks"]] == ["title", "callout", "heading", "paragraph", "list",
-                                                               "heading", "list"], report["blocks"]
-            item = report["blocks"][4]["items"][0]
-            assert item["uids"] == [uid_a] and item["children"][0]["inline"] == [{"type": "text", "text": "細節"}]
-            assert "uids" not in item["children"][0]
-            assert [s["url"] for s in report["sources"]] == ["https://a.example/x", "https://a.example/1",
-                                                              "https://a.example/2", "https://a.example/3"]
-            raw = req("GET", "/api/reports/2026-09-28")[2]
-            assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw
-
-            # 當日：有就給整份，沒有就給最新一份的日期
-            assert get("/api/today") == (200, {**data, "latest": "2026-09-28"})
-            site.today = lambda: "2026-10-05"
-            assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28"})
-            site.today = lambda: "2026-09-28"
-
-            # 歷史列表：新到舊、略過非日期檔名、顯示頭條
-            status, data = get("/api/reports")
-            assert status == 200 and data == {"reports": [{"date": "2026-09-28", "headline": "某事發生，見 來源。"},
-                                                          {"date": "2026-09-27", "headline": "某事發生，見 來源。"}]}, data
-            assert get("/api/reports/2026-01-01")[0] == 404 and get("/api/reports/..%2Fconfig")[0] == 404
-            assert get("/api/nope") == (404, {"error": "not found"}) and get("/api/reports/")[0] == 200
-
-            # heartbeat：200 {ok}、no-store、不寫入任何東西（檔案清單與 mtime 前後相同）、只有 GET
-            def tree() -> dict[Path, int]:
-                return {p: p.stat().st_mtime_ns for p in root.rglob("*")}
-            before = tree()
-            status, headers, text = req("GET", "/api/heartbeat")
-            assert (status, json.loads(text), headers["cache-control"]) == (200, {"ok": True}, "no-store")
-            assert req("POST", "/api/heartbeat", None, {})[0] == 404 and tree() == before
-
-            # 格式不符的報告：單日回 500 與原因，列表照樣能列出（頭條抓不到就留空）
-            (root / "reports" / "2026-09-26.md").write_text("# 壞掉的報告\n", encoding="utf-8")
-            status, data = get("/api/reports/2026-09-26")
-            assert status == 500 and "報告格式不符" in data["error"] and "頭條" in data["error"], data
-            assert get("/api/reports")[1]["reports"][-1] == {"date": "2026-09-26", "headline": ""}
-            (root / "reports" / "2026-09-26.md").unlink()
-
-            # 前端：路由一律回 index.html（含 CSP）；沒有行內腳本與樣式
-            for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth"):
-                status, headers, body = req("GET", path)
-                assert status == 200 and body == shell, (path, status)
-                assert headers["content-type"] == "text/html; charset=utf-8" and headers["cache-control"] == "no-cache"
-                assert "default-src 'self'" in headers["content-security-policy"] and "frame-ancestors 'none'" in headers["content-security-policy"]
-            assert "<style" not in shell and "<script>" not in shell
-            # 不認得的路徑：同一份 index.html，但狀態碼是 404（前端畫「找不到頁面」）
-            for path in ("/nope", "/reports/abc", "/api", "/reports/2026-09-28/x"):
-                status, _, body = req("GET", path)
-                assert status == 404 and body == shell, (path, status)
-            # 靜態檔：assets 帶 hash 長期快取，其他每次確認；類型照副檔名
-            status, headers, body = req("GET", "/assets/app-abc123.js")
-            assert status == 200 and body == "console.log(1)" and headers["content-type"] == "text/javascript; charset=utf-8"
-            assert headers["cache-control"] == IMMUTABLE and headers["x-content-type-options"] == "nosniff"
-            assert req("GET", "/assets/app-abc123.css")[1]["content-type"] == "text/css; charset=utf-8"
-            status, headers, _ = req("GET", "/favicon.svg")
-            assert status == 200 and headers["content-type"] == "image/svg+xml" and headers["cache-control"] == "no-cache"
-            # PWA：manifest、service worker、圖示都要每次確認（sw.js 被長期快取就永遠換不了新版）
-            for path, ctype in (("/manifest.webmanifest", "application/manifest+json"),
-                                ("/sw.js", "text/javascript; charset=utf-8"), ("/icons/icon-192.png", "image/png")):
-                status, headers, _ = req("GET", path)
-                assert status == 200 and headers["content-type"] == ctype, (path, status, headers["content-type"])
-                assert headers["cache-control"] == "no-cache" and headers["x-content-type-options"] == "nosniff", path
-            # 擋掉：不存在的檔案給純文字 404（不是 HTML）、dist 之外、副檔名不在白名單、目錄
-            for path in ("/assets/missing.js", "/../secret.txt", "/assets/../../secret.txt", "/assets/../../../secret.txt",
-                         "/assets/..%2F..%2Fsecret.txt", "/%2e%2e/secret.txt", "/secret.txt", "/build.py", "/assets", "/assets/"):
-                status, headers, body = req("GET", path)
-                assert status == 404 and "dist 之外" not in body and "不該被提供" not in body, (path, status)
-                if "." in path.rsplit("/", 1)[-1]:
-                    assert headers["content-type"].startswith("text/plain") and body == "not found", path
-
-            # 寫入：欄位沿用 feedback.py，並帶出 curated 的中繼資料
-            assert post({"uid": uid_a, "mark": "+"}) == (200, {"uid": uid_a, "mark": "+"})
-            row = saved()[uid_a]
-            assert row["mark"] == "+" and row["report"] == "2026-09-28.md" and row["title"] == "重點"
-            assert row["topic"] == "ai-industry" and row["matched_keywords"] == ["llm"]
-            assert set(row) == set(feedback.build_row(uid_a, "+", "x.md", {})), row
-            assert marks() == {uid_a: "+"}
-            # curated 裡沒有的 uid 也能標，只是沒有中繼資料
-            assert post({"uid": uid_b, "mark": "-"})[0] == 200
-            assert saved()[uid_b]["mark"] == "-" and saved()[uid_b]["title"] == ""
-
-            # 覆蓋：以最後一筆為準；檔案是 append，不是改寫
-            assert post({"uid": uid_a, "mark": "-"})[0] == 200
-            assert saved()[uid_a]["mark"] == "-"
-            assert get("/api/today")[1]["marks"] == {uid_a: "-", uid_b: "-"}
-            lines = (root / "state" / "feedback.jsonl").read_text(encoding="utf-8").splitlines()
-            assert [json.loads(ln)["mark"] for ln in lines if uid_a in ln] == ["+", "-"], lines
-
-            # 取消：mark "" 讀回來是未標記
-            assert post({"uid": uid_a, "mark": ""}) == (200, {"uid": uid_a, "mark": ""})
-            assert saved()[uid_a]["mark"] == ""
-            assert marks() == {uid_b: "-"}
-
-            # feedback.py 收進來的 ++ / -- 在網頁上算同一級；只回這份報告裡出現的 uid
-            site.feedback_path.write_text(site.feedback_path.read_text(encoding="utf-8").rstrip("\n"),
-                                          encoding="utf-8")
-            assert post({"uid": uid_c, "mark": "+"})[0] == 200
-            assert all(ln.startswith("{") for ln in site.feedback_path.read_text(encoding="utf-8").splitlines())
-            with site.feedback_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(feedback.build_row(uid_c, "++", "2026-09-28.md", {})) + "\n")
-                fh.write(json.dumps(feedback.build_row("f" * 16, "+", "2026-08-01.md", {})) + "\n")
-            assert marks() == {uid_b: "-", uid_c: "+"}
-
-            # email 連結的確認頁：GET 只讀，絕不寫入；標題來自 curated，沒有就空字串；mark 是目前的標記
-            before = site.feedback_path.read_text(encoding="utf-8")
-            assert get(f"/api/feedback/{uid_a}") == (200, {"uid": uid_a, "date": "2026-09-28", "title": "重點", "mark": ""})
-            assert get(f"/api/feedback/{uid_b}")[1] == {"uid": uid_b, "date": "2026-09-28", "title": "", "mark": "-"}
-            assert get(f"/api/feedback/{uid_c}")[1]["mark"] == "+"
-            for path in (f"/api/feedback/{'e' * 16}", "/api/feedback/xyz", "/api/feedback/", "/api/feedback"):
-                assert get(path)[0] == 404, path
-            for v in ("%2B", "-", "+"):
-                status, _, body = req("GET", f"/feedback/{uid_a}?v={v}")
-                assert status == 200 and body == shell, (v, status)
-            assert req("GET", f"/feedback/{'e' * 16}")[0] == 200
-            assert req("GET", "/feedback/xyz")[0] == 404 and req("GET", "/feedback")[0] == 404
-            assert site.feedback_path.read_text(encoding="utf-8") == before
-
-            # 擋掉不合法的請求，且不寫檔
-            assert post({"uid": uid_a, "mark": "++"})[0] == 400
-            assert post({"uid": "xyz", "mark": "+"})[0] == 400
-            assert post({"uid": "e" * 16, "mark": "+"})[0] == 404
-            assert post({"uid": uid_a})[0] == 400 and post([1, 2])[0] == 400
-            assert post(b"not json")[0] == 400
-            assert post({"uid": uid_a, "mark": "+"}, ctype="application/x-www-form-urlencoded")[0] == 415
-            assert post(b"x" * (MAX_BODY + 1))[0] == 413
-            assert req("POST", "/feedback", None, {"uid": uid_a, "mark": "+"})[0] == 404
-            assert site.feedback_path.read_text(encoding="utf-8") == before
+            _selftest_reports(req, site, root, uid_a)
+            _selftest_static(req, shell)
+            _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
 
         # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
         bare = root / "bare"
@@ -721,13 +577,174 @@ def selftest() -> None:  # noqa: C901
     print("ok")
 
 
-def selftest_auth() -> None:  # noqa: C901
-    import stat
-    import subprocess as sp
-    import tempfile
-    from datetime import timedelta, timezone
-    from unittest import mock
 
+def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
+    def get(path: str, headers=None) -> tuple[int, dict]:
+        status, _, text = req("GET", path, headers)
+        return status, json.loads(text)
+
+    # 晨報：回結構，不是 HTML；巢狀子項目不帶 mark，mark 掛在最外層的項目上（與 email 版型一致）
+    status, data = get("/api/reports/2026-09-28")
+    assert status == 200 and data["date"] == "2026-09-28" and data["marks"] == {}, data
+    report = data["report"]
+    assert report["headline"] == "某事發生，見 來源。" and report["subject"] == "測試頭條"
+    assert [b["type"] for b in report["blocks"]] == ["title", "callout", "heading", "paragraph", "list",
+                                                       "heading", "list"], report["blocks"]
+    item = report["blocks"][4]["items"][0]
+    assert item["uids"] == [uid_a] and item["children"][0]["inline"] == [{"type": "text", "text": "細節"}]
+    assert "uids" not in item["children"][0]
+    assert [s["url"] for s in report["sources"]] == ["https://a.example/x", "https://a.example/1",
+                                                      "https://a.example/2", "https://a.example/3"]
+    raw = req("GET", "/api/reports/2026-09-28")[2]
+    assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw
+
+    # 當日：有就給整份，沒有就給最新一份的日期
+    assert get("/api/today") == (200, {**data, "latest": "2026-09-28"})
+    site.today = lambda: "2026-10-05"
+    assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28"})
+    site.today = lambda: "2026-09-28"
+
+    # 歷史列表：新到舊、略過非日期檔名、顯示頭條
+    status, data = get("/api/reports")
+    assert status == 200 and data == {"reports": [{"date": "2026-09-28", "headline": "某事發生，見 來源。"},
+                                                  {"date": "2026-09-27", "headline": "某事發生，見 來源。"}]}, data
+    assert get("/api/reports/2026-01-01")[0] == 404 and get("/api/reports/..%2Fconfig")[0] == 404
+    assert get("/api/nope") == (404, {"error": "not found"}) and get("/api/reports/")[0] == 200
+
+    # heartbeat：200 {ok}、no-store、不寫入任何東西（檔案清單與 mtime 前後相同）、只有 GET
+    def tree() -> dict[Path, int]:
+        return {p: p.stat().st_mtime_ns for p in root.rglob("*")}
+    before = tree()
+    status, headers, text = req("GET", "/api/heartbeat")
+    assert (status, json.loads(text), headers["cache-control"]) == (200, {"ok": True}, "no-store")
+    assert req("POST", "/api/heartbeat", None, {})[0] == 404 and tree() == before
+
+    # 格式不符的報告：單日回 500 與原因，列表照樣能列出（頭條抓不到就留空）
+    (root / "reports" / "2026-09-26.md").write_text("# 壞掉的報告\n", encoding="utf-8")
+    status, data = get("/api/reports/2026-09-26")
+    assert status == 500 and "報告格式不符" in data["error"] and "頭條" in data["error"], data
+    assert get("/api/reports")[1]["reports"][-1] == {"date": "2026-09-26", "headline": ""}
+    (root / "reports" / "2026-09-26.md").unlink()
+
+
+def _selftest_static(req, shell: str) -> None:
+    # 前端：路由一律回 index.html（含 CSP）；沒有行內腳本與樣式
+    for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth"):
+        status, headers, body = req("GET", path)
+        assert status == 200 and body == shell, (path, status)
+        assert headers["content-type"] == "text/html; charset=utf-8" and headers["cache-control"] == "no-cache"
+        assert "default-src 'self'" in headers["content-security-policy"] and "frame-ancestors 'none'" in headers["content-security-policy"]
+    assert "<style" not in shell and "<script>" not in shell
+    # 不認得的路徑：同一份 index.html，但狀態碼是 404（前端畫「找不到頁面」）
+    for path in ("/nope", "/reports/abc", "/api", "/reports/2026-09-28/x"):
+        status, _, body = req("GET", path)
+        assert status == 404 and body == shell, (path, status)
+    # 靜態檔：assets 帶 hash 長期快取，其他每次確認；類型照副檔名
+    status, headers, body = req("GET", "/assets/app-abc123.js")
+    assert status == 200 and body == "console.log(1)" and headers["content-type"] == "text/javascript; charset=utf-8"
+    assert headers["cache-control"] == IMMUTABLE and headers["x-content-type-options"] == "nosniff"
+    assert req("GET", "/assets/app-abc123.css")[1]["content-type"] == "text/css; charset=utf-8"
+    status, headers, _ = req("GET", "/favicon.svg")
+    assert status == 200 and headers["content-type"] == "image/svg+xml" and headers["cache-control"] == "no-cache"
+    # PWA：manifest、service worker、圖示都要每次確認（sw.js 被長期快取就永遠換不了新版）
+    for path, ctype in (("/manifest.webmanifest", "application/manifest+json"),
+                        ("/sw.js", "text/javascript; charset=utf-8"), ("/icons/icon-192.png", "image/png")):
+        status, headers, _ = req("GET", path)
+        assert status == 200 and headers["content-type"] == ctype, (path, status, headers["content-type"])
+        assert headers["cache-control"] == "no-cache" and headers["x-content-type-options"] == "nosniff", path
+    # 擋掉：不存在的檔案給純文字 404（不是 HTML）、dist 之外、副檔名不在白名單、目錄
+    for path in ("/assets/missing.js", "/../secret.txt", "/assets/../../secret.txt", "/assets/../../../secret.txt",
+                 "/assets/..%2F..%2Fsecret.txt", "/%2e%2e/secret.txt", "/secret.txt", "/build.py", "/assets", "/assets/"):
+        status, headers, body = req("GET", path)
+        assert status == 404 and "dist 之外" not in body and "不該被提供" not in body, (path, status)
+        if "." in path.rsplit("/", 1)[-1]:
+            assert headers["content-type"].startswith("text/plain") and body == "not found", path
+
+
+def _selftest_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str, str, str]) -> None:
+    uid_a, uid_b, uid_c = uids
+    def get(path: str, headers=None) -> tuple[int, dict]:
+        status, _, text = req("GET", path, headers)
+        return status, json.loads(text)
+
+    def post(payload, ctype: str = "application/json") -> tuple[int, dict]:
+        raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        status, _, text = req("POST", "/api/feedback", {"Content-Type": ctype}, raw)
+        return status, json.loads(text)
+
+    def saved() -> dict[str, dict]:
+        return feedback.read_feedback(root / "state" / "feedback.jsonl")
+
+    def marks(date: str = "2026-09-28") -> dict[str, str]:
+        return get(f"/api/reports/{date}")[1]["marks"]
+
+    # 寫入：欄位沿用 feedback.py，並帶出 curated 的中繼資料
+    assert post({"uid": uid_a, "mark": "+"}) == (200, {"uid": uid_a, "mark": "+"})
+    row = saved()[uid_a]
+    assert row["mark"] == "+" and row["report"] == "2026-09-28.md" and row["title"] == "重點"
+    assert row["topic"] == "ai-industry" and row["matched_keywords"] == ["llm"]
+    assert set(row) == set(feedback.build_row(uid_a, "+", "x.md", {})), row
+    assert marks() == {uid_a: "+"}
+    # curated 裡沒有的 uid 也能標，只是沒有中繼資料
+    assert post({"uid": uid_b, "mark": "-"})[0] == 200
+    assert saved()[uid_b]["mark"] == "-" and saved()[uid_b]["title"] == ""
+
+    # 覆蓋：以最後一筆為準；檔案是 append，不是改寫
+    assert post({"uid": uid_a, "mark": "-"})[0] == 200
+    assert saved()[uid_a]["mark"] == "-"
+    assert get("/api/today")[1]["marks"] == {uid_a: "-", uid_b: "-"}
+    lines = (root / "state" / "feedback.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [json.loads(ln)["mark"] for ln in lines if uid_a in ln] == ["+", "-"], lines
+
+    # 取消：mark "" 讀回來是未標記
+    assert post({"uid": uid_a, "mark": ""}) == (200, {"uid": uid_a, "mark": ""})
+    assert saved()[uid_a]["mark"] == ""
+    assert marks() == {uid_b: "-"}
+
+    # feedback.py 收進來的 ++ / -- 在網頁上算同一級；只回這份報告裡出現的 uid
+    site.feedback_path.write_text(site.feedback_path.read_text(encoding="utf-8").rstrip("\n"),
+                                  encoding="utf-8")
+    assert post({"uid": uid_c, "mark": "+"})[0] == 200
+    assert all(ln.startswith("{") for ln in site.feedback_path.read_text(encoding="utf-8").splitlines())
+    with site.feedback_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(feedback.build_row(uid_c, "++", "2026-09-28.md", {})) + "\n")
+        fh.write(json.dumps(feedback.build_row("f" * 16, "+", "2026-08-01.md", {})) + "\n")
+    assert marks() == {uid_b: "-", uid_c: "+"}
+
+    # email 連結的確認頁：GET 只讀，絕不寫入；標題來自 curated，沒有就空字串；mark 是目前的標記
+    before = site.feedback_path.read_text(encoding="utf-8")
+    assert get(f"/api/feedback/{uid_a}") == (200, {"uid": uid_a, "date": "2026-09-28", "title": "重點", "mark": ""})
+    assert get(f"/api/feedback/{uid_b}")[1] == {"uid": uid_b, "date": "2026-09-28", "title": "", "mark": "-"}
+    assert get(f"/api/feedback/{uid_c}")[1]["mark"] == "+"
+    for path in (f"/api/feedback/{'e' * 16}", "/api/feedback/xyz", "/api/feedback/", "/api/feedback"):
+        assert get(path)[0] == 404, path
+    for v in ("%2B", "-", "+"):
+        status, _, body = req("GET", f"/feedback/{uid_a}?v={v}")
+        assert status == 200 and body == shell, (v, status)
+    assert req("GET", f"/feedback/{'e' * 16}")[0] == 200
+    assert req("GET", "/feedback/xyz")[0] == 404 and req("GET", "/feedback")[0] == 404
+    assert site.feedback_path.read_text(encoding="utf-8") == before
+
+    # 擋掉不合法的請求，且不寫檔
+    assert post({"uid": uid_a, "mark": "++"})[0] == 400
+    assert post({"uid": "xyz", "mark": "+"})[0] == 400
+    assert post({"uid": "e" * 16, "mark": "+"})[0] == 404
+    assert post({"uid": uid_a})[0] == 400 and post([1, 2])[0] == 400
+    assert post(b"not json")[0] == 400
+    assert post({"uid": uid_a, "mark": "+"}, ctype="application/x-www-form-urlencoded")[0] == 415
+    assert post(b"x" * (MAX_BODY + 1))[0] == 413
+    assert req("POST", "/feedback", None, {"uid": uid_a, "mark": "+"})[0] == 404
+    assert site.feedback_path.read_text(encoding="utf-8") == before
+
+
+def selftest_auth() -> None:
+    secret = "sk-ant-oat01-" + "Kp4" * 14
+    _selftest_is_local()
+    _selftest_run_auth_check(secret)
+    _selftest_auth_http(secret)
+
+
+def _selftest_is_local() -> None:
     # --- is_local_request：來源位址、Host、代理標頭、Origin ---
     ok_host = {"Host": "127.0.0.1:8787"}
     for ip, h in (("127.0.0.1", ok_host), ("::1", {"Host": "[::1]:8787"}), ("::ffff:127.0.0.1", {"Host": "localhost"}),
@@ -756,8 +773,12 @@ def selftest_auth() -> None:  # noqa: C901
         assert not is_local_request(ip, h, admin=True), (ip, h)
     assert not is_local_request("172.18.0.1", ok_host)
 
+
+def _selftest_run_auth_check(secret: str) -> None:
+    import subprocess as sp
+    from unittest import mock
+
     # --- run_auth_check：子程序的呼叫方式與輸出解析（假的 subprocess.run）---
-    secret = "sk-ant-oat01-" + "Kp4" * 14
 
     def fake_run(stdout="", code=0, raises=None):
         calls = []
@@ -792,6 +813,11 @@ def selftest_auth() -> None:  # noqa: C901
     run, _ = fake_run(raises=FileNotFoundError(2, "No such file"))
     with mock.patch.object(sp, "run", run):
         assert run_auth_check(secret)["kind"] == "env"
+
+
+def _selftest_auth_http(secret: str) -> None:
+    import tempfile
+    from types import SimpleNamespace
 
     # --- 整個 HTTP 流程（假的 checker，不呼叫 Claude）---
     uid = "0123456789abcdef"
@@ -828,181 +854,207 @@ def selftest_auth() -> None:  # noqa: C901
                 status, text = req("GET", path, headers)
                 return status, json.loads(text)
 
-            # 本機：session、狀態、頁面
-            assert get("/api/session") == (200, {"local": True})
-            assert get("/api/auth") == (200, {"state": "missing"})
-            assert req("GET", "/auth")[0] == 200
-
-            # 非本機（公開網域的 Host、代理標頭、跨站 Origin）：/auth 與 /api/auth* 全部是 404，session 說不是本機
-            for hdr in ({"Host": "news.example.com"},
-                        {"Cf-Ray": "abc", "Cf-Connecting-Ip": "1.2.3.4"},
-                        {"X-Forwarded-For": "1.2.3.4"},
-                        {"Cdn-Loop": "cloudflare"},
-                        {"Origin": "https://evil.example"}):
-                assert req("GET", "/auth", hdr)[0] == 404 and req("GET", "/auth/", hdr)[0] == 404, hdr
-                assert get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
-                assert get("/api/session", hdr) == (200, {"local": False}), hdr
-                for path in ("/api/auth/token", "/api/auth/test", "/api/auth/revoke"):
-                    status, body = post(path, {"token": secret}, hdr)
-                    assert status == 404 and body == {"error": "not found"}, (hdr, path)
-            assert not checked and not site.token_path.exists()
-
-            # 管理 port（--admin-port）：同一個 Site，/auth 與 /api/auth* 在這裡才算本機；Host／代理標頭／Origin 照擋
-            with served(site, admin=True) as admin_req:
-                def admin_get(path, headers=None):
-                    status, _, text = admin_req("GET", path, headers)
-                    return status, json.loads(text) if text.startswith("{") else text
-
-                assert admin_get("/api/session") == (200, {"local": True})
-                assert admin_get("/api/auth") == (200, {"state": "missing"})
-                assert admin_req("GET", "/auth")[0] == 200
-                status, _, text = admin_req("POST", "/api/auth/revoke", None, {})
-                assert status == 200 and "本來就沒有" in text
-                for hdr in ({"Host": "news.example.com"}, {"Cf-Ray": "abc"}, {"X-Forwarded-For": "1.2.3.4"},
-                            {"Origin": "https://evil.example"}):
-                    assert admin_req("GET", "/auth", hdr)[0] == 404, hdr
-                    assert admin_get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
-                    assert admin_req("POST", "/api/auth/revoke", hdr, {})[0] == 404, hdr
-                # 實際的來源位址進不來（測試只能從 127.0.0.1 連），改驗 Handler 有把「這是管理 port」交給判斷
-                real, calls = is_local_request, []
-                with mock.patch.dict(globals(), {"is_local_request": lambda *a: calls.append(a[2]) or real(*a)}):
-                    admin_get("/api/session")
-                    get("/api/session")
-                assert calls == [True, False], calls
-
-            # 認證健康狀態是給所有人看的（橫幅用）：非本機也讀得到；沒有任何認證來源＝missing
             missing = {"state": "missing", "kind": "missing", "checked_at": None}
-            assert get("/api/auth-health") == (200, missing)
-            assert get("/api/auth-health", {"Host": "news.example.com", "Cf-Ray": "abc"}) == (200, missing)
-            # 一般功能不受影響：經 Tunnel（公開網域）一樣能讀報告、按 👍／👎
-            tunnel = {"Host": "news.example.com", "Cf-Ray": "abc"}
-            assert get("/api/today", tunnel)[0] == 200 and req("GET", "/", tunnel)[0] == 200
-            assert get("/api/heartbeat", tunnel) == (200, {"ok": True})
-            assert post("/api/feedback", {"uid": uid, "mark": "+"}, tunnel)[0] == 200
-
-            # 輸入檢查：不呼叫 checker
-            assert req("POST", "/api/auth/token", None, b"not json")[0] == 400
-            status, body = post("/api/auth/token", {"nope": 1})
-            assert status == 400 and "token" in body["error"]
-            for bad in ("", "   ", "short", "x" * 600, "has space " + "y" * 30, "line\nbreak" + "y" * 30):
-                status, body = post("/api/auth/token", {"token": bad})
-                assert status == 400, bad
-            assert req("POST", "/api/auth/token", {"Content-Type": "application/x-www-form-urlencoded"}, b"token=x")[0] == 415
-            assert req("POST", "/auth/token", None, {"token": secret})[0] == 404
-            assert not checked
-
-            # 貼上有效的 token（前後有空白）：驗證 → 儲存，權限 600，回應不含完整 token
-            status, body = post("/api/auth/token", {"token": f"  {secret}\n"})
-            assert status == 200 and body["message"] == "驗證通過，已儲存", body
-            assert checked == [secret] and body["status"]["state"] == "ok" and body["status"]["tail"] == secret[-4:]
-            assert auth_store.load(site.token_path)["token"] == secret
-            assert stat.S_IMODE(site.token_path.stat().st_mode) == 0o600
-            assert get("/api/auth")[1] == body["status"] and secret not in req("GET", "/api/auth")[1]
-            status, health = get("/api/auth-health")
-            assert status == 200 and health["state"] == "ok" and health["kind"] == "ok" and health["checked_at"], health
-
-            # 驗證失敗：各種原因都不能洗掉原本的 token
             other = "sk-ant-oat01-" + "Zz1" * 14
-            for v, want, text in (({"ok": False, "kind": "auth", "message": "401"}, 422, "授權失敗"),
-                                  ({"ok": False, "kind": "quota", "message": "429"}, 422, "額度用完"),
-                                  ({"ok": False, "kind": "other", "message": "boom"}, 422, "驗證失敗"),
-                                  ({"ok": False, "kind": "timeout", "message": "逾時"}, 504, "逾時"),
-                                  ({"ok": False, "kind": "env", "message": "沒有 SDK"}, 503, "SDK")):
-                outcome["v"] = v
-                status, body = post("/api/auth/token", {"token": other})
-                assert status == want and text in body["error"] and other not in body["error"], (v, status, body)
-                assert auth_store.load(site.token_path)["token"] == secret, v
-            assert checked[-1] == other
-            assert get("/api/auth-health")[1] == health
-
-            # 驗證正在進行時再送一個：409，不另開子程序
-            outcome["v"] = {"ok": True, "kind": "ok", "message": ""}
-            n = len(checked)
-            assert site._check_lock.acquire(blocking=False)
-            try:
-                status, body = post("/api/auth/token", {"token": other})
-            finally:
-                site._check_lock.release()
-            assert status == 409 and len(checked) == n and auth_store.load(site.token_path)["token"] == secret
-
-            # 測試連線：用已存的 token；失敗只回報，不改狀態
-            status, body = post("/api/auth/test", {})
-            assert status == 200 and body["message"] == "連線正常" and checked[-1] == secret
-            outcome["v"] = {"ok": False, "kind": "auth", "message": "401"}
-            status, body = post("/api/auth/test", {})
-            assert status == 422 and auth_store.load(site.token_path)["token"] == secret
-            assert get("/api/auth-health")[1]["state"] == "invalid" and get("/api/auth-health")[1]["kind"] == "auth"
-            outcome["v"] = {"ok": False, "kind": "quota", "message": "SECRET-DETAIL"}
-            post("/api/auth/test", {})
-            status, text = req("GET", "/api/auth-health")
-            assert json.loads(text)["state"] == "unknown" and "SECRET-DETAIL" not in text
-            outcome["v"] = {"ok": False, "kind": "api_key", "message": "x"}
-            post("/api/auth/test", {})
-            assert get("/api/auth-health")[1]["state"] == "invalid"
-            outcome["v"] = {"ok": True, "kind": "ok", "message": ""}
-            post("/api/auth/test", {})
-            assert get("/api/auth-health")[1]["state"] == "ok"
-
-            # 即將到期的提醒（以儲存時間推算）
-            auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=345))
-            status, st = get("/api/auth")
-            assert st["state"] == "expiring" and 0 <= st["days_left"] <= 30, st
-            assert get("/api/auth-health")[1]["state"] == "expiring"
-            auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=400))
-            assert get("/api/auth")[1]["state"] == "expired"
-            assert get("/api/auth-health")[1]["state"] == "expiring"
-
-            # 刪除：只移除本機檔案；沒有 token 時 test 是 404
-            status, body = post("/api/auth/revoke", {})
-            assert status == 200 and "已刪除" in body["message"] and body["status"]["state"] == "missing"
-            assert not site.token_path.exists()
-            status, body = post("/api/auth/revoke", {})
-            assert status == 200 and "本來就沒有" in body["message"]
-            assert post("/api/auth/test", {})[0] == 404
-            assert get("/api/auth-health")[1] == missing
-
-            # 定時驗證：用儲存的 token 驗一次；沒有就不呼叫。環境變數裡的 OAuth token 不算來源
-            n = len(checked)
-            env_token = "env-" + "e" * 20
-            with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}):
-                site.check_now()
-                assert len(checked) == n and site.last_check is None
-                assert get("/api/auth-health")[1] == missing and get("/api/auth") == (200, {"state": "missing"})
-            auth_store.save(secret, site.token_path)
-            assert get("/api/auth-health")[1]["kind"] == "unchecked"
-            site.check_now()
-            assert checked[-1] == secret and get("/api/auth-health")[1]["state"] == "ok"
-            n = len(checked)
-            assert site._check_lock.acquire(blocking=False)
-            try:
-                site.check_now()
-            finally:
-                site._check_lock.release()
-            assert len(checked) == n
-
-            # 迴圈：先驗一次、之後每隔一段時間；某一輪丟例外也不會停
-            stop, calls = threading.Event(), []
-
-            def flaky(token: str) -> dict:
-                calls.append(token)
-                if len(calls) == 1:
-                    raise RuntimeError("boom")
-                if len(calls) >= 3:
-                    stop.set()
-                return {"ok": True, "kind": "ok", "message": ""}
-
-            site.checker = flaky
-            with mock.patch.object(traceback, "print_exc"):
-                t = threading.Thread(target=site.monitor, args=(0.01, stop))
-                t.start()
-                t.join(10)
-            assert not t.is_alive() and calls == [secret] * 3
-            auth_store.delete(site.token_path)
+            t = SimpleNamespace(site=site, req=req, get=get, post=post, secret=secret, other=other,
+                                checked=checked, outcome=outcome, uid=uid, missing=missing)
+            _selftest_auth_access(t)
+            _selftest_auth_token(t)
+            _selftest_auth_lifecycle(t)
 
             # 完整 token 不能出現在任何回應裡
             assert not any(secret in text or other in text for text in seen)
             # 👍／👎 仍照常寫入，與 /auth 互不干擾
             assert uid in (root / "state" / "feedback.jsonl").read_text(encoding="utf-8")
+
+
+def _selftest_auth_access(t) -> None:
+    from unittest import mock
+
+    site, req, get, post, secret, checked, uid, missing = t.site, t.req, t.get, t.post, t.secret, t.checked, t.uid, t.missing
+
+    # 本機：session、狀態、頁面
+    assert get("/api/session") == (200, {"local": True})
+    assert get("/api/auth") == (200, {"state": "missing"})
+    assert req("GET", "/auth")[0] == 200
+
+    # 非本機（公開網域的 Host、代理標頭、跨站 Origin）：/auth 與 /api/auth* 全部是 404，session 說不是本機
+    for hdr in ({"Host": "news.example.com"},
+                {"Cf-Ray": "abc", "Cf-Connecting-Ip": "1.2.3.4"},
+                {"X-Forwarded-For": "1.2.3.4"},
+                {"Cdn-Loop": "cloudflare"},
+                {"Origin": "https://evil.example"}):
+        assert req("GET", "/auth", hdr)[0] == 404 and req("GET", "/auth/", hdr)[0] == 404, hdr
+        assert get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
+        assert get("/api/session", hdr) == (200, {"local": False}), hdr
+        for path in ("/api/auth/token", "/api/auth/test", "/api/auth/revoke"):
+            status, body = post(path, {"token": secret}, hdr)
+            assert status == 404 and body == {"error": "not found"}, (hdr, path)
+    assert not checked and not site.token_path.exists()
+
+    # 管理 port（--admin-port）：同一個 Site，/auth 與 /api/auth* 在這裡才算本機；Host／代理標頭／Origin 照擋
+    with served(site, admin=True) as admin_req:
+        def admin_get(path, headers=None):
+            status, _, text = admin_req("GET", path, headers)
+            return status, json.loads(text) if text.startswith("{") else text
+
+        assert admin_get("/api/session") == (200, {"local": True})
+        assert admin_get("/api/auth") == (200, {"state": "missing"})
+        assert admin_req("GET", "/auth")[0] == 200
+        status, _, text = admin_req("POST", "/api/auth/revoke", None, {})
+        assert status == 200 and "本來就沒有" in text
+        for hdr in ({"Host": "news.example.com"}, {"Cf-Ray": "abc"}, {"X-Forwarded-For": "1.2.3.4"},
+                    {"Origin": "https://evil.example"}):
+            assert admin_req("GET", "/auth", hdr)[0] == 404, hdr
+            assert admin_get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
+            assert admin_req("POST", "/api/auth/revoke", hdr, {})[0] == 404, hdr
+        # 實際的來源位址進不來（測試只能從 127.0.0.1 連），改驗 Handler 有把「這是管理 port」交給判斷
+        real, calls = is_local_request, []
+        with mock.patch.dict(globals(), {"is_local_request": lambda *a: calls.append(a[2]) or real(*a)}):
+            admin_get("/api/session")
+            get("/api/session")
+        assert calls == [True, False], calls
+
+    # 認證健康狀態是給所有人看的（橫幅用）：非本機也讀得到；沒有任何認證來源＝missing
+    assert get("/api/auth-health") == (200, missing)
+    assert get("/api/auth-health", {"Host": "news.example.com", "Cf-Ray": "abc"}) == (200, missing)
+    # 一般功能不受影響：經 Tunnel（公開網域）一樣能讀報告、按 👍／👎
+    tunnel = {"Host": "news.example.com", "Cf-Ray": "abc"}
+    assert get("/api/today", tunnel)[0] == 200 and req("GET", "/", tunnel)[0] == 200
+    assert get("/api/heartbeat", tunnel) == (200, {"ok": True})
+    assert post("/api/feedback", {"uid": uid, "mark": "+"}, tunnel)[0] == 200
+
+
+def _selftest_auth_token(t) -> None:
+    import stat
+
+    site, req, get, post, secret, other, checked, outcome = t.site, t.req, t.get, t.post, t.secret, t.other, t.checked, t.outcome
+
+    # 輸入檢查：不呼叫 checker
+    assert req("POST", "/api/auth/token", None, b"not json")[0] == 400
+    status, body = post("/api/auth/token", {"nope": 1})
+    assert status == 400 and "token" in body["error"]
+    for bad in ("", "   ", "short", "x" * 600, "has space " + "y" * 30, "line\nbreak" + "y" * 30):
+        status, body = post("/api/auth/token", {"token": bad})
+        assert status == 400, bad
+    assert req("POST", "/api/auth/token", {"Content-Type": "application/x-www-form-urlencoded"}, b"token=x")[0] == 415
+    assert req("POST", "/auth/token", None, {"token": secret})[0] == 404
+    assert not checked
+
+    # 貼上有效的 token（前後有空白）：驗證 → 儲存，權限 600，回應不含完整 token
+    status, body = post("/api/auth/token", {"token": f"  {secret}\n"})
+    assert status == 200 and body["message"] == "驗證通過，已儲存", body
+    assert checked == [secret] and body["status"]["state"] == "ok" and body["status"]["tail"] == secret[-4:]
+    assert auth_store.load(site.token_path)["token"] == secret
+    assert stat.S_IMODE(site.token_path.stat().st_mode) == 0o600
+    assert get("/api/auth")[1] == body["status"] and secret not in req("GET", "/api/auth")[1]
+    status, health = get("/api/auth-health")
+    assert status == 200 and health["state"] == "ok" and health["kind"] == "ok" and health["checked_at"], health
+
+    # 驗證失敗：各種原因都不能洗掉原本的 token
+    for v, want, text in (({"ok": False, "kind": "auth", "message": "401"}, 422, "授權失敗"),
+                          ({"ok": False, "kind": "quota", "message": "429"}, 422, "額度用完"),
+                          ({"ok": False, "kind": "other", "message": "boom"}, 422, "驗證失敗"),
+                          ({"ok": False, "kind": "timeout", "message": "逾時"}, 504, "逾時"),
+                          ({"ok": False, "kind": "env", "message": "沒有 SDK"}, 503, "SDK")):
+        outcome["v"] = v
+        status, body = post("/api/auth/token", {"token": other})
+        assert status == want and text in body["error"] and other not in body["error"], (v, status, body)
+        assert auth_store.load(site.token_path)["token"] == secret, v
+    assert checked[-1] == other
+    assert get("/api/auth-health")[1] == health
+
+    # 驗證正在進行時再送一個：409，不另開子程序
+    outcome["v"] = {"ok": True, "kind": "ok", "message": ""}
+    n = len(checked)
+    assert site._check_lock.acquire(blocking=False)
+    try:
+        status, body = post("/api/auth/token", {"token": other})
+    finally:
+        site._check_lock.release()
+    assert status == 409 and len(checked) == n and auth_store.load(site.token_path)["token"] == secret
+
+    # 測試連線：用已存的 token；失敗只回報，不改狀態
+    status, body = post("/api/auth/test", {})
+    assert status == 200 and body["message"] == "連線正常" and checked[-1] == secret
+    outcome["v"] = {"ok": False, "kind": "auth", "message": "401"}
+    status, body = post("/api/auth/test", {})
+    assert status == 422 and auth_store.load(site.token_path)["token"] == secret
+    assert get("/api/auth-health")[1]["state"] == "invalid" and get("/api/auth-health")[1]["kind"] == "auth"
+    outcome["v"] = {"ok": False, "kind": "quota", "message": "SECRET-DETAIL"}
+    post("/api/auth/test", {})
+    status, text = req("GET", "/api/auth-health")
+    assert json.loads(text)["state"] == "unknown" and "SECRET-DETAIL" not in text
+    outcome["v"] = {"ok": False, "kind": "api_key", "message": "x"}
+    post("/api/auth/test", {})
+    assert get("/api/auth-health")[1]["state"] == "invalid"
+    outcome["v"] = {"ok": True, "kind": "ok", "message": ""}
+    post("/api/auth/test", {})
+    assert get("/api/auth-health")[1]["state"] == "ok"
+
+
+def _selftest_auth_lifecycle(t) -> None:
+    from datetime import timedelta, timezone
+    from unittest import mock
+
+    site, get, post, secret, checked, missing = t.site, t.get, t.post, t.secret, t.checked, t.missing
+
+    # 即將到期的提醒（以儲存時間推算）
+    auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=345))
+    status, st = get("/api/auth")
+    assert st["state"] == "expiring" and 0 <= st["days_left"] <= 30, st
+    assert get("/api/auth-health")[1]["state"] == "expiring"
+    auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=400))
+    assert get("/api/auth")[1]["state"] == "expired"
+    assert get("/api/auth-health")[1]["state"] == "expiring"
+
+    # 刪除：只移除本機檔案；沒有 token 時 test 是 404
+    status, body = post("/api/auth/revoke", {})
+    assert status == 200 and "已刪除" in body["message"] and body["status"]["state"] == "missing"
+    assert not site.token_path.exists()
+    status, body = post("/api/auth/revoke", {})
+    assert status == 200 and "本來就沒有" in body["message"]
+    assert post("/api/auth/test", {})[0] == 404
+    assert get("/api/auth-health")[1] == missing
+
+    # 定時驗證：用儲存的 token 驗一次；沒有就不呼叫。環境變數裡的 OAuth token 不算來源
+    n = len(checked)
+    env_token = "env-" + "e" * 20
+    with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}):
+        site.check_now()
+        assert len(checked) == n and site.last_check is None
+        assert get("/api/auth-health")[1] == missing and get("/api/auth") == (200, {"state": "missing"})
+    auth_store.save(secret, site.token_path)
+    assert get("/api/auth-health")[1]["kind"] == "unchecked"
+    site.check_now()
+    assert checked[-1] == secret and get("/api/auth-health")[1]["state"] == "ok"
+    n = len(checked)
+    assert site._check_lock.acquire(blocking=False)
+    try:
+        site.check_now()
+    finally:
+        site._check_lock.release()
+    assert len(checked) == n
+
+    # 迴圈：先驗一次、之後每隔一段時間；某一輪丟例外也不會停
+    stop, calls = threading.Event(), []
+
+    def flaky(token: str) -> dict:
+        calls.append(token)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        if len(calls) >= 3:
+            stop.set()
+        return {"ok": True, "kind": "ok", "message": ""}
+
+    site.checker = flaky
+    with mock.patch.object(traceback, "print_exc"):
+        t = threading.Thread(target=site.monitor, args=(0.01, stop))
+        t.start()
+        t.join(10)
+    assert not t.is_alive() and calls == [secret] * 3
+    auth_store.delete(site.token_path)
+
 
 
 def main(argv: list[str] | None = None) -> int:

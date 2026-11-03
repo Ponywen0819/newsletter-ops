@@ -243,7 +243,7 @@ def check_format(root: Path, stamp: str) -> str | None:
     return None
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS)
     ap.add_argument("--selftest", action="store_true")
@@ -276,37 +276,46 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912
             traceback.print_exc()
     wall = time.monotonic() - t0
 
-    r, code, status, reason = usage.result, 0, "ok", None
-    if r is None:
-        code, status, reason = 1, "agent_failed", f"沒有收到結果（{sdk_error or '串流意外中止'}）"
-    elif r.is_error or r.subtype != "success":
-        code, status, reason = 1, "agent_failed", f"{r.subtype}：{'; '.join(r.errors or []) or r.result or sdk_error or ''}"
-    if code:
-        kind = usage.failure_kind()
-        if kind == "auth":
-            code, status = EXIT_AUTH, "auth_failed"
-            reason = f"授權失敗：{usage.error_text or reason}。請到 web.py 的 /auth 重新貼上 `claude setup-token` 的 token"
-        elif kind == "quota":
-            code, status = EXIT_QUOTA, "quota_exhausted"
-            reason = f"額度用完：{usage.error_text or reason}。不會改用別的認證方式，等訂閱額度恢復再跑"
-    elif (reason := verify(ROOT, stamp, started)) is not None:
-        code, status = 3, "no_report"
-    elif (reason := check_format(ROOT, stamp)) is not None:
-        code, status = 4, "bad_format"
-
-    if r is not None:
-        rec = usage.record(wall)
-        metrics.record("claude", **rec, status=status)
-        tk = rec["tokens"]
-        cost = "-" if r.total_cost_usd is None else f"${r.total_cost_usd:.2f}"  # 訂閱額度下只是估算，不是扣款
-        print(f"[agent] {status} turns={r.num_turns} est_usd={cost} {rec['seconds']}s "
-              f"tokens in={tk['input'] + tk['cache_write'] + tk['cache_read']:,} out={tk['output']:,}",
-              file=sys.stderr)
-        if r.result:
-            print(f"[agent] 最後回覆：{r.result[:500]}", file=sys.stderr)
+    code, status, reason = judge(usage, sdk_error, stamp, started)
+    if usage.result is not None:
+        log_usage(usage, wall, status)
     if code:
         print(f"[agent] 失敗（exit {code}）：{reason}", file=sys.stderr)
     return code
+
+
+def judge(usage: Usage, sdk_error: str | None, stamp: str, started: float) -> tuple[int, str, str | None]:
+    """回傳 (exit code, metrics 的 status, 失敗原因)。"""
+    r = usage.result
+    if r is None:
+        reason = f"沒有收到結果（{sdk_error or '串流意外中止'}）"
+    elif r.is_error or r.subtype != "success":
+        reason = f"{r.subtype}：{'; '.join(r.errors or []) or r.result or sdk_error or ''}"
+    elif (reason := verify(ROOT, stamp, started)) is not None:
+        return 3, "no_report", reason
+    elif (reason := check_format(ROOT, stamp)) is not None:
+        return 4, "bad_format", reason
+    else:
+        return 0, "ok", None
+    kind = usage.failure_kind()
+    if kind == "auth":
+        return EXIT_AUTH, "auth_failed", f"授權失敗：{usage.error_text or reason}。請到 web.py 的 /auth 重新貼上 `claude setup-token` 的 token"
+    if kind == "quota":
+        return EXIT_QUOTA, "quota_exhausted", f"額度用完：{usage.error_text or reason}。不會改用別的認證方式，等訂閱額度恢復再跑"
+    return 1, "agent_failed", reason
+
+
+def log_usage(usage: Usage, wall: float, status: str) -> None:
+    r = usage.result
+    rec = usage.record(wall)
+    metrics.record("claude", **rec, status=status)
+    tk = rec["tokens"]
+    cost = "-" if r.total_cost_usd is None else f"${r.total_cost_usd:.2f}"  # 訂閱額度下只是估算，不是扣款
+    print(f"[agent] {status} turns={r.num_turns} est_usd={cost} {rec['seconds']}s "
+          f"tokens in={tk['input'] + tk['cache_write'] + tk['cache_read']:,} out={tk['output']:,}",
+          file=sys.stderr)
+    if r.result:
+        print(f"[agent] 最後回覆：{r.result[:500]}", file=sys.stderr)
 
 
 def selftest() -> None:

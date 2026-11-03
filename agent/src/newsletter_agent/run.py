@@ -54,7 +54,47 @@ def prior_uids(path: Path) -> set[str]:
         return set()
 
 
-def main() -> int:  # noqa: C901
+def list_sources(config: dict) -> None:
+    for topic, label in config["topics"].items():
+        feeds = [s for s in config["sources"] if s["topic"] == topic]
+        print(f"\n{label}  ({topic}, {len(feeds)})")
+        for src in feeds:
+            target = src.get("url") or f"arxiv:{src.get('query')}"
+            print(f"  - {src['name']:<28} w={src['weight']:<4} {target}")
+    print(f"\n共 {len(config['sources'])} 個來源，{len(config['topics'])} 個主題。")
+
+
+def append_raw(raw: list[dict], stamp: str) -> None:
+    (ROOT / "data" / "raw").mkdir(parents=True, exist_ok=True)
+    with (ROOT / "data" / "raw" / f"{stamp}.jsonl").open("a", encoding="utf-8") as fh:
+        for row in raw:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def write_curated(raw: list[dict], errors: list, config: dict, tz: ZoneInfo, stamp: str) -> tuple[list[dict], dict]:
+    curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
+    redo = prior_uids(curated_path)
+    if redo:
+        print(f"[curate] 同日重跑：沿用上次收錄的 {len(redo)} 則重新排名", file=sys.stderr)
+    with metrics.timed("curate") as m:
+        ranked, stats = curate_mod.curate(raw, config, redo)
+        m.update({k: stats[k] for k in ("fetched", "in_window_new", "passed_relevance",
+                                        "after_dedupe_and_quota")})
+    payload = {
+        "generated_at": datetime.now(tz).isoformat(),
+        "stats": stats,
+        "errors": errors,
+        "config_digest": {k: config[k] for k in
+                          ("lookback_hours", "min_relevance", "quota", "max_items_in_report")},
+        "items": ranked,
+    }
+    curated_path.parent.mkdir(parents=True, exist_ok=True)
+    curated_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[curate] 收錄 {len(ranked)} 則 → {curated_path}", file=sys.stderr)
+    return ranked, stats
+
+
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只抓取並印統計，不寫 state / 報告")
     ap.add_argument("--no-report", action="store_true", help="只產 curated JSON，報告交給 Claude 寫")
@@ -77,13 +117,7 @@ def main() -> int:  # noqa: C901
         print(f"[sources] {note}", file=sys.stderr)
 
     if args.list_sources:
-        for topic, label in config["topics"].items():
-            feeds = [s for s in config["sources"] if s["topic"] == topic]
-            print(f"\n{label}  ({topic}, {len(feeds)})")
-            for src in feeds:
-                target = src.get("url") or f"arxiv:{src.get('query')}"
-                print(f"  - {src['name']:<28} w={src['weight']:<4} {target}")
-        print(f"\n共 {len(config['sources'])} 個來源，{len(config['topics'])} 個主題。")
+        list_sources(config)
         return 0
 
     if args.lookback:
@@ -110,30 +144,8 @@ def main() -> int:  # noqa: C901
               file=sys.stderr)
         return 3
 
-    (ROOT / "data" / "raw").mkdir(parents=True, exist_ok=True)
-    with (ROOT / "data" / "raw" / f"{stamp}.jsonl").open("a", encoding="utf-8") as fh:
-        for row in raw:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-    curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
-    redo = prior_uids(curated_path)
-    if redo:
-        print(f"[curate] 同日重跑：沿用上次收錄的 {len(redo)} 則重新排名", file=sys.stderr)
-    with metrics.timed("curate") as m:
-        ranked, stats = curate_mod.curate(raw, config, redo)
-        m.update({k: stats[k] for k in ("fetched", "in_window_new", "passed_relevance",
-                                        "after_dedupe_and_quota")})
-    payload = {
-        "generated_at": datetime.now(tz).isoformat(),
-        "stats": stats,
-        "errors": errors,
-        "config_digest": {k: config[k] for k in
-                          ("lookback_hours", "min_relevance", "quota", "max_items_in_report")},
-        "items": ranked,
-    }
-    curated_path.parent.mkdir(parents=True, exist_ok=True)
-    curated_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"[curate] 收錄 {len(ranked)} 則 → {curated_path}", file=sys.stderr)
+    append_raw(raw, stamp)
+    ranked, stats = write_curated(raw, errors, config, tz, stamp)
 
     if not args.no_report:
         path = report_mod.write(report_mod.render(ranked, stats, config, errors), config)
