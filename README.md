@@ -146,13 +146,6 @@ host 本機的瀏覽器 ──http://127.0.0.1:8788/auth──▶ web 容器的�
 `web` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Cloudflare Access**；Tunnel 的網域一定要先掛上 Access 再對外使用，也不要為了方便而 publish 主 port（唯一 publish 的是只綁 `127.0.0.1` 的管理 port，貼 OAuth token 用）。
 Docker（`docker compose up -d --build`）與不用 Docker 的 systemd + cloudflared 兩種做法、Cloudflare 設定與驗收清單見 [deploy/README.md](deploy/README.md)。
 
-## 分支（git flow）
-
-- `main`：發行版本，正式機只跟 `main`。不在 `main` 上開發，也不直接開 PR 到 `main`。
-- `develop`：整合分支，所有修改先合到這裡。
-- `feature/<name>`：從 `develop` 開，PR 合回 `develop`。
-- 發行：開 `develop` → `main` 的 PR，合併後在 `main` 打 tag。正式機急修走 `hotfix/<name>`（從 `main` 開，合回 `main` 與 `develop`）。
-
 ## 資料保存：不保存
 
 生成物——`reports/`、`data/`、`state/`（含 `state/feedback.jsonl`）、`logs/`——不備份、不進版控（Docker 部署時放在 volume `newsletter-data`，見 [deploy/README.md](deploy/README.md)），

@@ -8,6 +8,7 @@
 # 專案文件與入口
 !/.gitignore
 !/README.md
+!/CLAUDE.md
 !/ISSUES.md
 !/agent/ISSUES.md
 !/shared/ISSUES.md
