@@ -114,7 +114,8 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 - 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
 - **退版**：`.env` 加 `NEWSLETTER_TAG=sha-<commit>`，然後 `docker compose up -d`；要回到自動跟新版就把那行刪掉。
 - timer 只更新映像。`docker-compose.yml` 本身改了的話（新增服務、環境變數），host 要自己 `git pull`。
-- 映像只建 `linux/amd64`；host 是 arm64 的話要先改 release.yml。
+- 映像只建 `linux/arm64`（樹莓派）。Pi 要裝 **64 位元**的系統：`uname -m` 要是 `aarch64`，`armv7l` 的話拉不下來。
+  CI 用 QEMU 模擬建置，比原生慢；換成 x86 host 時要把 release.yml 的 `platforms` 改成 `linux/amd64`。
 
 **7. 資料保存：不保存**
 
