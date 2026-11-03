@@ -73,6 +73,12 @@ git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warni
 (cd web/ui && npm run lint)                                    # 前端，規則在 web/ui/.oxlintrc.json
 ```
 
+commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：
+
+```bash
+git config core.hooksPath .githooks
+```
+
 抓取、整理、寄信都只用標準庫，只有 `agent` 成員（`agent_run`）需要第三方套件（`claude-agent-sdk`）。
 skill 裡由 agent 呼叫的指令都是 `uv run --locked …`，要在 repo 根目錄、有 uv 的環境下執行。
 
