@@ -16,6 +16,7 @@ if [ -e "$ENV_FILE" ]; then
     exit 78
   fi
   set -a
+  # shellcheck source=/dev/null
   . "$ENV_FILE"
   set +a
 fi

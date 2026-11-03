@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 每天 NEWSLETTER_RUN_AT 跑一次 run_daily.sh；停機錯過的不補跑
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit
 AT="${NEWSLETTER_RUN_AT:-08:00}"
 if ! [[ "$AT" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
   echo "[scheduler] NEWSLETTER_RUN_AT 要是 HH:MM，收到「$AT」" >&2
