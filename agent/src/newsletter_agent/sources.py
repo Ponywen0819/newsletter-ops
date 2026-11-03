@@ -1,19 +1,15 @@
 """來源載入層：掃 config/sources.d/*.json，合併成 fetch 用的來源清單。
 
-每個檔案一個主題，格式：
+每個檔案一個主題：
 {
   "topic": "ai-research",
   "label": "AI / 研究論文動態",
-  "enabled": true,                  // 選填，預設 true；整個主題可一鍵關閉
+  "enabled": true,                  // 選填
   "defaults": {"weight": 1.0},      // 選填，套用到本檔所有 feed
-  "feeds": [
-    {"name": "arXiv cs.CV", "type": "arxiv", "query": "cat:cs.CV"},
-    {"name": "Hugging Face Blog", "type": "rss", "url": "https://...", "weight": 1.2},
-    {"name": "暫時停用的來源", "type": "rss", "url": "https://...", "enabled": false}
-  ]
+  "feeds": [{"name": "arXiv cs.CV", "type": "arxiv", "query": "cat:cs.CV"},
+            {"name": "HF Blog", "type": "rss", "url": "https://...", "weight": 1.2, "enabled": false}]
 }
-
-檔名不影響行為，topic 以檔內的 "topic" 為準（缺少時用檔名 stem）。
+topic 缺少時用檔名 stem。
 """
 from __future__ import annotations
 

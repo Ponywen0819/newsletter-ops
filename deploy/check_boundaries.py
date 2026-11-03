@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""依賴方向檢查：各成員只能 import 下面 MEMBERS 表允許的 newsletter_* 套件。
+"""依賴方向檢查：所有成員裝在同一個 venv，違規的 import 不會報錯，所以掃 AST 把關。
 
 用法：python3 deploy/check_boundaries.py [--selftest]
 
-所有成員裝在同一個 venv，違規的 import 不會報錯，所以靠掃 AST 把關：
-  1. 成員原始碼的 `import newsletter_x` 只能是自己，或下表允許的成員
-  2. 成員 pyproject.toml 宣告的 newsletter-* 依賴要與下表完全一致
-  3. `__file__` 只准出現在 shared 的 paths.py（repo 根只從那裡取）
-  4. 五個成員目錄都要存在；repo 根不得有 src/；根 pyproject.toml 只是 workspace 的根（沒有 [project]、members 與成員一致）
-只用標準庫。
+  1. 成員只能 import 自己或 MEMBERS 允許的 newsletter_* 套件
+  2. 成員 pyproject.toml 的 newsletter-* 依賴要與 MEMBERS 一致
+  3. `__file__` 只准出現在 shared 的 paths.py
+  4. 成員目錄都存在、repo 根沒有 src/、根 pyproject.toml 只是 workspace 的根
 """
 from __future__ import annotations
 

@@ -1,8 +1,4 @@
-"""輸出層：產生模板版 Markdown 報告（無 LLM 的保底版本）。
-
-有洞察的敘事版報告由 Claude 依 news-digest skill 讀 data/curated/<date>.json
-後改寫，覆蓋同一個 reports/<date>.md。兩種版本都要保留每則的 mark 註解，
-否則 feedback.py 收不到標記。
+"""輸出層：模板版 Markdown 報告（無 LLM 的保底版本）。必須保留每則的 mark 註解。
 """
 from __future__ import annotations
 

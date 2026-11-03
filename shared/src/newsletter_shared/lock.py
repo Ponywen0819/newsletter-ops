@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
-"""跨程序的檔案鎖：多個服務（web、排程、collect）讀寫同一個檔案時，靠它排隊。
+"""跨程序的檔案鎖（flock）。
 
 用法：uv run python -m newsletter_shared.lock --selftest
 
-    with locked(path):                 # 等到拿到為止；給「先讀再寫」這類很短的臨界區
-        ...
-    with locked(path, timeout=0):      # 搶不到就丟 LockBusy；給「不准重疊」的情境
-        ...
+    with locked(path):             # 等到拿到為止
+    with locked(path, timeout=0):  # 搶不到就丟 LockBusy
 
-鎖的是 `path` 旁邊的 `<name>.lock`，不是 path 本身，所以 path 可以被 os.replace 整個換掉、也可以還不存在。
-只提供 context manager、不提供分開的 lock／unlock：離開 with（或程序死掉）鎖就跟著檔案描述符一起放掉，
-不會有人忘了解鎖，把長駐的 web 與排程一起卡死。
-
-不可巢狀：同一個執行緒對同一個 path 再鎖一次會直接丟 RuntimeError（flock 對第二次開檔也會擋，
-不偵測的話就是靜默卡死）。不同執行緒、不同程序拿同一個 path 則是正常排隊。
-只用 stdlib；fcntl 只有 POSIX 有（macOS、Linux，Docker 也是 Linux）。
+鎖的是 `<path>.lock`，所以 path 可以被 os.replace 或還不存在。不可巢狀：同一執行緒重複鎖同一個 path 會丟 RuntimeError。
 """
 from __future__ import annotations
 
@@ -73,11 +65,11 @@ def selftest() -> None:
              "    sys.stdin.read()\n")
 
     with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "state" / "x.json"  # 目錄、檔案都還不存在也能鎖
+        path = Path(tmp) / "state" / "x.json"
 
         with locked(path):
             pass
-        with locked(path, timeout=0):  # 上一次離開 with 就放掉了
+        with locked(path, timeout=0):
             pass
 
         # 巢狀：立刻報錯，而且報錯後鎖仍然正常放掉
@@ -128,7 +120,7 @@ def selftest() -> None:
                 except LockBusy:
                     assert time.monotonic() - start >= wait
         finally:
-            proc.kill()  # 程序被殺掉，鎖要跟著放掉
+            proc.kill()
             proc.wait()
         with locked(path, timeout=0):
             pass

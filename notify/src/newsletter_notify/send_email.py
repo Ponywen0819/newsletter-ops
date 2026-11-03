@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""寄信層：把 render_email.py 產出的 HTML 用 Gmail SMTP 寄出，不依賴 Claude 的 Gmail connector。
+"""寄信層：用 Gmail SMTP 寄出 render_email.py 產的 HTML。
 
 用法：uv run newsletter-render | uv run newsletter-send [--dry-run]
       uv run newsletter-send --selftest
-stdin 是 render_email.py 印的那行 JSON（subject / headline / html_path）。
 
-環境變數：
-  GMAIL_USER           寄件帳號
-  GMAIL_APP_PASSWORD   Google 帳號的「應用程式密碼」（不是登入密碼；需先開兩步驟驗證）
-  NEWSLETTER_MAIL_TO   收件者，逗號分隔；沒設就寄給自己
---dry-run 只印出信件標頭，不連線。
+環境變數：GMAIL_USER、GMAIL_APP_PASSWORD（應用程式密碼）、NEWSLETTER_MAIL_TO（逗號分隔，預設寄給自己）
 """
 from __future__ import annotations
 

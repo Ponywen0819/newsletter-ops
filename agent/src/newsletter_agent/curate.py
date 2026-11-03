@@ -1,19 +1,11 @@
 """整理層：時間窗過濾、跨日去重、近似標題合併、關鍵字評分、各主題配額。
 
-評分拆成兩個值，這是這一層最重要的設計：
+評分拆成兩個值：
+  relevance  來源保底分 + 關鍵字命中。是門檻，低於 min_relevance 不收。
+  rank       relevance × 來源權重 + 新鮮度。只決定排序。
+拆開是為了讓「夠新」無法把不相關的東西帶進來。
 
-  relevance  來源保底分 + 關鍵字命中（boost_high 2.0 / boost_mid 0.8 /
-             boost_low 0.4 / penalize -4.0）。
-             **這是門檻**，低於 min_relevance 的一律不收。
-  rank       relevance × 來源權重 + 新鮮度加權。**這只決定排序**。
-
-早期版本只有單一分數，結果來源權重（0.7~1.2）加新鮮度（最高 +1.5）就超過門檻，
-關鍵字形同虛設——只要夠新就會被收錄。拆開之後「夠新」永遠無法讓不相關的東西進來。
-
-arXiv 論文另外看 Comments / Journal-Ref 裡的會議或期刊（config.json 的 arxiv_venues，
-conference / journal / minor_tracks 三個固定清單）：主會議或期刊 +2.0、workshop 等次級
-track +0.8、僅投稿中 +0.4。arXiv 沒有審查，這是唯一便宜又可靠的品質訊號。
-判斷結果連同中文 label 寫進 item["venue"]，報告直接引用，不必再判讀。
+arXiv 論文另看 Comments / Journal-Ref 裡的會議或期刊（config.json 的 arxiv_venues）加分，結果寫進 item["venue"]。
 """
 from __future__ import annotations
 

@@ -1,23 +1,8 @@
-"""回饋層：從報告裡收集人工標記，供日後調整關鍵字用。
+"""回饋層：收集報告裡的人工標記到 state/feedback.jsonl。
 
-報告每則末尾會有一行標記註解（Markdown 預覽時不顯示）：
-
-    <!-- mark:  uid=3f9a1c2b0d4e5678 -->
-
-看完報告時把 `mark:` 後面填上：
-
-    +   有用，想看更多這類
-    -   沒用，以後少推
-    ++  很重要
-    --  完全不該出現
-
-之後跑 `uv run newsletter-feedback` 收集到 state/feedback.jsonl。
-同一則重複標記時以最新一次為準（以檔案日期排序）。
-也可以改用 `uv run newsletter-web` 在網頁上按 👍／👎，直接寫同一個檔（取消記為 mark ""）。
-
-兩條路徑共用 state/feedback.jsonl，都只往後 append、不改寫舊內容，並用同一把檔案鎖排隊，
-所以可以同時跑。為了不和網頁打架：報告裡的標記只匯入「feedback.jsonl 還沒有紀錄」的那一則；
-已經有紀錄的（含網頁標的、取消的）以 jsonl 為準，之後改報告裡的標記不會覆蓋它。
+報告每則末尾有 `<!-- mark:  uid=... -->`，在 `mark:` 後填 + / - / ++ / --，再跑 `uv run newsletter-feedback`。
+網頁的 👍／👎 寫同一個檔；兩邊都只 append、共用同一把鎖。
+報告裡的標記只匯入 jsonl 還沒有紀錄的那一則，已有紀錄的以 jsonl 為準。
 """
 from __future__ import annotations
 
@@ -181,13 +166,13 @@ def selftest() -> None:
         assert "新增 2、更新 0" in run(root)
         assert {u: r["mark"] for u, r in read_feedback(out).items()} == {u1: "+", u2: "-"}
         first = out.read_bytes()
-        assert "新增 0、更新 0" in run(root) and out.read_bytes() == first  # 沒變動就不動檔案
+        assert "新增 0、更新 0" in run(root) and out.read_bytes() == first
 
         # 網頁之後把 u1 改成 -、把 u2 取消（append 兩列）：再 collect 不能蓋回報告裡的 + / -
         with locked(out):
             append_rows(out, [build_row(u1, "-", "2026-09-28.md", {}), build_row(u2, "", "2026-09-28.md", {})])
         after_web = out.read_bytes()
-        assert after_web.startswith(first)  # 舊內容原封不動，只多了後面幾列
+        assert after_web.startswith(first)
         assert "新增 0、更新 0" in run(root) and "2 筆報告裡的標記" in run(root)
         assert out.read_bytes() == after_web
         assert {u: r["mark"] for u, r in read_feedback(out).items()} == {u1: "-", u2: ""}
@@ -232,8 +217,8 @@ def selftest() -> None:
             stop.set()
             looper.join()
         lines = out.read_text(encoding="utf-8").splitlines()
-        assert len(lines) == base + workers * per, (len(lines), base)  # collect 這時沒有東西可加
-        rows = [json.loads(ln) for ln in lines]  # 每一列都是完整的 JSON
+        assert len(lines) == base + workers * per, (len(lines), base)
+        rows = [json.loads(ln) for ln in lines]
         assert len({r["uid"] for r in rows}) == len(read_feedback(out)) and len(read_feedback(out)) >= workers * per
     print("ok")
 

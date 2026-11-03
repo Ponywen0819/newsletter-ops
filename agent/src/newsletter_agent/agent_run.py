@@ -1,33 +1,15 @@
 #!/usr/bin/env python3
-"""無人值守入口：用 Claude Agent SDK 跑同一份 news-digest skill，不必開 Claude app。
+"""無人值守入口：用 Claude Agent SDK 跑 news-digest skill，並驗收產出的報告。
 
 用法：uv run newsletter-agent [--max-turns N]
       uv run newsletter-agent --auth-check [--token-from-env]
       uv run python -m newsletter_agent.agent_run --selftest
 
-抓取、寫報告都由 agent 依 SKILL.md 完成，寫完用 newsletter-report-check 驗證格式；本程式負責啟動、記錄用量、
-驗收產出（報告有更新、格式正確）。轉成 email 與寄出不是這裡的事，由 newsletter-run（pipeline 成員）接著處理。
-stdout 保持空，所有訊息一律走 stderr（cron 會收進 logs）；--auth-check 例外，它的結果是 stdout 的一行 JSON。
+訊息一律走 stderr；--auth-check 例外，結果是 stdout 的一行 JSON。
+exit code：0 成功／1 agent 失敗／2 環境問題（沒 SDK、沒 token）／3 報告沒產出／4 格式不符／5 授權失敗／6 額度用完
 
-exit code：0 成功
-           1 agent 失敗（回報錯誤、超過 max_turns、SDK 例外）
-           2 環境問題（沒裝 claude-agent-sdk、沒有可用的 OAuth token）
-           3 報告沒產出（沒更新 reports/<date>.md，或 curated 沒有收錄項目）
-           4 報告格式不符（shared 的 parse_report 拒絕：缺 subject 註解或今日頭條）
-           5 授權失敗（token 無效或已過期）：到 web.py 的 /auth 重新貼上 `claude setup-token` 的 token
-           6 額度用完（訂閱的使用額度或帳務問題）：不會自動換成別的認證方式，等額度恢復再跑
-
-認證：只用 OAuth（訂閱額度），**不支援 API key**。token 只來自 /auth 頁面存的檔（auth_store.py），沒有就以 exit 2 結束，
-不退回本機登入，也不讀環境變數 CLAUDE_CODE_OAUTH_TOKEN（token 會過期，換新要立刻生效，不該靠重啟或重新部署）。
-環境裡的 ANTHROPIC_API_KEY 等優先序高於 OAuth 的來源會先被移除，否則 claude CLI 會優先用 key 而悄悄開始計費。
---auth-check：只做一次最小呼叫驗證 token，stdout 印一行 JSON（ok / kind / message / source / api_key_source）；
-api_key_source 是 CLI 在 init 訊息回報的 apiKeySource：none＝實際沒用 API key；不是 none（例如 ANTHROPIC_API_KEY）就算
-失敗（kind: api_key，exit 1），因為呼叫成功本身分不出是 OAuth 還是悄悄走了 API key 計費。
-web.py 用它驗證貼上的 token。--token-from-env 改驗環境變數 CLAUDE_CODE_OAUTH_TOKEN 裡的候選 token（web.py 用它把
-尚未儲存的 token 傳進來，不上命令列）；沒帶時驗的是儲存的 token。
-用量寫進 logs/metrics/<date>.jsonl（stage: claude, runner: sdk），遵守 debug 開關
-（NEWSLETTER_DEBUG=1 或 config.json 的 debug），label 沿用 NEWSLETTER_RUN_LABEL。
-訂閱方案下 total_cost_usd 只是 SDK 依牌價估的 API 等價費用，不是實際扣款。
+只用 OAuth，不支援 API key：環境裡優先序高於 OAuth 的來源會先被移除，否則 CLI 會悄悄用 key 計費。
+--auth-check 的 api_key_source 不是 none 就算失敗，因為呼叫成功本身分不出走的是哪種認證。
 """
 from __future__ import annotations
 
@@ -331,7 +313,7 @@ def selftest() -> None:
     u = Usage()
     u.feed(sdk.AssistantMessage(content=[sdk.ToolUseBlock("t1", "WebFetch", {"url": "x"})], model="m", message_id="a1"), now=10)
     u.feed(sdk.UserMessage(content=[sdk.ToolResultBlock("t1", "ok")]), now=18)
-    u.feed(sdk.AssistantMessage(content=[sdk.TextBlock("done")], model="m", message_id="a1"), now=19)  # 同 id 只算一次
+    u.feed(sdk.AssistantMessage(content=[sdk.TextBlock("done")], model="m", message_id="a1"), now=19)
     u.feed(sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=3,
                              session_id="s", total_cost_usd=0.5, result="ok",
                              usage={"input_tokens": 5, "cache_creation_input_tokens": 7,
@@ -357,7 +339,7 @@ def selftest() -> None:
         assert "舊檔" in verify(root, stamp, now)
         os.utime(report, (now + 1, now + 1))
         assert verify(root, stamp, now) is None
-        assert "格式不符" in check_format(root, stamp)  # "# 報告" 沒有 subject 註解，也沒有今日頭條
+        assert "格式不符" in check_format(root, stamp)
         report.write_text("> **今日頭條：** x\n<!-- subject: s -->\n")
         assert check_format(root, stamp) is None
 

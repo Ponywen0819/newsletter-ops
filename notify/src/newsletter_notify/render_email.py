@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
-"""email 層：reports/<date>.md（news-digest 的條列版）→ reports/<date>.html。
+"""email 層：reports/<date>.md → reports/<date>.html（inline CSS，email client 會剝掉 <style>）。
 
 用法：uv run newsletter-render [YYYY-MM-DD] [--selftest]
-stdout 印一行 JSON：{"subject", "headline", "html_path"}，給 send_email 寄信用。
+stdout 印一行 JSON：{"subject", "headline", "html_path"}，給 send_email 用。
 
-環境變數 NEWSLETTER_BASE_URL（對外網址，如 https://news.example.com）有設的話，每則主要新聞（有 mark 註解的）
-底下加 👍／👎 兩個連結，指向 <base>/feedback/<uid>?v=…。連結只開確認頁，按了確認才寫入（信箱的安全掃描會自動開連結）。
-沒設就不加按鈕，本機測試不受影響。
-
-與網頁一致：只有主要新聞（標題段落＋清單）放連結，「其餘收錄」那種沒有標題段落的整張單行清單不放；
-併了多篇文章的新聞會連著好幾行 mark 註解（每篇一個 uid），只放一組連結，uid 用逗號接起來：
-<base>/feedback/<uid>,<uid>?v=…，確認頁一次對每個 uid 各投一票。
-
-版型寫死在這裡而不是讓 Claude 每天手寫 HTML：每天長得一樣、不花 token。
-email client 會剝掉 <style>，所以 CSS 全部 inline。
-Markdown 不在這裡解析：報告交給 report_data.parse_report（網頁也用同一份結構），這裡只負責把結構排成 inline-CSS HTML。
-內容規則（哪些條目可以投票、併了多篇的新聞有幾個 uid）都在那一份結構裡，版型改動只動這個檔案與網頁的 CSS。
+有設 NEWSLETTER_BASE_URL 才在可投票的新聞底下放 👍／👎 連結（<base>/feedback/<uid>[,<uid>...]?v=…）；
+連結只開確認頁，因為信箱的安全掃描會自動開連結。
 """
 from __future__ import annotations
 
@@ -166,8 +156,8 @@ def selftest() -> None:
     assert page.count("<ul") == page.count("</ul>") == 3, page
     assert page.count("<li") - page.count("</li>") == 0
     assert "&lt;標題&gt;" in page and "mark:" not in page
-    assert page.count("a=1&amp;b=2") == 2 and "&amp;amp;" not in page  # 頭條內文連結 + 資料來源，各 escape 一次
-    assert page.count("https://a.example/1") == 3  # 兩處內文 + 資料來源只列一次
+    assert page.count("a=1&amp;b=2") == 2 and "&amp;amp;" not in page
+    assert page.count("https://a.example/1") == 3
     assert "2026/09/28" in page
     try:
         render("# x\n")
@@ -206,7 +196,7 @@ def selftest() -> None:
 """
     merged, _, _ = render(merged_md, "https://news.example.com")
     base = "https://news.example.com/feedback/"
-    assert merged.count("/feedback/") == 4, merged  # 併過的一組（👍＋👎）＋另一則一組
+    assert merged.count("/feedback/") == 4, merged
     assert merged.count(f"{base}0123456789abcdef,1111111111111111?v=%2B") == 1
     assert merged.count(f"{base}0123456789abcdef,1111111111111111?v=-") == 1
     assert merged.count(f"{base}2222222222222222?v=%2B") == 1 and "0123456789abcdee" not in merged

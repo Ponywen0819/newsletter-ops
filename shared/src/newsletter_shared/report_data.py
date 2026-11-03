@@ -1,33 +1,18 @@
 #!/usr/bin/env python3
-"""報告資料層：reports/<date>.md → 結構化資料（給 web 前端用）。
+"""報告資料層：reports/<date>.md → 結構化資料，網頁與 email 共用這一個解析器。
 
-用法：uv run newsletter-report-check [YYYY-MM-DD]      # 驗證 reports/<date>.md 的格式（預設今天），agent 寫完報告後用它自我修正
+用法：uv run newsletter-report-check [YYYY-MM-DD]
       uv run python -m newsletter_shared.report_data --selftest
 
-晨報只有這一個解析器：web 前端（web/，Vite + React）拿這裡解析好的結構自己排版，
-email（render_email.py）也吃同一份結構、排成 inline-CSS HTML，所以格式（SKILL.md 規定的 Markdown 子集）或內容規則
-（哪些條目可以投票）有改動時只改這裡，兩邊版型各自負責呈現。
-{"title", "date", "subject", "headline", "blocks": [...], "sources": [...]}。
-認的 Markdown 子集：# / ## / > / - / 兩格縮排的 - / 粗體 / 連結 / 行內碼 / <!-- -->。
+回傳 {"title", "date", "subject", "headline", "blocks", "sources"}；blocks：
+  {"type": "title", "title", "date"}
+  {"type": "heading" | "callout" | "paragraph", "inline": [...]}
+  {"type": "list", "items": [{"inline", "children"?, "uids"?}], "votable"}
+  {"type": "mark", "uid", "votable"}   # 沒掛在清單項目底下的 mark
+inline：text / strong / link / code 節點。
 
-blocks 的種類（依出現順序）：
-  {"type": "title", "title", "date"}        # date 是標題尾端的 YYYY-MM-DD，沒有就是 None
-  {"type": "heading", "inline": [...]}      # ## 段落標題
-  {"type": "callout", "inline": [...]}      # > 引言（今日頭條）
-  {"type": "paragraph", "inline": [...]}
-  {"type": "list", "items": [item, ...], "votable"}   # item: {"inline", "children": [item...]?, "uids": [uid...]?}
-  {"type": "mark", "uid", "votable"}        # 沒掛在任何清單項目底下的 mark 註解
-inline 是 [{"type": "text", "text"} | {"type": "strong", "children"} | {"type": "link", "href", "children"}
-          | {"type": "code", "text"}]。
-
-votable：這張清單（或獨立 mark）要不要放有用／沒用。只有主要新聞——標題段落＋清單——才放；
-緊接在 ## 後面的整張單行清單（「其餘收錄」）不放。被空行切開的同一則新聞（清單接在清單後面）沿用前一張的結果。
-網頁與 email 都只讀這個旗標，規則不要在各自的版型裡再寫一次。
-
-mark 註解（`<!-- mark: uid=... -->`）掛在它前面那份清單最外層的最後一個項目的 uids 上
-（按鈕在該項目的巢狀子項目之後）。一則新聞併了多篇文章時會連著好幾行 mark，uids 就有好幾個（每篇一個）；
-清單被空行或其他內容打斷後，mark 就是獨立的 block。
-格式不符時 raise ValueError（找不到今日頭條或 subject 註解）。只用 stdlib。
+votable：只有主要新聞（標題段落＋清單）可投票，緊接在 ## 後面的單行清單（「其餘收錄」）不行。
+規則只在這裡，網頁與 email 只讀這個旗標。格式不符時 raise ValueError。
 """
 from __future__ import annotations
 
@@ -240,7 +225,7 @@ def selftest() -> None:
     assert got == [("重點 <標題>", "https://a.example/1?a=1&b=2")]
     assert flat(parse_inline("[**粗連結**](https://a.example/2)")) == "<a https://a.example/2><b>粗連結</b></a>"
     assert flat(parse_inline("`[不是連結](https://a.example/3)`")) == "`[不是連結](https://a.example/3)`"
-    assert flat(parse_inline("純文字   與 ** 未成對")) == "純文字   與 ** 未成對"  # 佔位符字元不會誤判
+    assert flat(parse_inline("純文字   與 ** 未成對")) == "純文字   與 ** 未成對"
     assert parse_inline("") == []
 
     uid_a, uid_b, uid_c, uid_d = "0123456789abcdef", "0123456789abcdee", "1111111111111111", "2222222222222222"
@@ -283,7 +268,7 @@ def selftest() -> None:
     assert [flat(i["inline"]) for i in first[0]["children"][0]["children"]] == ["更細"]
     assert "uids" not in first[0] and first[1]["uids"] == [uid_a]
     assert report["blocks"][6]["items"][0]["uids"] == [uid_b]
-    assert report["blocks"][7] == {"type": "mark", "uid": uid_c, "votable": False}  # 空行打斷清單後，mark 是獨立 block
+    assert report["blocks"][7] == {"type": "mark", "uid": uid_c, "votable": False}
     assert report["blocks"][8]["items"][0]["uids"] == [uid_d]
     assert uids_of(report) == [uid_a, uid_b, uid_c, uid_d]
     # 資料來源：依出現順序、網址去重、標題去掉 **
@@ -304,9 +289,9 @@ def selftest() -> None:
     # 它之後被空行切開的清單與獨立 mark 沿用前一張的結果
     assert [b.get("votable") for b in report["blocks"]] == [None, None, None, None, True, None, False, False, False], report["blocks"]
     cases = {
-        "story_blank": "**[標題](https://a.example/1)**\n- a\n\n- b\n<!-- mark:    uid=%s -->\n",   # 同一則被空行切成兩張清單：沿用
+        "story_blank": "**[標題](https://a.example/1)**\n- a\n\n- b\n<!-- mark:    uid=%s -->\n",
         "list_after_heading": "## 其餘收錄\n- a\n<!-- mark:    uid=%s -->\n",
-        "paragraph_only_mark": "## X\n**[標題](https://a.example/1)**\n\n<!-- mark:    uid=%s -->\n",  # 沒有清單的新聞：mark 照樣可投票
+        "paragraph_only_mark": "## X\n**[標題](https://a.example/1)**\n\n<!-- mark:    uid=%s -->\n",
         "list_first": "- a\n<!-- mark:    uid=%s -->\n",
     }
     head = "> **今日頭條：** x\n<!-- subject: s -->\n"
@@ -315,7 +300,7 @@ def selftest() -> None:
     assert votables(cases["story_blank"]) == [True, True]
     assert votables(cases["list_after_heading"]) == [False]
     assert votables(cases["paragraph_only_mark"]) == [True]
-    assert votables(cases["list_first"]) == [False]  # 前面沒有標題段落
+    assert votables(cases["list_first"]) == [False]
     # 併了多篇文章：連著好幾行 mark，掛在同一個項目的 uids 上（每篇一個）
     merged = parse_report(head + "**[標題](https://a.example/1)**\n- a\n<!-- mark:    uid=%s -->\n<!-- mark:    uid=%s -->\n" % (uid_a, uid_b))
     assert merged["blocks"][-1]["items"][-1]["uids"] == [uid_a, uid_b] and merged["blocks"][-1]["votable"] is True

@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""每日流程：抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡。
+"""每日流程：抓取 → agent 寫報告 → render → 寄信，整條握一把防重疊的鎖。
 
 用法：uv run newsletter-run [newsletter-fetch 的參數，如 --lookback 72]
       uv run newsletter-run --selftest
 
-排程（systemd timer、cron、docker 的 scheduler）經 run_daily.sh 呼叫它；run_daily.sh 只負責補 PATH、載入機密。
-四個步驟各自是獨立的程序（python -m …），由這裡依序啟動；鎖握在這個程序上，
-所以從第一步到最後一步都不會有第二條 pipeline 插進來（手動補跑撞上排程時，後到的直接放棄）。
-
-任一步失敗就停下，exit code 是該步的（agent 的 1～6 見 agent/README.md）；被訊號殺掉的算 128+訊號，和 shell 一致。
-鎖被占用是 75（EX_TEMPFAIL）：另一條在跑，這次沒執行。
-輸出（這裡的進度行加各步驟的 stdout／stderr）全寫到 log 參數；run_daily.sh 把它導向 logs/<YYYY-MM>.log。
+任一步失敗就停，exit code 是該步的；被訊號殺掉是 128+訊號；鎖被占用是 75（EX_TEMPFAIL）。
 """
 from __future__ import annotations
 
@@ -128,7 +122,7 @@ def selftest() -> None:
         assert (tmp / "fetch").read_text() == "--no-report --lookback 72|"
         assert (tmp / "send").read_text() == '|{"subject": "s"}\n'
         assert "agent stderr" in text and "render stderr" in text and text.rstrip().endswith("完成"), text
-        assert '"subject"' not in text  # render 的 stdout 是給 send 的，不進 log
+        assert '"subject"' not in text
 
         # 任一步失敗：後面的不跑、exit code 是該步的、log 一行說明；每次都能重新拿到鎖（失敗也會放鎖）
         code, text = run(fail="agent:5")

@@ -52,8 +52,20 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
 
 ## API 與路由
 
-- API（細節見 `server/src/newsletter_web/web.py` 開頭的說明、型別見 `ui/src/types.ts`）：`GET /api/session`、`/api/today`、`/api/reports`、
-  `/api/reports/<date>`、`/api/feedback/<uid>`、`/api/auth`、`/api/auth-health`；`POST /api/feedback`、`/api/auth/token|test|revoke`；`GET /api/heartbeat`（連線偵測，見 [ui/README.md](ui/README.md)「PWA」）。
+API 都是 JSON，型別見 `ui/src/types.ts`：
+
+| 路由 | 回應 | 說明 |
+| --- | --- | --- |
+| `GET /api/session` | `{local}` | 是否從本機來（決定要不要顯示「Claude 授權」） |
+| `GET /api/heartbeat` | `{ok}` | 連線偵測，不讀檔、不寫入（見 [ui/README.md](ui/README.md)「PWA」） |
+| `GET /api/today` | `{date, latest, report, marks}` | 當日晨報；還沒產出時 `report` 是 null |
+| `GET /api/reports` | `{reports: [{date, headline}]}` | 歷史列表，新到舊 |
+| `GET /api/reports/<date>` | `{date, report, marks}` | `report` 是 `report_data.parse_report()` 的結構 |
+| `GET /api/feedback/<uid>` | `{uid, date, title, mark}` | email 確認頁用，只讀 |
+| `POST /api/feedback` | `{uid, mark}` | 有用／沒用 |
+| `GET /api/auth-health` | `{state, kind, checked_at}` | 認證健康狀態，所有人可讀 |
+| `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理，只限本機 |
+
 - 頁面路由（清單見 [ui/README.md](ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`web.py` 的 `SPA_ROUTES` 要同步。
 - `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../notify/README.md)。
 
