@@ -49,7 +49,45 @@ def votable_after(blocks: list[dict], standalone_mark: bool = False) -> bool:
     return True if standalone_mark else prev is not None and prev["type"] == "paragraph"
 
 
-def parse_inline(text: str, links: list[tuple[str, str]] | None = None) -> list[dict]:  # noqa: C901
+def _restore(s: str, held: list) -> str:
+    return SLOT.sub(lambda m: held[int(m[1])][2], s)
+
+
+def _texts(s: str, held: list) -> list[dict]:
+    nodes: list[dict] = []
+    pos = 0
+    for m in SLOT.finditer(s):
+        if m.start() > pos:
+            nodes.append({"type": "text", "text": s[pos:m.start()]})
+        label, url, _ = held[int(m[1])]
+        nodes.append({"type": "link", "href": url, "children": _bold(label, held)})
+        pos = m.end()
+    if pos < len(s):
+        nodes.append({"type": "text", "text": s[pos:]})
+    return nodes
+
+
+def _code(s: str, held: list) -> list[dict]:
+    nodes: list[dict] = []
+    pos = 0
+    for m in CODE.finditer(s):
+        nodes += _texts(s[pos:m.start()], held)
+        nodes.append({"type": "code", "text": _restore(m[1], held)})  # 行內碼裡的連結不轉成連結，原樣還原
+        pos = m.end()
+    return nodes + _texts(s[pos:], held)
+
+
+def _bold(s: str, held: list) -> list[dict]:
+    nodes: list[dict] = []
+    pos = 0
+    for m in BOLD.finditer(s):
+        nodes += _code(s[pos:m.start()], held)
+        nodes.append({"type": "strong", "children": _code(m[1], held)})
+        pos = m.end()
+    return nodes + _code(s[pos:], held)
+
+
+def parse_inline(text: str, links: list[tuple[str, str]] | None = None) -> list[dict]:
     """一行文字 → inline 節點。links 傳入的話，會把這行裡的 (標題, 網址) 依序加進去（資料來源清單用）。"""
     held: list[tuple[str, str, str]] = []  # (連結文字, 網址, 原始寫法)
 
@@ -60,107 +98,85 @@ def parse_inline(text: str, links: list[tuple[str, str]] | None = None) -> list[
     work = LINK.sub(hold, text.replace(SLOT_OPEN, "").replace(SLOT_CLOSE, ""))
     if links is not None:
         links.extend((label.strip("*"), url) for label, url, _ in held)
-
-    def restore(s: str) -> str:  # 行內碼裡的連結不轉成連結，原樣還原
-        return SLOT.sub(lambda m: held[int(m[1])][2], s)
-
-    def texts(s: str) -> list[dict]:
-        nodes: list[dict] = []
-        pos = 0
-        for m in SLOT.finditer(s):
-            if m.start() > pos:
-                nodes.append({"type": "text", "text": s[pos:m.start()]})
-            label, url, _ = held[int(m[1])]
-            nodes.append({"type": "link", "href": url, "children": bold(label)})
-            pos = m.end()
-        if pos < len(s):
-            nodes.append({"type": "text", "text": s[pos:]})
-        return nodes
-
-    def code(s: str) -> list[dict]:
-        nodes: list[dict] = []
-        pos = 0
-        for m in CODE.finditer(s):
-            nodes += texts(s[pos:m.start()])
-            nodes.append({"type": "code", "text": restore(m[1])})
-            pos = m.end()
-        return nodes + texts(s[pos:])
-
-    def bold(s: str) -> list[dict]:
-        nodes: list[dict] = []
-        pos = 0
-        for m in BOLD.finditer(s):
-            nodes += code(s[pos:m.start()])
-            nodes.append({"type": "strong", "children": code(m[1])})
-            pos = m.end()
-        return nodes + code(s[pos:])
-
-    return bold(work)
+    return _bold(work, held)
 
 
-def parse_report(markdown: str) -> dict:  # noqa: C901, PLR0912
-    blocks: list[dict] = []
-    links: list[tuple[str, str]] = []
-    subject = headline = ""
-    title = ""
-    current: dict | None = None      # 目前開著的 list block
-    stack: list[list[dict]] = []     # stack[d - 1] ＝ 第 d 層的項目清單
+class _ReportParser:
+    def __init__(self) -> None:
+        self.blocks: list[dict] = []
+        self.links: list[tuple[str, str]] = []
+        self.subject = self.headline = self.title = ""
+        self.current: dict | None = None   # 目前開著的 list block
+        self.stack: list[list[dict]] = []  # stack[d - 1] ＝ 第 d 層的項目清單
 
-    for line in markdown.splitlines():
-        comment = COMMENT.match(line)
-        if comment:
-            if comment[1].strip().startswith("subject:"):
-                subject = comment[1].strip()[len("subject:"):].strip()
-            mark = MARK_RE.search(line)
-            if mark:
-                if current is not None:
-                    current["items"][-1].setdefault("uids", []).append(mark[2])
-                else:
-                    blocks.append({"type": "mark", "uid": mark[2], "votable": votable_after(blocks, standalone_mark=True)})
-            continue  # 其餘註解不進頁面，也不打斷清單
-        bullet = BULLET.match(line)
-        if bullet:
-            level = len(bullet[1]) // 2 + 1
-            if current is None:  # 新清單一定從第一層開始，開頭就縮排也一樣
-                current = {"type": "list", "items": [], "votable": votable_after(blocks)}
-                blocks.append(current)
-                stack = [current["items"]]
-                level = 1
-            level = min(level, len(stack) + 1)  # 一次只往下一層
-            if level > len(stack):
-                parent = stack[-1][-1]
-                stack.append(parent.setdefault("children", []))
-            else:
-                del stack[level:]
-            stack[level - 1].append({"inline": parse_inline(bullet[2], links)})
-            continue
-        current = None
-        if not line.strip():
-            continue
+    def comment(self, line: str, body: str) -> None:
+        if body.strip().startswith("subject:"):
+            self.subject = body.strip()[len("subject:"):].strip()
+        mark = MARK_RE.search(line)
+        if not mark:
+            return
+        if self.current is not None:
+            self.current["items"][-1].setdefault("uids", []).append(mark[2])
+        else:
+            self.blocks.append({"type": "mark", "uid": mark[2], "votable": votable_after(self.blocks, standalone_mark=True)})
+
+    def bullet(self, indent: str, text: str) -> None:
+        level = len(indent) // 2 + 1
+        if self.current is None:  # 新清單一定從第一層開始，開頭就縮排也一樣
+            self.current = {"type": "list", "items": [], "votable": votable_after(self.blocks)}
+            self.blocks.append(self.current)
+            self.stack = [self.current["items"]]
+            level = 1
+        level = min(level, len(self.stack) + 1)  # 一次只往下一層
+        if level > len(self.stack):
+            parent = self.stack[-1][-1]
+            self.stack.append(parent.setdefault("children", []))
+        else:
+            del self.stack[level:]
+        self.stack[level - 1].append({"inline": parse_inline(text, self.links)})
+
+    def block(self, line: str) -> None:
         if line.startswith("# "):
             title = line[2:].strip()
             date = TITLE_DATE.search(title)
             if date:
                 title = title[:date.start()].strip()
-            blocks.append({"type": "title", "title": title, "date": date[0] if date else None})
+            self.title = title
+            self.blocks.append({"type": "title", "title": title, "date": date[0] if date else None})
         elif line.startswith("## "):
-            blocks.append({"type": "heading", "inline": parse_inline(line[3:].strip(), links)})
+            self.blocks.append({"type": "heading", "inline": parse_inline(line[3:].strip(), self.links)})
         elif line.startswith(">"):
             text = line.lstrip("> ").strip()
             if "今日頭條" in text:
-                headline = plain(re.sub(r"^\**今日頭條[：:]\**\s*", "", text))
-            blocks.append({"type": "callout", "inline": parse_inline(text, links)})
+                self.headline = plain(re.sub(r"^\**今日頭條[：:]\**\s*", "", text))
+            self.blocks.append({"type": "callout", "inline": parse_inline(text, self.links)})
         else:
-            blocks.append({"type": "paragraph", "inline": parse_inline(line.strip(), links)})
+            self.blocks.append({"type": "paragraph", "inline": parse_inline(line.strip(), self.links)})
 
-    if not headline:
+    def feed(self, line: str) -> None:
+        if comment := COMMENT.match(line):
+            self.comment(line, comment[1])
+            return  # 其餘註解不進頁面，也不打斷清單
+        if bullet := BULLET.match(line):
+            self.bullet(bullet[1], bullet[2])
+            return
+        self.current = None
+        if line.strip():
+            self.block(line)
+
+
+def parse_report(markdown: str) -> dict:
+    p = _ReportParser()
+    for line in markdown.splitlines():
+        p.feed(line)
+    if not p.headline:
         raise ValueError("找不到「> **今日頭條：** …」那一行")
-    if not subject:
+    if not p.subject:
         raise ValueError("找不到 <!-- subject: … --> 註解")
 
     seen: set[str] = set()
-    sources = [{"title": t, "url": u} for t, u in links if not (u in seen or seen.add(u))]
-    return {"title": title, "subject": subject, "headline": headline, "blocks": blocks, "sources": sources}
+    sources = [{"title": t, "url": u} for t, u in p.links if not (u in seen or seen.add(u))]
+    return {"title": p.title, "subject": p.subject, "headline": p.headline, "blocks": p.blocks, "sources": sources}
 
 
 def uids_of(report: dict) -> list[str]:

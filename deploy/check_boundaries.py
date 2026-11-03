@@ -28,7 +28,40 @@ MEMBERS = {
 }
 
 
-def check(members: dict = MEMBERS) -> list[str]:  # noqa: C901
+def _imported(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Import):
+        names = [a.name for a in node.names]
+    elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+        names = [node.module]
+    else:
+        names = []
+    return {n.split(".")[0] for n in names}
+
+
+def _check_file(mid: str, base: Path, py: Path, ok: set[str]) -> list[str]:
+    errors = []
+    rel = f"{mid}/{py.relative_to(base)}"
+    file_ok = mid == "shared" and py.name == "paths.py"
+    for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"), filename=rel)):
+        for top in _imported(node):
+            if top.startswith("newsletter_") and top not in ok:
+                errors.append(f"{rel}:{node.lineno} {mid} 不可 import {top}")
+        if isinstance(node, ast.Name) and node.id == "__file__" and not file_ok:
+            errors.append(f"{rel}:{node.lineno} __file__ 只准出現在 shared 的 paths.py")
+    return errors
+
+
+def _check_deps(mid: str, base: Path, allowed: set[str]) -> list[str]:
+    deps = tomllib.loads((base / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    declared = {m.group(0).lower().replace("_", "-") for d in deps if (m := re.match(r"[A-Za-z0-9_.-]+", d))}
+    declared = {d for d in declared if d.startswith("newsletter-")}
+    expected = {f"newsletter-{m}" for m in allowed}
+    if declared != expected:
+        return [f"成員 {mid} 的 pyproject.toml：newsletter-* 依賴是 {sorted(declared)}，應為 {sorted(expected)}"]
+    return []
+
+
+def check(members: dict = MEMBERS) -> list[str]:
     errors = []
     for mid, (base, allowed) in members.items():
         if not base.is_dir():
@@ -36,25 +69,8 @@ def check(members: dict = MEMBERS) -> list[str]:  # noqa: C901
             continue
         ok = {f"newsletter_{m}" for m in allowed | {mid}}
         for py in sorted((base / "src").rglob("*.py")):
-            rel = f"{mid}/{py.relative_to(base)}"
-            for node in ast.walk(ast.parse(py.read_text(encoding="utf-8"), filename=rel)):
-                if isinstance(node, ast.Import):
-                    names = [a.name for a in node.names]
-                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                    names = [node.module]
-                else:
-                    names = []
-                for top in {n.split(".")[0] for n in names}:
-                    if top.startswith("newsletter_") and top not in ok:
-                        errors.append(f"{rel}:{node.lineno} {mid} 不可 import {top}")
-                if isinstance(node, ast.Name) and node.id == "__file__" and not (mid == "shared" and py.name == "paths.py"):
-                    errors.append(f"{rel}:{node.lineno} __file__ 只准出現在 shared 的 paths.py")
-        deps = tomllib.loads((base / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
-        declared = {m.group(0).lower().replace("_", "-") for d in deps if (m := re.match(r"[A-Za-z0-9_.-]+", d))}
-        declared = {d for d in declared if d.startswith("newsletter-")}
-        expected = {f"newsletter-{m}" for m in allowed}
-        if declared != expected:
-            errors.append(f"成員 {mid} 的 pyproject.toml：newsletter-* 依賴是 {sorted(declared)}，應為 {sorted(expected)}")
+            errors += _check_file(mid, base, py, ok)
+        errors += _check_deps(mid, base, allowed)
     return errors
 
 

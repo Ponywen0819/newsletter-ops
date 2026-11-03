@@ -135,7 +135,25 @@ def venue_of(note: str, venues: dict) -> dict | None:
     return {"status": status, "kind": kind, "name": name, "track": track_name, "label": label}
 
 
-def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float, float, list[str]]:  # noqa: C901
+# (keywords 鍵, 加減分, 是否算命中)
+_KEYWORD_WEIGHTS = (
+    ("boost_high", 2.0, True),
+    ("boost_mid", 0.8, True),
+    ("boost_low", 0.4, True),
+    ("penalize", -4.0, False),
+)
+
+
+def _freshness(published: str) -> float:
+    try:
+        age_h = (datetime.now(timezone.utc)
+                 - datetime.fromisoformat(published)).total_seconds() / 3600
+    except ValueError:
+        return 0.0
+    return 1.5 * math.exp(-max(age_h, 0) / 12)
+
+
+def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float, float, list[str]]:
     """回傳 (relevance, rank, 命中的關鍵字)。"""
     text = f"{item['title']} {item['summary']}".lower()
     hits: list[str] = []
@@ -143,21 +161,12 @@ def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float
     # 一個技術關鍵字都沒有（「Introducing X」），但則則值得看，數量由配額控制。
     relevance = float(item.get("baseline_relevance", 0.0))
 
-    for kw in keywords.get("boost_high", []):
-        if _hits(text, kw):
-            relevance += 2.0
-            hits.append(kw)
-    for kw in keywords.get("boost_mid", []):
-        if _hits(text, kw):
-            relevance += 0.8
-            hits.append(kw)
-    for kw in keywords.get("boost_low", []):
-        if _hits(text, kw):
-            relevance += 0.4
-            hits.append(kw)
-    for kw in keywords.get("penalize", []):
-        if _hits(text, kw):
-            relevance -= 4.0
+    for key, delta, is_hit in _KEYWORD_WEIGHTS:
+        for kw in keywords.get(key, []):
+            if _hits(text, kw):
+                relevance += delta
+                if is_hit:
+                    hits.append(kw)
 
     venue = venue_of(item.get("venue_note", ""), venues or {})
     if venue:
@@ -166,12 +175,7 @@ def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float
 
     rank = relevance * float(item.get("weight", 1.0))
     if item.get("published"):
-        try:
-            age_h = (datetime.now(timezone.utc)
-                     - datetime.fromisoformat(item["published"])).total_seconds() / 3600
-            rank += 1.5 * math.exp(-max(age_h, 0) / 12)
-        except ValueError:
-            pass
+        rank += _freshness(item["published"])
     return round(relevance, 2), round(rank, 2), sorted(set(hits))
 
 
