@@ -138,7 +138,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token（一次最小的呼�
    （極小的請求）驗證，**通過才儲存**到 `state/oauth_token.json`（權限 600、不進版控）；貼錯的 token 不會蓋掉原本可用的。
    頁面也顯示授權狀態與預計到期日（以一年效期推算，剩 30 天內會提醒），並可「測試連線」或「刪除已存的 token」
    （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。`/auth` 的使用限制見 [web/README.md](../web/README.md)。
-3. Docker 部署的 `/auth` 開不了（請求不是從 loopback 來）：改在 web 容器裡對 `127.0.0.1` 送，指令見 [deploy/README.md](../deploy/README.md)。
+3. Docker 部署：在 host 本機的瀏覽器開管理 port `http://127.0.0.1:8788/auth`（主 port 上的 `/auth` 開不了），見 [deploy/README.md](../deploy/README.md)。
 
 - **token 的來源只有 `state/oauth_token.json`**（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑）。**沒有就直接 exit 2**，
   不會退回本機 `claude` 的登入，也不會用 API key。儲存與讀取由 [shared](../shared/README.md) 的 `auth_store.py` 負責。

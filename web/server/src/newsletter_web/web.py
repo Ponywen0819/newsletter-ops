@@ -41,8 +41,10 @@ HTML 回應帶 Content-Security-Policy（只許同源的腳本與樣式），前
   3. 沒有 Cf-*、X-Forwarded-*、X-Real-IP、Forwarded、Via、Cdn-Loop 等代理標頭
   4. 有 Origin 的話，也必須是本機
 cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以光看來源位址擋不住 Tunnel，要靠 2、3。
-遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth；
-Docker 部署裡請求不是從 loopback 來，改在容器裡對 127.0.0.1 送（見 deploy/README.md）。
+遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth。
+Docker 部署裡請求不是從 loopback 來（是 bridge 閘道），主 port 上的 /auth 開不了；改用 --admin-port 另開的管理 port：
+  只有這個 listener 把 /auth 與 /api/auth* 當本機（來源要是私有位址；Host、Origin、代理標頭的檢查照舊），
+  誰連得到它由 compose 決定——只 publish 成 127.0.0.1:<port>，Tunnel 仍只指向主 port（見 deploy/README.md）。
 token 只存在 /auth 存的檔，**不讀環境變數 CLAUDE_CODE_OAUTH_TOKEN**（理由見 shared 的 auth_store.py）。
 貼上的 token 先交給 `newsletter-agent --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
 token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK（由 newsletter-agent 帶進來），用 `uv run newsletter-web` 啟動就有。
@@ -127,15 +129,17 @@ def local_host(value: str) -> bool:
     return parts.hostname in LOCAL_HOSTNAMES
 
 
-def is_local_request(client_ip: str, headers: Mapping[str, str]) -> bool:
+def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = False) -> bool:
     """/auth 的存取條件：真的從本機來，而且不是經 Cloudflare Tunnel（或任何代理）轉進來的。
-    cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以來源位址不夠，要再看 Host 與代理標頭。"""
+    cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以來源位址不夠，要再看 Host 與代理標頭。
+    admin（管理 port）：Docker 的 published port 轉進來的來源是 bridge 閘道（172.x），不是 loopback，
+    所以來源只要求是私有位址（擋掉直接從外網連進來）；誰連得到這個 port 由 compose 只 publish 在 127.0.0.1 決定。"""
     try:
         addr = ipaddress.ip_address(client_ip.split("%")[0])
     except ValueError:
         return False
     addr = getattr(addr, "ipv4_mapped", None) or addr  # ::ffff:127.0.0.1
-    if not addr.is_loopback:
+    if not (addr.is_private if admin else addr.is_loopback):
         return False
     h = {k.lower(): v for k, v in headers.items()}
     if not local_host(h.get("host", "")):
@@ -410,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(format, *args)
 
     def _local(self) -> bool:
-        return is_local_request(self.client_address[0], self.headers)
+        return is_local_request(self.client_address[0], self.headers, getattr(self.server, "admin", False))
 
     def _send(self, status: int, body: str | bytes, ctype: str = "text/plain; charset=utf-8",
               cache: str = "no-store", headers: Mapping[str, str] | None = None) -> None:
@@ -524,20 +528,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": "server error"})
 
 
-def make_server(site: Site, host: str, port: int, quiet: bool = False) -> ThreadingHTTPServer:
+def make_server(site: Site, host: str, port: int, quiet: bool = False, admin: bool = False) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), Handler)
     server.site = site  # type: ignore[attr-defined]
     server.quiet = quiet  # type: ignore[attr-defined]
+    server.admin = admin  # type: ignore[attr-defined]
     return server
 
 
 @contextlib.contextmanager
-def served(site: Site) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
+def served(site: Site, admin: bool = False) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
     """selftest 用：起一個真的 HTTP 伺服器，給一個 req(method, path, headers, body) → (狀態碼, 標頭, 內文)。
     用 http.client 而不是 urllib：路徑原樣送出（不正規化 `..`），標頭也能自己指定（Host、Cf-* 等）。"""
     import http.client
 
-    server = make_server(site, DEFAULT_HOST, 0, quiet=True)  # port 0：讓系統挑空的 port
+    server = make_server(site, DEFAULT_HOST, 0, quiet=True, admin=admin)  # port 0：讓系統挑空的 port
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
 
@@ -798,6 +803,16 @@ def selftest_auth() -> None:
     for name in ("Cf-Connecting-Ip", "Cf-Ray", "Cf-Access-Authenticated-User-Email", "CF-IPCountry", "X-Forwarded-For",
                  "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip", "Forwarded", "Via", "Cdn-Loop"):
         assert not is_local_request("127.0.0.1", {**ok_host, name: "x"}), name
+        assert not is_local_request("172.18.0.1", {**ok_host, name: "x"}, admin=True), name
+    # 管理 port：來源放寬到私有位址（Docker bridge 閘道），公網位址、Host／Origin／代理標頭的檢查不變
+    for ip in ("172.18.0.1", "192.168.1.5", "10.0.0.2", "127.0.0.1", "::1"):
+        assert is_local_request(ip, ok_host, admin=True), ip
+        assert is_local_request(ip, {**ok_host, "Origin": "http://127.0.0.1:8788"}, admin=True), ip
+    for ip, h in (("8.8.8.8", ok_host), ("2001:4860:4860::8888", ok_host), ("not-an-ip", ok_host),
+                  ("172.18.0.1", {"Host": "news.example.com"}), ("172.18.0.1", {}),
+                  ("172.18.0.1", {**ok_host, "Origin": "https://evil.example"})):
+        assert not is_local_request(ip, h, admin=True), (ip, h)
+    assert not is_local_request("172.18.0.1", ok_host)  # 主 port 仍要求 loopback
 
     # --- run_auth_check：子程序的呼叫方式與輸出解析（假的 subprocess.run）---
     secret = "sk-ant-oat01-" + "Kp4" * 14
@@ -889,6 +904,29 @@ def selftest_auth() -> None:
                     status, body = post(path, {"token": secret}, hdr)
                     assert status == 404 and body == {"error": "not found"}, (hdr, path)
             assert not checked and not site.token_path.exists()  # 被擋的請求沒有觸發驗證、沒有寫檔
+
+            # 管理 port（--admin-port）：同一個 Site，/auth 與 /api/auth* 在這裡才算本機；Host／代理標頭／Origin 照擋
+            with served(site, admin=True) as admin_req:
+                def admin_get(path, headers=None):
+                    status, _, text = admin_req("GET", path, headers)
+                    return status, json.loads(text) if text.startswith("{") else text
+
+                assert admin_get("/api/session") == (200, {"local": True})
+                assert admin_get("/api/auth") == (200, {"state": "missing"})
+                assert admin_req("GET", "/auth")[0] == 200
+                status, _, text = admin_req("POST", "/api/auth/revoke", None, {})
+                assert status == 200 and "本來就沒有" in text  # 不是 404：這個 listener 收得到寫入憑證的 API
+                for hdr in ({"Host": "news.example.com"}, {"Cf-Ray": "abc"}, {"X-Forwarded-For": "1.2.3.4"},
+                            {"Origin": "https://evil.example"}):
+                    assert admin_req("GET", "/auth", hdr)[0] == 404, hdr
+                    assert admin_get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
+                    assert admin_req("POST", "/api/auth/revoke", hdr, {})[0] == 404, hdr
+                # 實際的來源位址進不來（測試只能從 127.0.0.1 連），改驗 Handler 有把「這是管理 port」交給判斷
+                real, calls = is_local_request, []
+                with mock.patch.dict(globals(), {"is_local_request": lambda *a: calls.append(a[2]) or real(*a)}):
+                    admin_get("/api/session")
+                    get("/api/session")
+                assert calls == [True, False], calls
 
             # 認證健康狀態是給所有人看的（橫幅用）：非本機也讀得到；沒有任何認證來源＝missing
             missing = {"state": "missing", "kind": "missing", "checked_at": None}
@@ -1029,6 +1067,9 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="晨報瀏覽與 👍／👎 回饋")
     ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}，不要綁到對外位址（沒有登入）")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WEB_PORT", DEFAULT_PORT)))
+    ap.add_argument("--admin-port", type=int, default=int(os.environ.get("NEWSLETTER_ADMIN_PORT", 0)),
+                    help="另開一個管理 port（綁在 --host），/auth 與 /api/auth* 只在這裡開；0＝不開。給 Docker 用，"
+                         "compose 只把它 publish 成 127.0.0.1:<port>（見 deploy/README.md）")
     ap.add_argument("--auth-check-interval", type=int, metavar="SECONDS",
                     default=int(os.environ.get("NEWSLETTER_AUTH_CHECK_INTERVAL", CHECK_INTERVAL)),
                     help="每隔幾秒背景驗證一次 Claude 認證（會實際呼叫一次）；0＝不驗證。預設 %(default)s")
@@ -1037,6 +1078,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest:
         selftest()
         return 0
+    if args.admin_port and args.admin_port == args.port:
+        ap.error("--admin-port 不能和 --port 相同")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
     site = Site()
@@ -1047,6 +1090,10 @@ def main(argv: list[str] | None = None) -> int:
     stop = threading.Event()
     if args.auth_check_interval > 0:
         threading.Thread(target=site.monitor, args=(args.auth_check_interval, stop), daemon=True).start()
+    admin = make_server(site, args.host, args.admin_port, admin=True) if args.admin_port else None
+    if admin:
+        threading.Thread(target=admin.serve_forever, daemon=True).start()
+        print(f"[web] 管理 port http://{args.host}:{args.admin_port}/auth  （不要 publish 到 127.0.0.1 以外）", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -1054,6 +1101,9 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         stop.set()
         server.server_close()
+        if admin:
+            admin.shutdown()
+            admin.server_close()
     return 0
 
 

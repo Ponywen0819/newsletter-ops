@@ -133,7 +133,7 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-f
                                                                     scheduler 容器：每天 08:00 跑 run_daily.sh
 ```
 
-`web` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Cloudflare Access**；Tunnel 的網域一定要先掛上 Access 再對外使用，也不要為了方便而 publish 任何 port。
+`web` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Cloudflare Access**；Tunnel 的網域一定要先掛上 Access 再對外使用，也不要為了方便而 publish 主 port（唯一 publish 的是只綁 `127.0.0.1` 的管理 port，貼 OAuth token 用）。
 Docker（`docker compose up -d --build`）與不用 Docker 的 systemd + cloudflared 兩種做法、Cloudflare 設定與驗收清單見 [deploy/README.md](deploy/README.md)。
 
 ## 資料保存：不保存
