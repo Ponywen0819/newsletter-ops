@@ -36,7 +36,7 @@ def step(log: IO[str], label: str, module: str, *args: str,
     """跑一步，回傳 (exit code, stdout)。stdout 只有 capture 時才收；否則和 stderr 一起進 log。"""
     say(log, label)
     done = subprocess.run([sys.executable, "-m", module, *args], cwd=ROOT, input=input, encoding="utf-8",
-                          stdout=subprocess.PIPE if capture else log, stderr=log)
+                          stdout=subprocess.PIPE if capture else log, stderr=log, check=False)
     code = done.returncode if done.returncode >= 0 else 128 - done.returncode
     return code, done.stdout or ""
 

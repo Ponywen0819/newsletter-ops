@@ -4,14 +4,13 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
-import json
 import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
 
@@ -64,7 +63,7 @@ def _http_get(url: str, cfg: dict) -> bytes:
                 if resp.headers.get("Content-Encoding") == "gzip":
                     raw = gzip.GzipFile(fileobj=io.BytesIO(raw)).read()
                 return raw
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             last = exc
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"GET failed: {url}: {last}")
@@ -94,7 +93,7 @@ def _parse_date(value: str | None) -> str | None:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt.astimezone(timezone.utc).isoformat()
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     return None
 
@@ -187,7 +186,7 @@ def fetch_source(src: dict, cfg: dict, limit: int) -> tuple[list[Item], str | No
         if src.get("type") == "arxiv":
             return fetch_arxiv(src, cfg, limit), None
         return parse_feed(_http_get(src["url"], cfg), src, limit), None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return [], f"{src['name']}: {type(exc).__name__}: {exc}"
 
 

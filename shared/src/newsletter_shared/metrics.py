@@ -135,7 +135,7 @@ def cmd_claude(argv: list[str]) -> int:
     if os.environ.get("NEWSLETTER_RUNNER") == "sdk":
         print("[metrics] 由 agent_run.py 記錄用量，略過", file=sys.stderr)
         return 0
-    args = dict(zip(argv[::2], argv[1::2]))
+    args = dict(zip(argv[::2], argv[1::2], strict=False))
     path = Path(args["--session"]) if "--session" in args else None
     if path is None:
         candidates = sorted(TRANSCRIPTS.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
@@ -180,16 +180,18 @@ def cmd_summary(argv: list[str]) -> int:
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         if not show_all:
             rows = [r for r in rows if r.get("label", "prod") == "prod"]  # 舊紀錄沒有 label，當 prod
+        def sec(run: dict, s: str) -> str:
+            return f"{run[s]['seconds']:.1f}" if s in run else "-"
+
         for run in split_runs(rows):
             first = min(run.values(), key=lambda r: r["ts"])
             c = run.get("claude", {})
             tok = c.get("tokens", {})
             top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
-            sec = lambda s: f"{run[s]['seconds']:.1f}" if s in run else "-"  # noqa: E731
             via = c.get("runner", "chat") if c else "-"  # sdk＝agent_run.py；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
             usd = f"{c['total_cost_usd']:.2f}" if c.get("total_cost_usd") is not None else "-"  # 只有 sdk 路線拿得到
             print(f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} "
-                  f"{sec('fetch'):>7} {sec('curate'):>7} {sec('claude'):>7} {sec('render'):>7} "
+                  f"{sec(run, 'fetch'):>7} {sec(run, 'curate'):>7} {sec(run, 'claude'):>7} {sec(run, 'render'):>7} "
                   f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
                   f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6}  {top}")
     return 0
