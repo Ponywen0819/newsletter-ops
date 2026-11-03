@@ -3,12 +3,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type RefObje
 // 與 styles.css 的閱讀器斷點同一個值。沒有 matchMedia（jsdom）時當作寬螢幕，鍵盤切換才測得到
 export const isWide = () => window.matchMedia?.('(min-width: 1100px)').matches ?? true
 
-/**
- * 左欄目錄（≥1100px）和右欄內文的連動：目前是哪一項、點目錄捲過去、網址 #hash、捲動時跟著亮起。
- * 右欄的每一項要帶 `data-unit="<id>"`（ids 是它們的 id，依畫面順序），root 是包住這些項目的元素；
- * nav 是目錄自己，目前這一項（aria-current="true"）超出目錄的可見範圍時只捲目錄。
- * 晨報頁（一則一項）與歷史晨報（一個月一項）共用。
- */
+/** 左欄目錄與右欄內文的連動（目前項、點擊捲動、#hash、scroll-spy）。右欄每項要帶 `data-unit="<id>"`。 */
 export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | null>, navRef: RefObject<HTMLElement | null>) {
   const [activeId, setActiveId] = useState(() => {
     const fromHash = window.location.hash.slice(1)
@@ -26,7 +21,6 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
       const target = prev?.classList.contains('group-title') ? prev : unit
       setActiveId(id)
       lockUntil.current = Date.now() + 800
-      // 平順與否交給 CSS 的 scroll-behavior（尊重 prefers-reduced-motion）；載入時帶 hash 直接到位
       target.scrollIntoView?.({ block: 'start', behavior: instant ? 'instant' : 'auto' })
     },
     [rootRef],
@@ -41,7 +35,7 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     [scrollToUnit],
   )
 
-  // 目錄連結的 onClick：一般左鍵攔下來自己捲；Ctrl／⌘／Shift／Alt＋點（新分頁開啟）照舊
+  // 帶修飾鍵的點擊（新分頁開啟）照舊
   const onLinkClick = useCallback(
     (id: string) => (e: MouseEvent) => {
       if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return
@@ -51,13 +45,11 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     [goTo],
   )
 
-  // 網址帶 hash 開頁：直接捲到那一則
   useEffect(() => {
     const id = window.location.hash.slice(1)
     if (ids.includes(id)) scrollToUnit(id, true)
   }, [ids, scrollToUnit])
 
-  // 上一頁／下一頁、手改網址的 hash
   useEffect(() => {
     const onHashChange = () => {
       const id = window.location.hash.slice(1)
@@ -67,8 +59,7 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [ids, scrollToUnit])
 
-  // scroll-spy：頁面上方 30% 那條線以上、最後一個開頭已經過線的單位就是目前這一則；捲到底時是最後一則
-  // （最後幾則很短的話，捲到底也碰不到那條線）
+  // 開頭已越過頁面上方 30% 的最後一項是目前項；捲到底時是最後一項
   useEffect(() => {
     const onScroll = () => {
       if (Date.now() < lockUntil.current || !isWide()) return
@@ -89,8 +80,7 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     }
   }, [rootRef])
 
-  // 目錄比視窗長時，目前這一則要留在看得到的地方。只捲目錄自己：用 scrollIntoView 的話
-  // 可能連帶影響頁面正在進行的捲動
+  // 只捲目錄自己：scrollIntoView 會干擾頁面正在進行的捲動
   useEffect(() => {
     const nav = navRef.current
     const item = nav?.querySelector('[aria-current="true"]')

@@ -37,11 +37,7 @@ export function plainText(nodes: InlineNode[]): string {
   return nodes.map((n) => (n.type === 'text' || n.type === 'code' ? n.text : plainText(n.children))).join('')
 }
 
-/**
- * 把晨報的 blocks 切成「分類組 → 閱讀單位」。後端 JSON 不動，這裡只重新分組：
- * 每個區塊恰好出現一次（title、callout 在 Grouped 上，heading 在 Group 上，其餘都在某個 unit 裡），不遺失也不重複。
- * 「其餘收錄」那種每條自帶回饋鈕的單行清單沒有前導段落，整張清單算一個 unit，標籤用分類名。
- */
+/** 把 blocks 切成「分類組 → 閱讀單位」；每個區塊恰好出現一次。 */
 export function groupReport(report: Report): Grouped {
   const groups: Group[] = []
   let title: TitleBlock | null = null
@@ -60,7 +56,7 @@ export function groupReport(report: Report): Grouped {
     switch (block.type) {
       case 'title':
         if (!title) title = block
-        else add(i, 'paragraph', block.title, [block]) // 理論上只有一個；多的不能丟，當一般單位
+        else add(i, 'paragraph', block.title, [block]) // 多的不能丟
         break
       case 'heading':
         flush()
@@ -68,7 +64,7 @@ export function groupReport(report: Report): Grouped {
         break
       case 'callout':
         if (!callout) callout = block
-        else add(i, 'callout', plainText(block.inline).slice(0, 30), [block]) // 理論上只有一個；多的不能丟，當一般單位
+        else add(i, 'callout', plainText(block.inline).slice(0, 30), [block]) // 多的不能丟
         break
       case 'paragraph': {
         const next = blocks[i + 1]

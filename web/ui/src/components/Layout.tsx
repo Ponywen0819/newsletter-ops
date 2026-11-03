@@ -9,10 +9,10 @@ import { ThemeSelect } from './ThemeSelect'
 const BANNER: Record<Exclude<Status, 'ok'>, string> = {
   offline: '離線中，顯示的是上次載入的內容',
   unreachable: '連不上伺服器，顯示的是上次載入的內容',
-  login: '登入已逾時', // 資料請求此時不回快取（見 api.ts），畫面會是「讀取失敗」；按鈕整頁重載，讓瀏覽器走 Access 登入
+  login: '登入已逾時', // 按鈕整頁重載，讓瀏覽器走 Access 登入
 }
 
-/** 認證橫幅的文字；null ＝ 不用提醒。unchecked 是伺服器剛啟動、還沒驗證過，不算問題。 */
+/** 認證橫幅的文字；null ＝ 不用提醒。 */
 function authMessage(h: AuthHealth): string | null {
   switch (h.state) {
     case 'missing':
@@ -31,7 +31,7 @@ function authMessage(h: AuthHealth): string | null {
   }
 }
 
-/** 授權有問題才出現；能處理的（沒授權、快到期、失效）本機給連結（已在 /auth 就不用），遠端說明要回主機處理（/auth 只服務本機）。 */
+/** 授權有問題才出現；本機給 /auth 連結，遠端只說要回主機處理。 */
 function AuthBar({ local }: { local: boolean }) {
   const { health } = useAuthHealth()
   const onAuthPage = useLocation().pathname === '/auth'
@@ -46,11 +46,7 @@ function AuthBar({ local }: { local: boolean }) {
   )
 }
 
-/**
- * reader：桌機寬度是「左側欄＋右側內文」（首頁、歷史晨報、單日晨報），頁面要自己用 ReaderShell 畫兩欄。
- * single：單欄卡片（確認頁、授權、找不到頁面）。
- * 由 App.tsx 的路由指定，不看內容渲染了什麼，所以載入中、出錯時外框也一樣。
- */
+/** reader：兩欄（頁面自己用 ReaderShell）；single：單欄卡片。由路由指定，載入中與出錯時外框不變。 */
 export function Layout({ variant }: { variant: 'reader' | 'single' }) {
   const session = useSession()
   const connectivity = useConnectivity()

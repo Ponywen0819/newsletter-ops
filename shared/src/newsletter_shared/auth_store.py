@@ -1,21 +1,10 @@
 #!/usr/bin/env python3
-"""OAuth token 的儲存與讀取：web.py（貼上、驗證、狀態）與 agent_run.py（執行時取用）共用。
+"""OAuth token 的儲存與讀取，web.py 與 agent_run.py 共用。
 
 用法：uv run python -m newsletter_shared.auth_store --selftest
 
-只用 OAuth（`claude setup-token` 產生、效期一年的 token），**刻意不支援 API key**：不想為了這個專案額外付費。
-token 只有一個來源：web.py 的 /auth 頁面（只服務本機）貼上後存的 state/oauth_token.json（NEWSLETTER_TOKEN_FILE 可改路徑）。
-沒有就是 None，呼叫端要直接失敗；不退回本機 `/login` 的登入，也不用 API key。
-**不讀環境變數 CLAUDE_CODE_OAUTH_TOKEN**：token 一年會過期，換新時改環境變數要重啟程序（Docker 要重新部署）才生效，
-而且 web 與排程的環境可能不同、狀態對不起來；存成檔案，換新立刻生效，所有程序看到同一份。
-（這個環境變數只用來把 token 交給 claude CLI 與驗證用的子程序，見 agent_run.py，不是來源。）
-
-Claude CLI 自己的優先順序是 ANTHROPIC_API_KEY 高於 CLAUDE_CODE_OAUTH_TOKEN，非互動模式只要有 key 就用 key，
-所以環境裡留著 key 會悄悄開始計費。scrub_environ() 把「排在 OAuth token 前面的來源」整批移掉。
-
-token 只放在 state/oauth_token.json（權限 600，以暫存檔＋os.replace 原子更新，用 lock.py 的檔案鎖排隊）。
-.gitignore 是白名單模式，這個檔案預設不進版控。Auth 的 repr、status() 都不含 token（status 最多給尾 4 碼）。
-只用 stdlib。
+token 唯一的來源是 state/oauth_token.json（/auth 貼上後存的，權限 600），不讀 CLAUDE_CODE_OAUTH_TOKEN：
+換新要立刻生效，所有程序看到同一份。不支援 API key；scrub_environ() 移除優先序高於 OAuth 的來源。
 """
 from __future__ import annotations
 
@@ -170,15 +159,15 @@ def selftest() -> None:
         save(secret, path, now)
         assert stat.S_IMODE(path.stat().st_mode) == 0o600, oct(path.stat().st_mode)
         assert load(path)["token"] == secret
-        assert [p.name for p in path.parent.iterdir() if p.name != path.name + ".lock"] == [path.name]  # 沒留暫存檔
+        assert [p.name for p in path.parent.iterdir() if p.name != path.name + ".lock"] == [path.name]
         st = status(path, now)
         assert st == {"state": "ok", "tail": secret[-4:], "saved_at": "2026-10-02",
                       "expires_at": "2027-10-02", "days_left": 365}, st
         assert secret not in json.dumps(st)
 
         # 到期狀態
-        assert status(path, now + timedelta(days=334))["state"] == "ok"        # 剩 31 天
-        assert status(path, now + timedelta(days=335))["state"] == "expiring"  # 剩 30 天
+        assert status(path, now + timedelta(days=334))["state"] == "ok"
+        assert status(path, now + timedelta(days=335))["state"] == "expiring"
         assert status(path, now + timedelta(days=364))["state"] == "expiring"
         assert status(path, now + timedelta(days=366))["state"] == "expired"
 
@@ -212,7 +201,7 @@ def selftest() -> None:
         with mock.patch.dict(os.environ, {TOKEN_ENV: "envtok", "ANTHROPIC_API_KEY": "sk-ant-api03-x"}):
             assert resolve(none) is None
             got = resolve(path)
-            assert got.source == "stored-token" and got.token == secret  # 有檔就用檔，不看環境變數
+            assert got.source == "stored-token" and got.token == secret
         assert secret not in repr(got)
 
         # 路徑可由環境變數改

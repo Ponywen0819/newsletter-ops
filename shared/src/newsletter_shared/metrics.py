@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""量測層：debug 開啟時，把各階段耗時與 Claude token 用量寫進 logs/metrics/<date>.jsonl。
+"""量測層：debug 開啟時把各階段耗時與 Claude token 用量寫進 logs/metrics/<date>.jsonl。
 
-開關：config.json 的 "debug": true，或環境變數 NEWSLETTER_DEBUG=1（0 可強制關閉）。
-關閉時 record() / timed() 什麼都不做，對正常執行沒有影響。
-測試執行設 NEWSLETTER_RUN_LABEL=test，紀錄會標上 label 以便區分；紀錄一律保留，不刪。
+開關：config.json 的 "debug"，或 NEWSLETTER_DEBUG=1（0 強制關閉）。測試執行設 NEWSLETTER_RUN_LABEL=test；紀錄一律保留。
 
   uv run newsletter-metrics claude [--since ISO] [--until ISO] [--session FILE]
-      從 Claude Code 的 session 逐則紀錄（~/.claude/projects/<專案>/<session>.jsonl）
-      統計最近一次 news-digest 開始到現在的 token、API 回合數、工具呼叫次數與耗時。
-      由 agent_run.py 呼叫的 session（NEWSLETTER_RUNNER=sdk）用量由它自己記，這裡直接略過。
   uv run newsletter-metrics summary [天數] [--all]
-      彙整最近幾天的紀錄，每次執行一行；預設只列 label=prod，--all 連測試一起列。
 """
 from __future__ import annotations
 
@@ -228,7 +222,7 @@ def selftest() -> None:
         u = claude_usage(tmp)
     finally:
         tmp.unlink()
-    assert u["api_turns"] == 2, u                      # m0 在起點之前不算；m2 兩行只算一次
+    assert u["api_turns"] == 2, u
     assert u["tokens"] == {"input": 6, "cache_write": 0, "cache_read": 100, "output": 10}, u
     assert u["tools"] == {"WebFetch": {"calls": 1, "seconds": 8.0}}, u
     stages = ["fetch_source", "fetch", "curate", "render", "claude", "fetch", "curate", "render", "render"]

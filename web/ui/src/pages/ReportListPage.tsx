@@ -22,7 +22,6 @@ function Rows({ items }: { items: ReportSummary[] }) {
   )
 }
 
-// 標題放左欄（位置對應晨報頁左欄的標題）、列表放右欄；載入中與出錯也在 ReaderShell 裡，外框不變
 export function ReportListPage() {
   const { data, error } = useFetch(api.reports, [useRecovered()])
   useDocumentTitle('歷史晨報')
@@ -54,7 +53,7 @@ function ReportList({ reports }: { reports: ReportSummary[] }) {
   return <MonthList months={months} />
 }
 
-/** 兩個月以上：右欄依月份分組；≥1100px 左欄多一份月份目錄（連動邏輯與晨報頁的目錄共用，見 useSectionNav）。 */
+/** 兩個月以上：依月份分組，左欄多一份月份目錄。 */
 function MonthList({ months }: { months: MonthGroup[] }) {
   const ids = useMemo(() => months.map((m) => m.id), [months])
   const rootRef = useRef<HTMLDivElement>(null)
@@ -81,7 +80,6 @@ function MonthList({ months }: { months: MonthGroup[] }) {
       }
     >
       {months.map((month) => (
-        // data-unit／class="unit"：右欄的錨點，捲動定位與 scroll-spy 都認這個（見 useSectionNav、styles.css）
         <section key={month.id} className="unit" data-unit={month.id}>
           <h2>{month.label}</h2>
           <Rows items={month.items} />

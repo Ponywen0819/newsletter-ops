@@ -1,59 +1,7 @@
 #!/usr/bin/env python3
-"""Web 層：JSON API ＋ 提供前端（web/，Vite + React）的建置結果。晨報每則旁邊按 👍／👎，直接寫進 state/feedback.jsonl。
+"""Web 層：JSON API ＋ 提供 web/ui/dist 的前端。API 列表與安全設計見 web/README.md。
 
-用法：uv run newsletter-web [--host 127.0.0.1] [--port 8787] [--auth-check-interval 3600] [--selftest]
-port 也可用環境變數 NEWSLETTER_WEB_PORT 設定（--port 優先）。
-
-前端是 web/ui/ 底下的 Vite + React 專案，要先建置：`cd web/ui && npm install && npm run build`，
-這裡把 web/ui/dist 當靜態檔提供（/assets/* 帶 hash，長期快取；index.html 每次確認）。
-前端的路由（/、/reports、/reports/<date>、/feedback/<uid>、/auth）一律回 index.html，由前端自己畫；沒建置過時回 503 並說明怎麼建置。
-開發前端用 `cd web/ui && npm run dev`（Vite dev server，把 /api 代理到這裡），不必每次重新建置。
-
-API（都是 JSON；前端的型別在 web/ui/src/types.ts）：
-  GET  /api/session           {local}                 這個請求是不是從本機來（前端據此決定要不要顯示「Claude 授權」）
-  GET  /api/heartbeat         {ok}                    連線探測（no-store、不讀檔、不寫入）；前端用它區分離線、連不上伺服器、Access 登入逾時
-  GET  /api/today             {date, latest, report, marks}   當日晨報；還沒產出時 report 是 null、latest 是最新一份的日期
-  GET  /api/reports           {reports: [{date, headline}]}   歷史列表，新到舊
-  GET  /api/reports/<date>    {date, report, marks}   report 是 report_data.parse_report() 的結構（不是 HTML）
-  GET  /api/feedback/<uid>    {uid, date, title, mark}  email 連結的確認頁用：這則的標題與目前標記（只讀，不寫入）
-  POST /api/feedback          {uid, mark}             👍／👎
-  GET  /api/auth-health       {state, kind, checked_at}   認證是否還能用（定時驗證的最近結果；不含訊息與 token，給所有人看，前端據此顯示橫幅）
-  GET  /api/auth              {state, ...}            OAuth token 的狀態（只限本機）
-  POST /api/auth/token|test|revoke                    貼上、測試、刪除 OAuth token（只限本機）
-晨報的 Markdown 由 report_data.py 解析成結構（網頁與 email 共用同一份），版型由前端負責；email 版型由 render_email.py 排版，兩者互不影響。
-
-email 裡的 👍／👎 連結（render_email.py，需設 NEWSLETTER_BASE_URL）指向 /feedback/<uid>?v=…：
-GET 只畫確認頁（信箱的安全掃描會自動開連結，所以 GET 絕不寫入），頁面上再按一次才 POST /api/feedback。
-
-回饋規則：只有 `+`（👍）、`-`（👎）兩級；再按一次同一顆＝取消，按另一顆＝覆蓋。
-一律 append 一行到 feedback.jsonl，以同一 uid 的最後一筆為準；取消寫成 mark ""。
-欄位與 feedback.py 相同（共用 feedback.build_row）。
-寫入與 feedback.py 的 collect() 共用 lock.locked / feedback.append_rows：都只 append，可以同時跑。
-
-不做登入：預設只 bind 127.0.0.1，對外交給 Cloudflare Tunnel + Access。
-POST 只收 Content-Type: application/json（跨站表單送不出這種請求，順便擋 CSRF）。
-HTML 回應帶 Content-Security-Policy（只許同源的腳本與樣式），前端因此不能有行內 <script>／style。
-只用 stdlib。
-
-/auth 與 /api/auth*（token、test、revoke）能寫入憑證，比 👍／👎 敏感得多，所以**只服務本機**（is_local_request），不符合一律 404：
-  1. 來源位址是 loopback
-  2. Host 標頭是 127.0.0.1／localhost／[::1]
-  3. 沒有 Cf-*、X-Forwarded-*、X-Real-IP、Forwarded、Via、Cdn-Loop 等代理標頭
-  4. 有 Origin 的話，也必須是本機
-cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以光看來源位址擋不住 Tunnel，要靠 2、3。
-遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>` 後開 http://localhost:8787/auth。
-Docker 部署裡請求不是從 loopback 來（是 bridge 閘道），主 port 上的 /auth 開不了；改用 --admin-port 另開的管理 port：
-  只有這個 listener 把 /auth 與 /api/auth* 當本機（來源要是私有位址；Host、Origin、代理標頭的檢查照舊），
-  誰連得到它由 compose 決定——只 publish 成 127.0.0.1:<port>，Tunnel 仍只指向主 port（見 deploy/README.md）。
-token 只存在 /auth 存的檔，**不讀環境變數 CLAUDE_CODE_OAUTH_TOKEN**（理由見 shared 的 auth_store.py）。
-貼上的 token 先交給 `newsletter-agent --auth-check` 實際呼叫一次驗證，通過才儲存（舊 token 不會被無效的覆蓋）；
-token 只經由環境變數傳給子程序（不上命令列）、不回傳給瀏覽器、不寫進 log。驗證需要 SDK（由 newsletter-agent 帶進來），用 `uv run newsletter-web` 啟動就有。
-
-定時驗證：啟動時與之後每 --auth-check-interval 秒（預設 3600，環境變數 NEWSLETTER_AUTH_CHECK_INTERVAL，0＝不定時驗證），
-背景用儲存的 token 跑一次 `--auth-check`（沒有儲存的 token 就不呼叫），結果只放在記憶體（重啟後第一輪就補上）。
-每次驗證都是一次真的呼叫，用掉極少的訂閱額度；手動「測試連線」、貼上新 token 成功也會更新這個結果。
-/api/auth-health 的 state：ok／expiring（通過，但依一年效期推算快到期）／missing（沒有儲存的 token）／
-invalid（kind 是 auth 或 api_key：要重新授權）／unknown（無法確認：額度用完、逾時、尚未檢查…，不代表授權失效）。
+用法：uv run newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N] [--auth-check-interval 3600] [--selftest]
 """
 from __future__ import annotations
 
@@ -84,13 +32,13 @@ DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 UID_RE = re.compile(r"[0-9a-f]{16}")
 MARKS = {"+", "-", ""}  # "" ＝ 取消
 MAX_BODY = 4096
-CHECK_TIMEOUT = 90  # 秒；驗證 token 的子程序最多等這麼久（無效 token 約 2 秒，有效的幾秒；卡住要放棄）
-CHECK_INTERVAL = 3600  # 秒；定時驗證的間隔
+CHECK_TIMEOUT = 90  # 秒
+CHECK_INTERVAL = 3600  # 秒
 
-# 前端的路由（web/ui/src/App.tsx）；這幾條都回 index.html。其他不認得的路徑也回 index.html，但狀態碼是 404，由前端畫「找不到頁面」。
+# 與 web/ui/src/App.tsx 的路由同步
 SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
 BUILD_COMMAND = "cd web/ui && npm install && npm run build"
-STATIC_TYPES = {  # 副檔名白名單：dist 裡只有這些會被提供
+STATIC_TYPES = {  # 副檔名白名單
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8",
@@ -103,10 +51,10 @@ STATIC_TYPES = {  # 副檔名白名單：dist 裡只有這些會被提供
     ".woff2": "font/woff2",
     ".txt": "text/plain; charset=utf-8",
 }
-IMMUTABLE = "public, max-age=31536000, immutable"  # /assets/* 的檔名帶內容 hash，內容變了檔名就變
+IMMUTABLE = "public, max-age=31536000, immutable"
 CSP = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-# POST 路由 → 是否只限本機。/api/auth/* 能寫入憑證，只給本機。
+# POST 路由 → 是否只限本機
 POST_ROUTES = {"/api/feedback": False, "/api/auth/token": True, "/api/auth/test": True, "/api/auth/revoke": True}
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
 PROXY_HEADERS = {"x-real-ip", "forwarded", "via", "cdn-loop"}  # 另外 cf-*、x-forwarded-* 開頭的也算
@@ -130,10 +78,8 @@ def local_host(value: str) -> bool:
 
 
 def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = False) -> bool:
-    """/auth 的存取條件：真的從本機來，而且不是經 Cloudflare Tunnel（或任何代理）轉進來的。
-    cloudflared 跑在同一台機器、以 127.0.0.1 連進來，所以來源位址不夠，要再看 Host 與代理標頭。
-    admin（管理 port）：Docker 的 published port 轉進來的來源是 bridge 閘道（172.x），不是 loopback，
-    所以來源只要求是私有位址（擋掉直接從外網連進來）；誰連得到這個 port 由 compose 只 publish 在 127.0.0.1 決定。"""
+    """/auth 的存取條件。cloudflared 也是從 127.0.0.1 連進來，所以還要看 Host 與代理標頭。
+    admin：Docker 轉進來的來源是 bridge 閘道，只要求私有位址。"""
     try:
         addr = ipaddress.ip_address(client_ip.split("%")[0])
     except ValueError:
@@ -152,8 +98,7 @@ def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = F
 
 
 def run_auth_check(token: str) -> dict:
-    """用 `newsletter-agent --auth-check` 實際呼叫一次來驗證 token。回傳 {ok, kind, message}。
-    token 只放在子程序的環境變數（不上命令列，ps 看不到）；子程序自己會移除環境裡的 API key 等。"""
+    """用 `newsletter-agent --auth-check` 驗證 token，回傳 {ok, kind, message}。token 走環境變數，不上命令列。"""
     cmd = [sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]
     env = {**os.environ, auth_store.TOKEN_ENV: token}
     try:
@@ -198,9 +143,9 @@ class Site:
         self.today = today or (lambda: f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}")
         self.feedback_path = root / "state" / "feedback.jsonl"
         self.token_path = auth_store.token_path(root)
-        self.checker = checker or run_auth_check  # selftest 換成假的，不真的呼叫 Claude
-        self._check_lock = threading.Lock()       # 同時只跑一個驗證，避免被連按開出一堆子程序
-        self.last_check: dict | None = None       # 最近一次驗證 {ok, kind, at}；還沒驗證過、或認證來源被刪光＝None
+        self.checker = checker or run_auth_check
+        self._check_lock = threading.Lock()  # 同時只跑一個驗證
+        self.last_check: dict | None = None  # {ok, kind, at}
 
     # ---- 前端的建置結果 ----
 
@@ -211,8 +156,7 @@ class Site:
             return None
 
     def static_file(self, url_path: str) -> tuple[bytes, str, str] | None:
-        """dist 裡的檔案 → (內容, Content-Type, Cache-Control)；不在 dist 裡、不是檔案、副檔名不在白名單都是 None。
-        路徑不做 URL 解碼，所以 `..%2F` 只是一個不存在的檔名；resolve 後再確認仍在 dist 底下，連 symlink 都擋。"""
+        """dist 裡的檔案 → (內容, Content-Type, Cache-Control)，否則 None。resolve 後確認仍在 dist 底下。"""
         dist = self.dist.resolve()
         try:
             target = (dist / url_path.lstrip("/")).resolve()
@@ -238,7 +182,7 @@ class Site:
         """uid → 目前的標記（'+' / '-'；沒標或已取消的不在裡面）。"""
         if not self.feedback_path.exists():
             return {}
-        with lock.locked(self.feedback_path):  # 避免讀到另一個程序寫到一半的列
+        with lock.locked(self.feedback_path):
             rows = feedback.read_feedback(self.feedback_path)
         return {uid: m for uid, row in rows.items() if (m := level(row.get("mark", "")))}
 
@@ -249,7 +193,7 @@ class Site:
             raise NotFound(date) from None
         try:
             report = report_data.parse_report(text)
-        except ValueError as exc:  # Markdown 格式不符 SKILL.md 規定的子集
+        except ValueError as exc:
             raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, f"報告格式不符：{exc}") from None
         shown = set(report_data.uids_of(report))
         return {"date": date, "report": report, "marks": {u: m for u, m in self.marks().items() if u in shown}}
@@ -339,7 +283,7 @@ class Site:
             result = self.checker(token)
         finally:
             self._check_lock.release()
-        if stored or result.get("ok"):  # 新貼的 token 沒通過時，生效的還是舊的，這次結果不能算在它頭上
+        if stored or result.get("ok"):  # 新 token 沒通過時，生效的仍是舊的
             self._record(result)
         if not result.get("ok"):
             raise self._failure(result)
@@ -349,7 +293,7 @@ class Site:
         auth = auth_store.resolve(self.token_path)
         if auth is None:
             self.last_check = None
-        elif self._check_lock.acquire(blocking=False):  # 有人正在手動驗證：這輪略過，下一輪再說
+        elif self._check_lock.acquire(blocking=False):
             try:
                 result = self.checker(auth.token)
             finally:
@@ -362,12 +306,12 @@ class Site:
             try:
                 self.check_now()
             except Exception:
-                traceback.print_exc()  # 一輪出錯不能讓整個定時驗證停掉
+                traceback.print_exc()
             if stop.wait(interval):
                 return
 
     def auth_health(self) -> dict:
-        """給所有人看的粗略狀態；不含驗證訊息與 token。state 的意思見模組說明。"""
+        """給所有人看的粗略狀態，不含驗證訊息與 token（state 見 web/README.md）。"""
         if auth_store.resolve(self.token_path) is None:
             return {"state": "missing", "kind": "missing", "checked_at": None}
         last = self.last_check
@@ -398,7 +342,7 @@ class Site:
     def revoke_token(self) -> dict:
         """只刪掉這裡儲存的檔；token 在 Anthropic 端仍然有效。"""
         removed = auth_store.delete(self.token_path)
-        self.last_check = None  # 驗的是剛刪掉的那個
+        self.last_check = None
         return {"message": "已刪除儲存的 token" if removed else "本來就沒有儲存的 token", "status": self.auth_status()}
 
 
@@ -422,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", cache)  # API 的內容（標記狀態）會變，預設不快取
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
@@ -447,12 +391,11 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             self._get_api(path)
         elif SPA_ROUTES.fullmatch(path):
-            # /auth 對非本機＝不存在，連頁面都不給（前端會畫「找不到頁面」）
             self._send_shell(404 if path == "/auth" and not self._local() else 200)
         elif (found := self.site.static_file(path)) is not None:
             body, ctype, cache = found
             self._send(200, body, ctype, cache)
-        elif "." in path.rsplit("/", 1)[-1]:  # 像是檔案的路徑（/assets/舊版.js）：給 HTML 只會讓瀏覽器更困惑
+        elif "." in path.rsplit("/", 1)[-1]:  # 像檔案的路徑不回 HTML
             self._send(404, "not found")
         else:
             self._send_shell(404)
@@ -462,7 +405,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/session":
                 payload = {"local": self._local()}
             elif path == "/api/heartbeat":
-                payload = {"ok": True}  # 前端探測連線用：不讀檔、不寫入
+                payload = {"ok": True}
             elif path == "/api/today":
                 payload = self.site.today_payload()
             elif path == "/api/reports":
@@ -504,7 +447,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path.rstrip("/")
         local_only = POST_ROUTES.get(path)
         if local_only is None or (local_only and not self._local()):
-            self._send_json(404, {"error": "not found"})  # /api/auth/* 對非本機請求＝不存在
+            self._send_json(404, {"error": "not found"})
             return
         try:
             data = self._read_json()
@@ -538,11 +481,10 @@ def make_server(site: Site, host: str, port: int, quiet: bool = False, admin: bo
 
 @contextlib.contextmanager
 def served(site: Site, admin: bool = False) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
-    """selftest 用：起一個真的 HTTP 伺服器，給一個 req(method, path, headers, body) → (狀態碼, 標頭, 內文)。
-    用 http.client 而不是 urllib：路徑原樣送出（不正規化 `..`），標頭也能自己指定（Host、Cf-* 等）。"""
+    """selftest 用的真 HTTP 伺服器。用 http.client：路徑原樣送出（不正規化 `..`），標頭可自訂。"""
     import http.client
 
-    server = make_server(site, DEFAULT_HOST, 0, quiet=True, admin=admin)  # port 0：讓系統挑空的 port
+    server = make_server(site, DEFAULT_HOST, 0, quiet=True, admin=admin)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
 
@@ -608,13 +550,13 @@ def selftest() -> None:
         (root / "web" / "ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
         (root / "web" / "ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
         (root / "web" / "ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")  # PWA
+        (root / "web" / "ui" / "dist" / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")
         (root / "web" / "ui" / "dist" / "sw.js").write_text("self.skipWaiting()", encoding="utf-8")
         (root / "web" / "ui" / "dist" / "icons").mkdir()
         (root / "web" / "ui" / "dist" / "icons" / "icon-192.png").write_text("png", encoding="utf-8")
         (root / "web" / "ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
-        (root / "web" / "secret.txt").write_text("dist 之外", encoding="utf-8")  # 一層 .. 就到
-        (root / "secret.txt").write_text("dist 之外", encoding="utf-8")          # 三層 .. 才到
+        (root / "web" / "secret.txt").write_text("dist 之外", encoding="utf-8")
+        (root / "secret.txt").write_text("dist 之外", encoding="utf-8")
         site = Site(root, today=lambda: "2026-09-28")
 
         with served(site) as req:
@@ -646,7 +588,7 @@ def selftest() -> None:
             assert [s["url"] for s in report["sources"]] == ["https://a.example/x", "https://a.example/1",
                                                               "https://a.example/2", "https://a.example/3"]
             raw = req("GET", "/api/reports/2026-09-28")[2]
-            assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw  # 原文照給，跳脫是前端的事
+            assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw
 
             # 當日：有就給整份，沒有就給最新一份的日期
             assert get("/api/today") == (200, {**data, "latest": "2026-09-28"})
@@ -733,7 +675,7 @@ def selftest() -> None:
 
             # feedback.py 收進來的 ++ / -- 在網頁上算同一級；只回這份報告裡出現的 uid
             site.feedback_path.write_text(site.feedback_path.read_text(encoding="utf-8").rstrip("\n"),
-                                          encoding="utf-8")  # 結尾沒換行也要能接著寫
+                                          encoding="utf-8")
             assert post({"uid": uid_c, "mark": "+"})[0] == 200
             assert all(ln.startswith("{") for ln in site.feedback_path.read_text(encoding="utf-8").splitlines())
             with site.feedback_path.open("a", encoding="utf-8") as fh:
@@ -745,25 +687,25 @@ def selftest() -> None:
             before = site.feedback_path.read_text(encoding="utf-8")
             assert get(f"/api/feedback/{uid_a}") == (200, {"uid": uid_a, "date": "2026-09-28", "title": "重點", "mark": ""})
             assert get(f"/api/feedback/{uid_b}")[1] == {"uid": uid_b, "date": "2026-09-28", "title": "", "mark": "-"}
-            assert get(f"/api/feedback/{uid_c}")[1]["mark"] == "+"  # ++ 在網頁上算同一級
+            assert get(f"/api/feedback/{uid_c}")[1]["mark"] == "+"
             for path in (f"/api/feedback/{'e' * 16}", "/api/feedback/xyz", "/api/feedback/", "/api/feedback"):
-                assert get(path)[0] == 404, path  # 報告裡沒有的 uid、格式不符
-            for v in ("%2B", "-", "+"):  # 連結本身（含 ?v=）回前端的 index.html，同樣不寫入
+                assert get(path)[0] == 404, path
+            for v in ("%2B", "-", "+"):
                 status, _, body = req("GET", f"/feedback/{uid_a}?v={v}")
                 assert status == 200 and body == shell, (v, status)
-            assert req("GET", f"/feedback/{'e' * 16}")[0] == 200  # 頁面照給，找不到由前端畫
+            assert req("GET", f"/feedback/{'e' * 16}")[0] == 200
             assert req("GET", "/feedback/xyz")[0] == 404 and req("GET", "/feedback")[0] == 404
             assert site.feedback_path.read_text(encoding="utf-8") == before
 
             # 擋掉不合法的請求，且不寫檔
             assert post({"uid": uid_a, "mark": "++"})[0] == 400
             assert post({"uid": "xyz", "mark": "+"})[0] == 400
-            assert post({"uid": "e" * 16, "mark": "+"})[0] == 404          # 報告裡沒有這個 uid
+            assert post({"uid": "e" * 16, "mark": "+"})[0] == 404
             assert post({"uid": uid_a})[0] == 400 and post([1, 2])[0] == 400
             assert post(b"not json")[0] == 400
             assert post({"uid": uid_a, "mark": "+"}, ctype="application/x-www-form-urlencoded")[0] == 415
             assert post(b"x" * (MAX_BODY + 1))[0] == 413
-            assert req("POST", "/feedback", None, {"uid": uid_a, "mark": "+"})[0] == 404  # 舊路徑不存在
+            assert req("POST", "/feedback", None, {"uid": uid_a, "mark": "+"})[0] == 404
             assert site.feedback_path.read_text(encoding="utf-8") == before
 
         # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
@@ -812,7 +754,7 @@ def selftest_auth() -> None:
                   ("172.18.0.1", {"Host": "news.example.com"}), ("172.18.0.1", {}),
                   ("172.18.0.1", {**ok_host, "Origin": "https://evil.example"})):
         assert not is_local_request(ip, h, admin=True), (ip, h)
-    assert not is_local_request("172.18.0.1", ok_host)  # 主 port 仍要求 loopback
+    assert not is_local_request("172.18.0.1", ok_host)
 
     # --- run_auth_check：子程序的呼叫方式與輸出解析（假的 subprocess.run）---
     secret = "sk-ant-oat01-" + "Kp4" * 14
@@ -833,7 +775,7 @@ def selftest_auth() -> None:
     assert res == {"ok": False, "kind": "auth", "message": "bad ***"}, res
     cmd, kw = calls[0]
     assert secret not in " ".join(cmd) and "--auth-check" in cmd and "--token-from-env" in cmd
-    assert cmd[1:3] == ["-m", "newsletter_agent.agent_run"] and kw["cwd"] == ROOT, cmd  # 以模組呼叫、cwd 是 repo 根
+    assert cmd[1:3] == ["-m", "newsletter_agent.agent_run"] and kw["cwd"] == ROOT, cmd
     assert kw["env"][auth_store.TOKEN_ENV] == secret and kw["timeout"] == CHECK_TIMEOUT and kw["stdin"] == sp.DEVNULL
     run, _ = fake_run('{"ok": true, "kind": "ok", "message": "驗證通過", "source": "env-token"}\n')
     with mock.patch.object(sp, "run", run):
@@ -860,7 +802,7 @@ def selftest_auth() -> None:
         checked.append(token)
         return outcome["v"]
 
-    seen: list[str] = []  # 所有回應內容，最後確認 token 沒有漏出去
+    seen: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -903,7 +845,7 @@ def selftest_auth() -> None:
                 for path in ("/api/auth/token", "/api/auth/test", "/api/auth/revoke"):
                     status, body = post(path, {"token": secret}, hdr)
                     assert status == 404 and body == {"error": "not found"}, (hdr, path)
-            assert not checked and not site.token_path.exists()  # 被擋的請求沒有觸發驗證、沒有寫檔
+            assert not checked and not site.token_path.exists()
 
             # 管理 port（--admin-port）：同一個 Site，/auth 與 /api/auth* 在這裡才算本機；Host／代理標頭／Origin 照擋
             with served(site, admin=True) as admin_req:
@@ -915,7 +857,7 @@ def selftest_auth() -> None:
                 assert admin_get("/api/auth") == (200, {"state": "missing"})
                 assert admin_req("GET", "/auth")[0] == 200
                 status, _, text = admin_req("POST", "/api/auth/revoke", None, {})
-                assert status == 200 and "本來就沒有" in text  # 不是 404：這個 listener 收得到寫入憑證的 API
+                assert status == 200 and "本來就沒有" in text
                 for hdr in ({"Host": "news.example.com"}, {"Cf-Ray": "abc"}, {"X-Forwarded-For": "1.2.3.4"},
                             {"Origin": "https://evil.example"}):
                     assert admin_req("GET", "/auth", hdr)[0] == 404, hdr
@@ -939,14 +881,14 @@ def selftest_auth() -> None:
             assert post("/api/feedback", {"uid": uid, "mark": "+"}, tunnel)[0] == 200
 
             # 輸入檢查：不呼叫 checker
-            assert req("POST", "/api/auth/token", None, b"not json")[0] == 400  # Content-Type 是 JSON、內容不是
+            assert req("POST", "/api/auth/token", None, b"not json")[0] == 400
             status, body = post("/api/auth/token", {"nope": 1})
             assert status == 400 and "token" in body["error"]
             for bad in ("", "   ", "short", "x" * 600, "has space " + "y" * 30, "line\nbreak" + "y" * 30):
                 status, body = post("/api/auth/token", {"token": bad})
                 assert status == 400, bad
             assert req("POST", "/api/auth/token", {"Content-Type": "application/x-www-form-urlencoded"}, b"token=x")[0] == 415
-            assert req("POST", "/auth/token", None, {"token": secret})[0] == 404  # 舊路徑不存在
+            assert req("POST", "/auth/token", None, {"token": secret})[0] == 404
             assert not checked
 
             # 貼上有效的 token（前後有空白）：驗證 → 儲存，權限 600，回應不含完整 token
@@ -971,7 +913,7 @@ def selftest_auth() -> None:
                 assert status == want and text in body["error"] and other not in body["error"], (v, status, body)
                 assert auth_store.load(site.token_path)["token"] == secret, v
             assert checked[-1] == other
-            assert get("/api/auth-health")[1] == health  # 新 token 沒通過：生效的還是舊的，結果不動
+            assert get("/api/auth-health")[1] == health
 
             # 驗證正在進行時再送一個：409，不另開子程序
             outcome["v"] = {"ok": True, "kind": "ok", "message": ""}
@@ -993,7 +935,7 @@ def selftest_auth() -> None:
             outcome["v"] = {"ok": False, "kind": "quota", "message": "SECRET-DETAIL"}
             post("/api/auth/test", {})
             status, text = req("GET", "/api/auth-health")
-            assert json.loads(text)["state"] == "unknown" and "SECRET-DETAIL" not in text  # 額度用完不等於授權失效；訊息不外露
+            assert json.loads(text)["state"] == "unknown" and "SECRET-DETAIL" not in text
             outcome["v"] = {"ok": False, "kind": "api_key", "message": "x"}
             post("/api/auth/test", {})
             assert get("/api/auth-health")[1]["state"] == "invalid"
@@ -1005,7 +947,7 @@ def selftest_auth() -> None:
             auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=345))
             status, st = get("/api/auth")
             assert st["state"] == "expiring" and 0 <= st["days_left"] <= 30, st
-            assert get("/api/auth-health")[1]["state"] == "expiring"  # 驗證通過，但依效期推算快到了
+            assert get("/api/auth-health")[1]["state"] == "expiring"
             auth_store.save(secret, site.token_path, datetime.now(timezone.utc) - timedelta(days=400))
             assert get("/api/auth")[1]["state"] == "expired"
             assert get("/api/auth-health")[1]["state"] == "expiring"
@@ -1031,7 +973,7 @@ def selftest_auth() -> None:
             site.check_now()
             assert checked[-1] == secret and get("/api/auth-health")[1]["state"] == "ok"
             n = len(checked)
-            assert site._check_lock.acquire(blocking=False)  # 使用者正在手動驗證：這輪略過
+            assert site._check_lock.acquire(blocking=False)
             try:
                 site.check_now()
             finally:
