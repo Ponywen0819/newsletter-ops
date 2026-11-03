@@ -8,8 +8,6 @@
 name: newsletter-ops
 
 x-app: &app
-  # 正式 host 從 GHCR 拉（main 通過 selftest 後由 .github/workflows/release.yml 推上去）；本機測試照樣 `up -d --build` 自己建。
-  # 退版：.env 設 NEWSLETTER_TAG=sha-<commit>
   build: .
   image: ghcr.io/ponywen0819/newsletter-ops:${NEWSLETTER_TAG:-latest}
   restart: unless-stopped

@@ -1,7 +1,6 @@
 name: release
 
-# main 的 selftest 通過後，建映像推到 GHCR；家用 host 的 newsletter-autodeploy.timer 會自己拉新版（見 deploy/README.md「自動部署」）。
-# 用 workflow_run 接在 selftest 後面，而不是 workflow_call：selftest 本來就在每次 push 跑，不必在 main 上再跑一次。
+# main 的 selftest 通過後，建映像推到 GHCR
 on:
   workflow_run:
     workflows: [selftest]
@@ -13,24 +12,22 @@ permissions:
   packages: write
 
 env:
-  # GHCR 的名稱只能小寫，github.repository 有大寫，所以寫死
-  IMAGE: ghcr.io/ponywen0819/newsletter-ops
+  IMAGE: ghcr.io/ponywen0819/newsletter-ops   # GHCR 只能小寫
 
 jobs:
   image:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
-    runs-on: ubuntu-24.04-arm   # 原生 arm64，跟樹莓派同架構，不必 QEMU 模擬
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}   # 建 selftest 測過的那個 commit，不是 main 的最新
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # 正式 host 是樹莓派，只建 linux/arm64
       - uses: docker/build-push-action@v6
         with:
           context: .
