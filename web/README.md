@@ -31,13 +31,16 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
 
 ## 安全邊界
 
-- **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，但不 publish 任何 port，見 [deploy/README.md](../deploy/README.md)）。
+- **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，主 port 不 publish，只有管理 port 以 `127.0.0.1:8788` publish，見 [deploy/README.md](../deploy/README.md)）。
 - `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），前端的限制見 [ui/README.md](ui/README.md)。
 - **`/auth`（貼 OAuth token）只能從本機開**：能寫入憑證，而 `web.py` 沒有登入。`cloudflared` 跑在同一台機器、以 `127.0.0.1` 連進來，
   所以光看來源位址擋不住 Tunnel；要同時符合「來源是 loopback」「`Host` 是 `127.0.0.1` / `localhost` / `[::1]`」
   「沒有 `Cf-*` / `X-Forwarded-*` 等代理標頭」「`Origin`（若有）是本機」，否則回 404。
-  遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>`，再用自己電腦的瀏覽器開 `http://localhost:8787/auth`；Docker 部署的請求不是從 loopback 來，做法見 [deploy/README.md](../deploy/README.md)。
+  遠端 host 上要貼 token：`ssh -L 8787:127.0.0.1:8787 <host>`，再用自己電腦的瀏覽器開 `http://localhost:8787/auth`。
+  Docker 部署的請求不是從 loopback 來（是 bridge 閘道），主 port 上開不了，改用 `--admin-port`（`NEWSLETTER_ADMIN_PORT`）另開的**管理 port**：
+  只有這個 listener 把 `/auth` 與 `/api/auth*` 當本機（來源只要求是私有位址；`Host`、`Origin`、代理標頭的檢查照舊），主 port 仍一律 404。
+  誰連得到它由 compose 決定（只 publish 成 `127.0.0.1:8788`，Tunnel 不指向它），做法見 [deploy/README.md](../deploy/README.md)。
   token **只存在這一頁存的檔**，不讀環境變數 `CLAUDE_CODE_OAUTH_TOKEN`：token 一年到期，換新要立刻生效，環境變數得重啟程序（Docker 要重新部署），web 與排程的環境還可能不同。
   token 的取得與政策見 [agent/README.md](../agent/README.md)「認證」。
 - **Claude 認證的定時驗證**：啟動時與之後每隔 `--auth-check-interval`（或 `NEWSLETTER_AUTH_CHECK_INTERVAL`，秒；預設 3600、0＝關閉），

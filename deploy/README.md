@@ -13,8 +13,11 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
   只把 `web/ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `web/ui/public/`（圖示）要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
-- `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。compose 沒有 `ports:`，host 不會開任何 port；
-  請不要為了方便從 host 直接開而加上 `ports:`，那會繞過 Access（host 本機仍連得到容器的內部 IP，所以這台 host 本身要信得過）。Tunnel 的網域一定要先掛上 Access 再對外使用（步驟 2、4）。
+- `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。主 port（8787）不 publish，host 不會對外開它；
+  請不要為了方便從 host 直接開而 publish 它，那會繞過 Access（host 本機仍連得到容器的內部 IP，所以這台 host 本身要信得過）。Tunnel 的網域一定要先掛上 Access 再對外使用（步驟 2、4）。
+- **管理 port（8788）**是唯一 publish 的 port，只綁 host 的 `127.0.0.1`：貼 OAuth token 的 `/auth` 頁面只在這個 port 開，主 port 上永遠是 404。
+  它沒有登入，靠「只有 host 本機連得到」擋人，所以不要改成 `"8788:8788"`（會對區網開放），也不要放進 Tunnel 的 Public Hostname。
+  萬一 Tunnel 誤指到它，Cloudflare 帶的 `Cf-*` 標頭與公網 `Host` 仍會被拒（`/auth` 照樣 404），但那只是第二道防線。
 - 機密放 `.env`（Gmail 帳密、`TUNNEL_TOKEN`）：`web` 容器拿不到這些，`scheduler` 拿不到 `TUNNEL_TOKEN`。Claude 的 OAuth token 另外存在 volume 的 `state/oauth_token.json`（權限 600），`web` 負責驗證並儲存、`scheduler` 讀取。
 
 本目錄的其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
@@ -44,33 +47,26 @@ Zero Trust 後台（介面名稱依版本略有不同）：
 
 ```bash
 docker compose up -d --build
-docker compose ps        # web 要是 healthy、cloudflared 是 Up，PORTS 欄全空
+docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄只有 web 的 127.0.0.1:8788->8788
 ```
 
 `.env` 缺 `GMAIL_USER`、`GMAIL_APP_PASSWORD`、`TUNNEL_TOKEN` 任何一個，`docker compose` 會直接報錯並指出缺哪個。
 
 **貼上 OAuth token**（第一次、以及一年後 `agent_run.py` exit 5 或網頁頂端出現「Claude 授權已失效」時）：在**自己的電腦**執行 `claude setup-token`、
-在瀏覽器完成授權，複製它印出的 token（只會印一次；需要 Pro／Max／Team／Enterprise），再在 host 上執行下面的指令並貼上（輸入時不顯示、不進 shell 歷史）。
-`/auth` 網頁在 Docker 裡開不了：它只服務「來源是 loopback、沒有代理標頭」的請求，容器網路裡的請求一律 404；這個指令是在 web 容器**裡面**對 `127.0.0.1` 送同一個 API，所以過得了這道門。
-伺服器會先實際呼叫一次 Claude 驗證（用掉極少的訂閱額度），通過才存進 volume；舊的 token 不會被無效的覆蓋。不用重啟、不用重新部署，scheduler 下一次執行就讀到新的。
-
-```bash
-docker compose exec web python -c "
-import getpass, json, urllib.error as e, urllib.request as u
-r = u.Request('http://127.0.0.1:8787/api/auth/token', json.dumps({'token': getpass.getpass('token: ')}).encode(), {'Content-Type': 'application/json'})
-try:
-    print(u.urlopen(r, timeout=120).read().decode())
-except e.HTTPError as x:
-    print(x.code, x.read().decode())"
-```
-
-成功會印出 `{"message": "驗證通過，已儲存", ...}`；失敗會印出狀態碼與原因（例如 `422` 的授權失敗）。沒做這一步的話，每天的排程會以 exit 2 結束（沒有 OAuth token）。
+在瀏覽器完成授權，複製它印出的 token（只會印一次；需要 Pro／Max／Team／Enterprise），再用 **host 本機的瀏覽器**開 <http://127.0.0.1:8788/auth>，
+貼上、按「驗證並儲存」。host 在遠端的話：`ssh -L 8788:127.0.0.1:8788 <host>`，再用自己電腦的瀏覽器開 <http://localhost:8788/auth>。
+`/auth` 只在管理 port 開，從 Tunnel 網域（主 port）開不了；那裡頁面頂端的橫幅只會寫「請在主機上重新授權」。
+伺服器會先實際呼叫一次 Claude 驗證（用掉極少的訂閱額度），通過才存進 volume；舊的 token 不會被無效的覆蓋。
+不用重啟、不用重新部署，scheduler 下一次執行就讀到新的。沒做這一步的話，每天的排程會以 exit 2 結束（沒有 OAuth token）。
 
 **4. 驗收**
 
 | 檢查 | 預期 |
 | --- | --- |
-| `docker compose ps` | `web` healthy、`cloudflared` Up、PORTS 欄是空的 |
+| `docker compose ps` | `web` healthy、`cloudflared` Up、PORTS 欄只有 web 的 `127.0.0.1:8788->8788/tcp` |
+| `docker compose port web 8788` | `127.0.0.1:8788`（**不能是** `0.0.0.0:8788`） |
+| host 上 `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8788/auth` | `200`（管理 port 的貼 token 頁） |
+| 登入 Access 後開 `https://news.example.com/auth` | 「找不到頁面」（404），不是貼 token 的頁面 |
 | `docker compose logs cloudflared` | 出現 `Registered tunnel connection`（沒有就是 token 有誤或出站連不到 Cloudflare） |
 | 另一個網路（手機關 Wi-Fi）開 `https://news.example.com` | 先到 Access 登入頁，用你的 email 登入後看到晨報（還沒有報告時是「還沒產出」頁） |
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |

@@ -1,5 +1,6 @@
 # 三個容器、一個 volume：
-#   web         晨報網頁（沒有登入；不 publish 任何 port，只有這個 compose 網路上的容器連得到）
+#   web         晨報網頁（沒有登入；主 port 不 publish，只有這個 compose 網路上的容器連得到。
+#               另有管理 port 8788，只 publish 成 host 的 127.0.0.1，給貼 OAuth token 用）
 #   scheduler   每天 08:00 跑 run_daily.sh → newsletter-run（抓取 → agent 寫報告 → 寄信；整條握一把防重疊的鎖）
 #   cloudflared 出站連到 Cloudflare，再轉給 http://web:8787；Access 是唯一的防線
 # 機密放 .env（從 .env.example 複製，chmod 600，不進版控）。
@@ -17,12 +18,15 @@ x-app: &app
 services:
   web:
     <<: *app
-    # 容器自己的網路空間裡綁 0.0.0.0（web.py 會印一行警告，可忽略）：容器外只有 cloudflared 連得到，
-    # 因為沒有 ports:。不要為了從 host 直接開而加 ports:，那會繞過 Access。
+    # 容器自己的網路空間裡綁 0.0.0.0（web.py 會印一行警告，可忽略）：主 port 8787 沒有 ports:，容器外只有 cloudflared 連得到。
+    # 不要為了從 host 直接開而 publish 8787，那會繞過 Access。
     # 不載入任何環境機密：網頁程序拿不到 Gmail 帳密。OAuth token 存在 volume 的 state/oauth_token.json（web 驗證並儲存它，scheduler 讀它）。
-    # 注意：web.py 的 /auth（貼 OAuth token）只服務「來源是 loopback、沒有代理標頭」的請求，容器網路裡的請求一律 404，
-    # 所以不用那一頁的網頁，改在容器裡對 127.0.0.1 送，指令見 deploy/README.md「貼上 OAuth token」。
-    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787"]
+    # 管理 port 8788：/auth（貼 OAuth token）只在這個 listener 開，主 port 上永遠是 404。host 本機的瀏覽器開
+    # http://127.0.0.1:8788/auth 貼上（見 deploy/README.md「貼上 OAuth token」）。它沒有登入，靠只綁 127.0.0.1 擋人：
+    # 不要改成 "8788:8788"（會對區網開放），也不要放進 Tunnel 的 Public Hostname（Tunnel 只指向 web:8787）。
+    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787", "--admin-port", "8788"]
+    ports:
+      - "127.0.0.1:8788:8788"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)"]
       interval: 30s
