@@ -15,6 +15,7 @@
 !/*/README.md
 !/web/ui/README.md
 !/run_daily.sh
+!/.githooks/*
 !/pyproject.toml
 !/uv.lock
 !/.python-version
