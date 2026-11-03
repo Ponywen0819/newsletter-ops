@@ -3,3 +3,17 @@
 # `uv sync`、`uv run` 會把所有成員以 editable 裝進同一個環境。
 [tool.uv.workspace]
 members = ["shared", "agent", "notify", "web/server", "pipeline"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# 只開抓 bug 與明顯 smell 的規則，不開純風格的
+select = ["E", "F", "W", "B", "SIM", "C90", "PL", "RUF"]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # 中文全形標點
+    "PLR2004",                     # magic value
+    "PLC0415",                     # selftest 裡的區域 import
+    "E501",                        # 行長是風格
+    "PLR0915",                     # selftest 本來就長；複雜度交給 C901
+]

@@ -54,7 +54,7 @@ def prior_uids(path: Path) -> set[str]:
         return set()
 
 
-def main() -> int:
+def main() -> int:  # noqa: C901
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只抓取並印統計，不寫 state / 報告")
     ap.add_argument("--no-report", action="store_true", help="只產 curated JSON，報告交給 Claude 寫")

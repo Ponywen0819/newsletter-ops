@@ -28,7 +28,7 @@ MEMBERS = {
 }
 
 
-def check(members: dict = MEMBERS) -> list[str]:
+def check(members: dict = MEMBERS) -> list[str]:  # noqa: C901
     errors = []
     for mid, (base, allowed) in members.items():
         if not base.is_dir():

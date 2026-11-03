@@ -74,9 +74,8 @@ def selftest() -> None:
 
         # 巢狀：立刻報錯，而且報錯後鎖仍然正常放掉
         try:
-            with locked(path):
-                with locked(path):
-                    raise AssertionError("巢狀應該丟 RuntimeError")
+            with locked(path), locked(path):
+                raise AssertionError("巢狀應該丟 RuntimeError")
         except RuntimeError:
             pass
         with locked(path, timeout=0):

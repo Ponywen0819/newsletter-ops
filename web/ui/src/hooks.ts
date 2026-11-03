@@ -10,8 +10,10 @@ export interface Fetched<T> {
 /** deps 變了就重新載入；前一次還沒回來的結果會被丟掉，不會蓋掉新的。 */
 export function useFetch<T>(load: () => Promise<T>, deps: readonly unknown[]): Fetched<T> {
   const [state, setState] = useState<Fetched<T>>({ loading: true })
+  /* oxlint-disable react-hooks/exhaustive-deps -- deps 由呼叫端給 */
   useEffect(() => {
     let live = true
+    // oxlint-disable-next-line react/set-state-in-effect -- 換 deps 時要先回到載入中
     setState({ loading: true })
     load().then(
       (data) => live && setState({ data, loading: false }),
@@ -20,8 +22,8 @@ export function useFetch<T>(load: () => Promise<T>, deps: readonly unknown[]): F
     return () => {
       live = false
     }
-    // load 每次 render 都是新函式，是否重新載入只看呼叫端給的 deps
   }, deps)
+  /* oxlint-enable react-hooks/exhaustive-deps */
   return state
 }
 

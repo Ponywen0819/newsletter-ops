@@ -166,7 +166,7 @@ async def probe(token: str) -> dict:
     try:
         async for msg in sdk.query(prompt=CHECK_PROMPT, options=options):
             usage.feed(msg)
-    except Exception as exc:  # noqa: BLE001  錯誤結果會在 ResultMessage 之後丟 ResultError，內容已在 usage 裡
+    except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
     r, src = usage.result, usage.api_key_source
     if src not in (None, "none"):  # None＝沒收到 init（呼叫在啟動前就失敗），沒有證據就不亂判
@@ -243,7 +243,7 @@ def check_format(root: Path, stamp: str) -> str | None:
     return None
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901, PLR0912
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS)
     ap.add_argument("--selftest", action="store_true")
@@ -268,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     sdk_error = None
     try:
         asyncio.run(run_agent(PROMPT.format(stamp=stamp, root=ROOT), args.max_turns, usage, auth.token))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         # 結果是錯誤時（例如超過 max_turns）SDK 會在吐出 ResultMessage 之後丟一般 Exception，
         # 所以不能只接 ClaudeSDKError；先把已收到的用量記下來再判定失敗。
         sdk_error = f"{type(exc).__name__}: {exc}"

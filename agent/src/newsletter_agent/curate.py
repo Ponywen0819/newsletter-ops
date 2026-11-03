@@ -135,7 +135,7 @@ def venue_of(note: str, venues: dict) -> dict | None:
     return {"status": status, "kind": kind, "name": name, "track": track_name, "label": label}
 
 
-def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float, float, list[str]]:
+def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float, float, list[str]]:  # noqa: C901
     """回傳 (relevance, rank, 命中的關鍵字)。"""
     text = f"{item['title']} {item['summary']}".lower()
     hits: list[str] = []
@@ -299,10 +299,14 @@ if __name__ == "__main__":  # 自我檢查：uv run python -m newsletter_agent.c
     from pathlib import Path
     STATE = Path(tempfile.mkdtemp()) / "seen.json"  # 不碰真的 state/seen.json
     now = datetime.now(timezone.utc).isoformat()
-    batch = lambda: [{"uid": f"u{n}", "title": t, "url": f"https://x.example/{n}", "source": "s", "topic": "t",
-                      "summary": "", "published": now, "weight": 1.0, "baseline_relevance": 2.0 + n / 10}
-                     for n, t in enumerate(["alpha quantum", "bravo reactor", "charlie harvest", "delta voyage"])]
-    uids = lambda r: {i["uid"] for i in r[0]}
+    def batch() -> list[dict]:
+        return [{"uid": f"u{n}", "title": t, "url": f"https://x.example/{n}", "source": "s", "topic": "t",
+                 "summary": "", "published": now, "weight": 1.0, "baseline_relevance": 2.0 + n / 10}
+                for n, t in enumerate(["alpha quantum", "bravo reactor", "charlie harvest", "delta voyage"])]
+
+    def uids(r: tuple) -> set[str]:
+        return {i["uid"] for i in r[0]}
+
     cfg = {"min_relevance": 0.8, "quota": {"t": 2}}
     first = curate(batch(), cfg)
     assert uids(first) == {"u3", "u2"}

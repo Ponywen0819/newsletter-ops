@@ -8,6 +8,7 @@ token 唯一的來源是 state/oauth_token.json（/auth 貼上後存的，權限
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -82,10 +83,8 @@ def save(token: str, path: Path, now: datetime | None = None) -> None:
                 os.fsync(fh.fileno())
             os.replace(tmp, path)
         except BaseException:
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 os.unlink(tmp)
-            except FileNotFoundError:
-                pass
             raise
 
 

@@ -49,7 +49,7 @@ def votable_after(blocks: list[dict], standalone_mark: bool = False) -> bool:
     return True if standalone_mark else prev is not None and prev["type"] == "paragraph"
 
 
-def parse_inline(text: str, links: list[tuple[str, str]] | None = None) -> list[dict]:
+def parse_inline(text: str, links: list[tuple[str, str]] | None = None) -> list[dict]:  # noqa: C901
     """一行文字 → inline 節點。links 傳入的話，會把這行裡的 (標題, 網址) 依序加進去（資料來源清單用）。"""
     held: list[tuple[str, str, str]] = []  # (連結文字, 網址, 原始寫法)
 
@@ -98,7 +98,7 @@ def parse_inline(text: str, links: list[tuple[str, str]] | None = None) -> list[
     return bold(work)
 
 
-def parse_report(markdown: str) -> dict:
+def parse_report(markdown: str) -> dict:  # noqa: C901, PLR0912
     blocks: list[dict] = []
     links: list[tuple[str, str]] = []
     subject = headline = ""
@@ -306,7 +306,9 @@ def selftest() -> None:
     assert merged["blocks"][-1]["items"][-1]["uids"] == [uid_a, uid_b] and merged["blocks"][-1]["votable"] is True
 
     # newsletter-report-check：好報告 0；缺 subject、缺今日頭條、沒有檔案都是 1 並說明原因
-    import contextlib, io, tempfile
+    import contextlib
+    import io
+    import tempfile
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "reports").mkdir()

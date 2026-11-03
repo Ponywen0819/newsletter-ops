@@ -324,6 +324,6 @@ describe('一則新聞掛兩個 uid（併了兩篇文章）', () => {
     mockFetch({ 'POST /api/feedback': (body) => ({ json: body }) })
     render(<ReportPanel report={merged} marks={{}} />)
     await userEvent.click(screen.getByRole('button', { name: '有用' }))
-    await screen.findByRole('button', { name: '有用', pressed: true })
+    expect(await screen.findByRole('button', { name: '有用', pressed: true })).toBeInTheDocument()
   })
 })

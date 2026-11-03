@@ -81,7 +81,7 @@ def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = F
     """/auth 的存取條件。cloudflared 也是從 127.0.0.1 連進來，所以還要看 Host 與代理標頭。
     admin：Docker 轉進來的來源是 bridge 閘道，只要求私有位址。"""
     try:
-        addr = ipaddress.ip_address(client_ip.split("%")[0])
+        addr = ipaddress.ip_address(client_ip.split("%", maxsplit=1)[0])
     except ValueError:
         return False
     addr = getattr(addr, "ipv4_mapped", None) or addr  # ::ffff:127.0.0.1
@@ -102,7 +102,7 @@ def run_auth_check(token: str) -> dict:
     cmd = [sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]
     env = {**os.environ, auth_store.TOKEN_ENV: token}
     try:
-        p = subprocess.run(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        p = subprocess.run(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
                            timeout=CHECK_TIMEOUT)
     except subprocess.TimeoutExpired:
         return {"ok": False, "kind": "timeout", "message": f"驗證逾時（超過 {CHECK_TIMEOUT} 秒）"}
@@ -353,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
     def site(self) -> Site:
         return self.server.site  # type: ignore[attr-defined]
 
-    def log_message(self, format: str, *args) -> None:  # noqa: A002
+    def log_message(self, format: str, *args) -> None:
         if not getattr(self.server, "quiet", False):
             super().log_message(format, *args)
 
@@ -400,7 +400,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send_shell(404)
 
-    def _get_api(self, path: str) -> None:
+    def _get_api(self, path: str) -> None:  # noqa: C901
         try:
             if path == "/api/session":
                 payload = {"local": self._local()}
@@ -508,7 +508,7 @@ def served(site: Site, admin: bool = False) -> Iterator[Callable[..., tuple[int,
         server.server_close()
 
 
-def selftest() -> None:
+def selftest() -> None:  # noqa: C901
     import tempfile
 
     uid_a, uid_b, uid_c = "0123456789abcdef", "1111111111111111", "2222222222222222"
@@ -721,7 +721,7 @@ def selftest() -> None:
     print("ok")
 
 
-def selftest_auth() -> None:
+def selftest_auth() -> None:  # noqa: C901
     import stat
     import subprocess as sp
     import tempfile
@@ -1009,7 +1009,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="晨報瀏覽與 👍／👎 回饋")
     ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}，不要綁到對外位址（沒有登入）")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WEB_PORT", DEFAULT_PORT)))
-    ap.add_argument("--admin-port", type=int, default=int(os.environ.get("NEWSLETTER_ADMIN_PORT", 0)),
+    ap.add_argument("--admin-port", type=int, default=int(os.environ.get("NEWSLETTER_ADMIN_PORT", "0")),
                     help="另開一個管理 port（綁在 --host），/auth 與 /api/auth* 只在這裡開；0＝不開。給 Docker 用，"
                          "compose 只把它 publish 成 127.0.0.1:<port>（見 deploy/README.md）")
     ap.add_argument("--auth-check-interval", type=int, metavar="SECONDS",
