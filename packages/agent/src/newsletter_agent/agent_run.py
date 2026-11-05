@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """無人值守入口：用 Claude Agent SDK 跑 news-digest skill，並驗收產出的報告。
 
-用法：uv run newsletter-agent [--max-turns N]
-      uv run newsletter-agent --auth-check [--token-from-env]
-      uv run python -m newsletter_agent.agent_run --selftest
+用法：uv run --project packages/agent newsletter-agent [--max-turns N]
+      uv run --project packages/agent newsletter-agent --auth-check [--token-from-env]
+      uv run --project packages/agent python -m newsletter_agent.agent_run --selftest
 
 訊息一律走 stderr；--auth-check 例外，結果是 stdout 的一行 JSON。
 exit code：0 成功／1 agent 失敗／2 環境問題（沒 SDK、沒 token）／3 報告沒產出／4 格式不符／5 授權失敗／6 額度用完
@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from newsletter_shared import auth_store, metrics
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 from newsletter_shared.report_data import parse_report
 
 try:
@@ -252,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"搭配 --auth-check：只用環境變數 {auth_store.TOKEN_ENV}（驗證尚未儲存的 token）")
     args = ap.parse_args(argv)
     if sdk is None:
-        print("缺 claude-agent-sdk：請用 `uv run newsletter-agent` 執行（或先 `uv sync`）", file=sys.stderr)
+        print("缺 claude-agent-sdk：請用 `uv run --project packages/agent newsletter-agent` 執行（或先 `uv sync`）", file=sys.stderr)
         return 2
     if args.selftest:
         selftest()

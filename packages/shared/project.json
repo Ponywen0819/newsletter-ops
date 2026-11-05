@@ -7,7 +7,7 @@
   ],
   "targets": {
     "selftest": {
-      "command": "uv run --locked newsletter-metrics --selftest && uv run --locked newsletter-feedback --selftest && uv run --locked python -m newsletter_shared.paths && uv run --locked python -m newsletter_shared.lock --selftest && uv run --locked python -m newsletter_shared.auth_store --selftest && uv run --locked python -m newsletter_shared.report_data --selftest"
+      "command": "uv run --locked --project {projectRoot} newsletter-metrics --selftest && uv run --locked --project {projectRoot} newsletter-feedback --selftest && uv run --locked --project {projectRoot} python -m newsletter_shared.lock --selftest && uv run --locked --project {projectRoot} python -m newsletter_shared.auth_store --selftest && uv run --locked --project {projectRoot} python -m newsletter_shared.report_data --selftest"
     },
     "lint": {
       "command": "uvx ruff@0.17.3 check {projectRoot}"

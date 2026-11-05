@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""入口：uv run newsletter-fetch [--dry-run] [--no-report] [--lookback 48] [--list-sources]"""
+"""入口：uv run --project packages/agent newsletter-fetch [--dry-run] [--no-report] [--lookback 48] [--list-sources]"""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,7 @@ from newsletter_agent import fetch as fetch_mod
 from newsletter_agent import report as report_mod
 from newsletter_agent import sources as sources_mod
 from newsletter_shared import metrics
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 
 INTERESTS = ROOT / "config" / "interests.md"

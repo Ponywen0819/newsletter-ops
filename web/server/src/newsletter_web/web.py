@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Web 層：JSON API ＋ 提供 web/ui/dist 的前端。API 列表與安全設計見 web/README.md。
 
-用法：uv run newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N] [--auth-check-interval 3600] [--selftest]
+用法：uv run --project web/server newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N] [--auth-check-interval 3600] [--selftest]
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from newsletter_shared import auth_store, feedback, lock, report_data
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -117,7 +117,7 @@ def run_auth_check(token: str) -> dict:
             return {"ok": result["ok"], "kind": str(result.get("kind", "other")),
                     "message": str(result.get("message", "")).replace(token, "***")}
     if p.returncode == 2:  # agent_run 在沒有 SDK 時、還沒走到驗證就以 2 結束
-        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run newsletter-web` 啟動"}
+        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run --project web/server newsletter-web` 啟動"}
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
 
 

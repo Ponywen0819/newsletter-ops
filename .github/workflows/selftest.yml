@@ -30,11 +30,10 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             web/ui/package-lock.json
-      - run: uv sync --locked
       - run: npm ci
       - run: npm ci
         working-directory: web/ui
       - run: npx nx run-many -t lint selftest typecheck test
       - run: git ls-files '*.sh' | xargs shellcheck --severity=warning
-      - run: uv run --locked python deploy/check_boundaries.py --selftest
-      - run: uv run --locked python deploy/check_boundaries.py
+      - run: uv run --no-project python deploy/check_boundaries.py --selftest
+      - run: uv run --no-project python deploy/check_boundaries.py

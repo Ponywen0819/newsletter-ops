@@ -14,8 +14,8 @@ dependencies = [
 newsletter-web = "newsletter_web.web:main"
 
 [tool.uv.sources]
-newsletter-shared = { workspace = true }
-newsletter-agent = { workspace = true }
+newsletter-shared = { path = "../../packages/shared", editable = true }
+newsletter-agent = { path = "../../packages/agent", editable = true }
 
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12"]

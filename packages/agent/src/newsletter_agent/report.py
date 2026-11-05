@@ -7,7 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from newsletter_shared.feedback import mark_comment
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 
 def render(items: list[dict], stats: dict, config: dict, errors: list[str]) -> str:
@@ -22,7 +22,7 @@ def render(items: list[dict], stats: dict, config: dict, errors: list[str]) -> s
         f"抓取 {stats['fetched']} 則 → 時間窗內新項目 {stats['in_window_new']} 則 → "
         f"通過相關性 {stats['passed_relevance']} 則 → 收錄 {stats['after_dedupe_and_quota']} 則",
         "",
-        "<!-- 看完把每則的 mark: 填上 + 或 -（++ / -- 表示強烈），再跑 uv run newsletter-feedback -->",
+        "<!-- 看完把每則的 mark: 填上 + 或 -（++ / -- 表示強烈），再跑 uv run --project packages/shared newsletter-feedback -->",
         "",
         "## 今日重點",
         "",

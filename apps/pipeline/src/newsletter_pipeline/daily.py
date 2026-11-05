@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """每日流程：抓取 → agent 寫報告 → render → 寄信，整條握一把防重疊的鎖。
 
-用法：uv run newsletter-run [newsletter-fetch 的參數，如 --lookback 72]
-      uv run newsletter-run --selftest
+用法：uv run --project apps/pipeline newsletter-run [newsletter-fetch 的參數，如 --lookback 72]
+      uv run --project apps/pipeline newsletter-run --selftest
 
 任一步失敗就停，exit code 是該步的；被訊號殺掉是 128+訊號；鎖被占用是 75（EX_TEMPFAIL）。
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import IO
 
 from newsletter_shared import lock
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 EXIT_BUSY = 75
 LOCK = ROOT / "state" / "pipeline"  # 實際鎖的是 state/pipeline.lock

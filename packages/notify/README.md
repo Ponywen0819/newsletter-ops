@@ -1,7 +1,7 @@
 # notify
 
 外圍：報告 → email → 寄出，只用標準庫、只依賴 [shared](../shared/README.md)。[agent](../agent/README.md) 不認得它；之後加別的通知管道也放這裡。
-專案全貌見[根目錄 README](../README.md)。
+專案全貌見[根目錄 README](../../README.md)。
 
 ```
 src/newsletter_notify/
@@ -12,7 +12,7 @@ src/newsletter_notify/
 ## 使用
 
 ```bash
-uv run newsletter-render | uv run newsletter-send   # 寄出當日 email
+uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send   # 寄出當日 email
 ```
 
 `render_email.py` 的 stdout 是一行 JSON，`send_email.py` 從 stdin 讀它；排程（`newsletter-run`，見 [pipeline/README.md](../../apps/pipeline/README.md)）把前者的 stdout 原封不動餵給 `send_email.py`。
@@ -42,6 +42,6 @@ email 的連結文字帶 emoji（「👍 有用／👎 沒用」；網頁上的�
 ## 自我檢查
 
 ```bash
-uv run newsletter-render --selftest   # email 輸出
-uv run newsletter-send --selftest
+uv run --project packages/notify newsletter-render --selftest   # email 輸出
+uv run --project packages/notify newsletter-send --selftest
 ```

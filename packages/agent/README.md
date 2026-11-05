@@ -1,7 +1,7 @@
 # agent
 
 核心：抓取 → 整理 → Claude 寫報告。唯一的第三方依賴 `claude-agent-sdk` 在這裡；依賴 [shared](../shared/README.md)，**不認得 email**（email 與寄信在 [notify](../notify/README.md)）。
-專案全貌見[根目錄 README](../README.md)，已知問題見 [ISSUES.md](ISSUES.md)。
+專案全貌見[根目錄 README](../../README.md)，已知問題見 [ISSUES.md](ISSUES.md)。
 
 ```
 src/newsletter_agent/
@@ -18,18 +18,18 @@ src/newsletter_agent/
 ## 使用
 
 ```bash
-uv run newsletter-fetch --dry-run     # 只測來源連通性
-uv run newsletter-fetch               # 完整跑一次（含模板版報告）
-uv run newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
-uv run newsletter-fetch --lookback 72 # 放寬時間窗到 72 小時
-uv run newsletter-fetch --list-sources   # 不連網，列出來源載入結果與停用項目
-uv run newsletter-agent               # 依 skill 寫報告並驗收，見下方「無人值守」
+uv run --project packages/agent newsletter-fetch --dry-run     # 只測來源連通性
+uv run --project packages/agent newsletter-fetch               # 完整跑一次（含模板版報告）
+uv run --project packages/agent newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
+uv run --project packages/agent newsletter-fetch --lookback 72 # 放寬時間窗到 72 小時
+uv run --project packages/agent newsletter-fetch --list-sources   # 不連網，列出來源載入結果與停用項目
+uv run --project packages/agent newsletter-agent               # 依 skill 寫報告並驗收，見下方「無人值守」
 ```
 
 同一天可以重跑 `newsletter-fetch`：當天 `data/curated/<date>.json` 上次收錄的項目不算「看過」，會重新排名，所以頭條不會因為重跑而消失。
 
 agent（`agent_run.py`，或在對話裡手動跑 skill）只負責寫 `reports/<date>.md` 並驗證格式，**不產 email HTML、也不寄信**；
-要 email 就用 notify（`uv run newsletter-render | uv run newsletter-send`，排程由 `newsletter-run` 代勞，見 [pipeline/README.md](../../apps/pipeline/README.md)）。
+要 email 就用 notify（`uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send`，排程由 `newsletter-run` 代勞，見 [pipeline/README.md](../../apps/pipeline/README.md)）。
 
 ## 調整來源
 
@@ -108,17 +108,17 @@ Hugging Face / Google Research 給 1.2。數量由配額控制。
 
 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；
 主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`。
-自我檢查：`uv run python -m newsletter_agent.curate`。
+自我檢查：`uv run --project packages/agent python -m newsletter_agent.curate`。
 
 ## 無人值守（Claude Agent SDK）
 
-不開 Claude app 也能跑完整流程：`agent_run`（`uv run newsletter-agent`）用 Claude Agent SDK 呼叫**同一份**
+不開 Claude app 也能跑完整流程：`agent_run`（`uv run --project packages/agent newsletter-agent`）用 Claude Agent SDK 呼叫**同一份**
 `.claude/skills/news-digest/SKILL.md`，與在對話裡打 `/news-digest` 並存、結果一致。
 
 ```bash
-uv run newsletter-agent                  # 依 skill 寫報告並驗收，約數分鐘
-uv run newsletter-agent --max-turns 80   # 預設 60 回合，超過視為失敗
-uv run newsletter-agent --auth-check     # 只驗證 token，不跑晨報
+uv run --project packages/agent newsletter-agent                  # 依 skill 寫報告並驗收，約數分鐘
+uv run --project packages/agent newsletter-agent --max-turns 80   # 預設 60 回合，超過視為失敗
+uv run --project packages/agent newsletter-agent --auth-check     # 只驗證 token，不跑晨報
 ```
 
 ### 認證：只用 OAuth（訂閱額度），不使用 API key
@@ -127,7 +127,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token，不跑晨報
 
 1. 在**自己的電腦**執行 `claude setup-token`，在瀏覽器完成授權；它會印出效期一年的 token（CLI 不會幫你存）。
    需要 Pro / Max / Team / Enterprise 方案。
-2. 本機直接跑或 systemd 部署：開 `http://127.0.0.1:8787/auth`（`uv run newsletter-web`），把 token 貼上送出。伺服器會先用它實際呼叫一次 Claude
+2. 本機直接跑或 systemd 部署：開 `http://127.0.0.1:8787/auth`（`uv run --project web/server newsletter-web`），把 token 貼上送出。伺服器會先用它實際呼叫一次 Claude
    （極小的請求）驗證，**通過才儲存**到 `state/oauth_token.json`（權限 600、不進版控）；貼錯的 token 不會蓋掉原本可用的。
    頁面也顯示授權狀態與預計到期日（以一年效期推算，剩 30 天內會提醒），並可「測試連線」或「刪除已存的 token」
    （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。`/auth` 的使用限制見 [web/README.md](../web/README.md)。
@@ -140,7 +140,7 @@ uv run newsletter-agent --auth-check     # 只驗證 token，不跑晨報
 - **為什麼要移除環境變數**：claude CLI 自己的優先順序是 `ANTHROPIC_API_KEY` 高於 OAuth token，非互動模式只要有 key
   就用 key。所以 `agent_run.py` 啟動時會把排在 OAuth 前面的來源（`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、
   `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` / `_FOUNDRY`）從環境中移除，並在 stderr 說明。
-- **確認 SDK 實際用哪種認證**：`uv run newsletter-agent --auth-check` 印一行 JSON，`source` 是 token 來源（驗證儲存的 token 是 `stored-token`；`--token-from-env` 驗證候選 token 時是 `env-token`，web 貼上時用），
+- **確認 SDK 實際用哪種認證**：`uv run --project packages/agent newsletter-agent --auth-check` 印一行 JSON，`source` 是 token 來源（驗證儲存的 token 是 `stored-token`；`--token-from-env` 驗證候選 token 時是 `env-token`，web 貼上時用），
   `api_key_source` 是 claude CLI 在 init 訊息裡回報的 `apiKeySource`——`none` 表示這次呼叫沒有用 API key（走的是 OAuth token）。
   不是 `none`（例如 `ANTHROPIC_API_KEY`）就算失敗（`kind: api_key`，exit 1），即使呼叫本身成功也一樣：成功的呼叫分不出是 OAuth 還是悄悄走了 API key 計費。
   結果範例：`{"ok": true, "kind": "ok", "message": "驗證通過", "api_key_source": "none", "source": "stored-token"}`。
@@ -178,8 +178,8 @@ stderr 的 `[agent]` 摘要行（含估算費用 `est_usd`）不受 debug 影響
 跑幾天後用它調整 `--max-turns`，並看看一次晨報吃掉多少訂閱額度：
 
 ```bash
-NEWSLETTER_DEBUG=1 uv run newsletter-agent
-uv run newsletter-metrics summary 14
+NEWSLETTER_DEBUG=1 uv run --project packages/agent newsletter-agent
+uv run --project packages/shared newsletter-metrics summary 14
 ```
 
 用 `agent_run.py` 時，skill 裡的 `newsletter-metrics claude` 會自動略過（`NEWSLETTER_RUNNER=sdk`），避免和 SDK 的用量重複記錄。
@@ -188,7 +188,7 @@ uv run newsletter-metrics summary 14
 ## 自我檢查
 
 ```bash
-uv run python -m newsletter_agent.curate
-uv run python -m newsletter_agent.fetch
-uv run python -m newsletter_agent.agent_run --selftest   # 需要裝 SDK，CI 不跑
+uv run --project packages/agent python -m newsletter_agent.curate
+uv run --project packages/agent python -m newsletter_agent.fetch
+uv run --project packages/agent python -m newsletter_agent.agent_run --selftest   # 需要裝 SDK，CI 不跑
 ```

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """寄信層：用 Gmail SMTP 寄出 render_email.py 產的 HTML。
 
-用法：uv run newsletter-render | uv run newsletter-send [--dry-run]
-      uv run newsletter-send --selftest
+用法：uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send [--dry-run]
+      uv run --project packages/notify newsletter-send --selftest
 
 環境變數：GMAIL_USER、GMAIL_APP_PASSWORD（應用程式密碼）、NEWSLETTER_MAIL_TO（逗號分隔，預設寄給自己）
 """

@@ -15,8 +15,7 @@
 !/*/*/ISSUES.md
 !/run_daily.sh
 !/.githooks/*
-!/pyproject.toml
-!/uv.lock
+!/ruff.toml
 !/.python-version
 !/package.json
 !/package-lock.json
@@ -39,8 +38,9 @@
 # 模組（apps/、packages/、web/ 底下一個目錄一個）：Nx 專案檔
 !/*/*/project.json
 
-# Python 模組（uv workspace）：只放行 pyproject.toml 與 src/<套件>/ 底下的 .py
+# Python 模組（各自一個 uv 專案）：只放行 pyproject.toml、uv.lock 與 src/<套件>/ 底下的 .py
 !/*/*/pyproject.toml
+!/*/*/uv.lock
 !/*/*/src/**/*.py
 
 # Node 模組（Vite + React）：只放行原始碼、設定與鎖檔
@@ -72,7 +72,7 @@
 #   state/feedback.jsonl     人工標記，只是更新 config/interests.md 時參考的中間產物
 #   state/seen.json          去重記憶，本機狀態
 #   logs/                    執行紀錄與 metrics
-#   .venv/                   uv 建的環境
+#   .venv/                   uv 建的環境（每個 Python 模組一個）
 #   node_modules/、.nx/      根目錄的 Nx 與快取，`npm install` 重建
 #   __pycache__/、.DS_Store  由 * 自動忽略
 

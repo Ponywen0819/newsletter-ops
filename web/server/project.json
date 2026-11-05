@@ -7,7 +7,7 @@
   ],
   "targets": {
     "selftest": {
-      "command": "uv run --locked newsletter-web --selftest"
+      "command": "uv run --locked --project {projectRoot} newsletter-web --selftest"
     },
     "lint": {
       "command": "uvx ruff@0.17.3 check {projectRoot}"

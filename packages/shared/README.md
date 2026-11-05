@@ -1,10 +1,10 @@
 # shared
 
-共用底層，只用標準庫、不依賴其他模組；`agent`、`notify`、`web`、`pipeline` 都依賴它。專案全貌見[根目錄 README](../README.md)，已知問題見 [ISSUES.md](ISSUES.md)。
+共用底層，只用標準庫、不依賴其他模組；`agent`、`notify`、`web`、`pipeline` 都依賴它。專案全貌見[根目錄 README](../../README.md)，已知問題見 [ISSUES.md](ISSUES.md)。
 
 ```
 src/newsletter_shared/
-  paths.py               repo 根目錄 ROOT 的唯一來源；其他模組一律從這裡取，不自己用 __file__ 推算
+  __init__.py            資料根目錄 ROOT：環境變數 NEWSLETTER_ROOT，沒設就是工作目錄；其他模組一律從這裡取
   report_data.py         報告 Markdown → 結構化資料：報告格式（SKILL.md 規定的子集）唯一的解析與驗證者，網頁與 email 共用
                          （newsletter-report-check 用它驗證 reports/<date>.md）
   lock.py                跨程序檔案鎖 locked(path, timeout)：多個服務讀寫同一個檔案時一律從這裡排隊
@@ -40,7 +40,7 @@ with lock.locked(path, timeout=0):    # 搶不到就丟 lock.LockBusy；給「�
   | `state/seen.json` | `newsletter-fetch` | 沒有（只有一個寫入者，原子寫入） |
 
 ```bash
-uv run python -m newsletter_shared.lock --selftest   # 排隊、逾時、巢狀、程序被殺後放鎖
+uv run --project packages/shared python -m newsletter_shared.lock --selftest   # 排隊、逾時、巢狀、程序被殺後放鎖
 ```
 
 ## 報告格式（`report_data.py`）
@@ -49,10 +49,10 @@ uv run python -m newsletter_shared.lock --selftest   # 排隊、逾時、巢狀�
 （`list`／`mark` 區塊的 `votable`：主要新聞才有、「其餘收錄」沒有）也在那裡決定，兩邊版型只負責照畫。
 
 ```bash
-uv run python -m newsletter_shared.report_data --selftest   # 驗證解析與 votable
+uv run --project packages/shared python -m newsletter_shared.report_data --selftest   # 驗證解析與 votable
 ```
 
-`uv run newsletter-render --selftest` 驗證 email 輸出，見 [notify/README.md](../notify/README.md)。
+`uv run --project packages/notify newsletter-render --selftest` 驗證 email 輸出，見 [notify/README.md](../notify/README.md)。
 
 ## 回饋標記（`feedback.py`）
 
@@ -63,22 +63,22 @@ uv run python -m newsletter_shared.report_data --selftest   # 驗證解析與 vo
 ```
 
 看完隨手填 `+`（有用）、`-`（沒用）、`++` / `--`（強烈），Markdown 預覽時不會顯示。
-跑 `uv run newsletter-feedback` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
+跑 `uv run --project packages/shared newsletter-feedback` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
 報告裡的標記只匯入 `feedback.jsonl` 還沒有紀錄的那一則；已有紀錄的（含網頁標的）以 jsonl 為準，不會被覆蓋。
 
 網頁（[web/README.md](../web/README.md)）與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊（見[檔案鎖](#檔案鎖lockpy)）。
-`uv run newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
+`uv run --project packages/shared newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
 
 ## 量測（debug）
 
-`config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run newsletter-fetch ...`），每個階段會寫一行到
+`config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run --project packages/agent newsletter-fetch ...`），每個階段會寫一行到
 `logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`render`，
-以及 news-digest 跑完後由 `uv run newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
+以及 news-digest 跑完後由 `uv run --project packages/shared newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
 
 ```bash
-uv run newsletter-metrics summary 14         # 最近 14 天，每次正式執行一行
-uv run newsletter-metrics summary 14 --all   # 連測試執行一起列
-NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run newsletter-fetch --no-report   # 測試執行，紀錄標 test
+uv run --project packages/shared newsletter-metrics summary 14         # 最近 14 天，每次正式執行一行
+uv run --project packages/shared newsletter-metrics summary 14 --all   # 連測試執行一起列
+NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run --project packages/agent newsletter-fetch --no-report   # 測試執行，紀錄標 test
 ```
 
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
@@ -94,5 +94,5 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run newsletter-fetch --no-report
 - **來源只有一個**：`state/oauth_token.json`（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑，權限 600、不進版控）。不讀環境變數 `CLAUDE_CODE_OAUTH_TOKEN`，理由見 [agent/README.md](../agent/README.md)「認證」。
 
 ```bash
-uv run python -m newsletter_shared.auth_store --selftest
+uv run --project packages/shared python -m newsletter_shared.auth_store --selftest
 ```

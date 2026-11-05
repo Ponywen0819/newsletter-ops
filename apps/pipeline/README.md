@@ -1,6 +1,6 @@
 # pipeline
 
-每日流程的編排：抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡。專案全貌見[根目錄 README](../README.md)。
+每日流程的編排：抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡。專案全貌見[根目錄 README](../../README.md)。
 
 站在依賴圖最上層：依賴 `shared`、`agent`、`notify`，**沒有任何成員可以依賴它**（放在 `apps/` 的模組都是這樣，`deploy/check_boundaries.py` 檢查）。
 `agent` 不認得 email、`notify` 不認得 agent；把兩邊串起來是這個模組唯一的工作。純標準庫。
@@ -13,9 +13,9 @@ src/newsletter_pipeline/
 ## 用法
 
 ```bash
-uv run newsletter-run                    # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
-uv run newsletter-run --lookback 72      # 額外參數轉給 newsletter-fetch
-uv run newsletter-run --selftest         # 用假步驟驗證，不連網、不寄信
+uv run --project apps/pipeline newsletter-run                    # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
+uv run --project apps/pipeline newsletter-run --lookback 72      # 額外參數轉給 newsletter-fetch
+uv run --project apps/pipeline newsletter-run --selftest         # 用假步驟驗證，不連網、不寄信
 ```
 
 平常不必直接跑它：排程經根目錄的 `run_daily.sh` 呼叫（補 PATH、載入機密、導向 log，再 exec 它）。

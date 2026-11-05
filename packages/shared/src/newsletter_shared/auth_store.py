@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """OAuth token 的儲存與讀取，web.py 與 agent_run.py 共用。
 
-用法：uv run python -m newsletter_shared.auth_store --selftest
+用法：uv run --project packages/shared python -m newsletter_shared.auth_store --selftest
 
 token 唯一的來源是 state/oauth_token.json（/auth 貼上後存的，權限 600），不讀 CLAUDE_CODE_OAUTH_TOKEN：
 換新要立刻生效，所有程序看到同一份。不支援 API key；scrub_environ() 移除優先序高於 OAuth 的來源。
@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Mapping, MutableMapping
 
 from newsletter_shared import lock
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 TOKEN_FILE_ENV = "NEWSLETTER_TOKEN_FILE"

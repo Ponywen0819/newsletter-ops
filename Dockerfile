@@ -24,22 +24,25 @@ ENV TZ=Asia/Taipei \
     PYTHONUNBUFFERED=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy \
-    PATH="/app/.venv/bin:${PATH}"
+    PATH="/app/web/server/.venv/bin:${PATH}"
 USER app
 WORKDIR /app
 
+# 要執行的模組各裝一個 .venv：web、pipeline，以及 skill 直接呼叫的 agent、shared
 # 先只裝第三方依賴，讓只動程式碼時這層走快取
-COPY --chown=app:app pyproject.toml uv.lock .python-version ./
-COPY --chown=app:app packages/shared/pyproject.toml ./packages/shared/pyproject.toml
-COPY --chown=app:app packages/agent/pyproject.toml ./packages/agent/pyproject.toml
-COPY --chown=app:app packages/notify/pyproject.toml ./packages/notify/pyproject.toml
-COPY --chown=app:app web/server/pyproject.toml ./web/server/pyproject.toml
-COPY --chown=app:app apps/pipeline/pyproject.toml ./apps/pipeline/pyproject.toml
-RUN uv sync --locked --no-install-workspace
+COPY --chown=app:app .python-version ./
+COPY --chown=app:app packages/shared/pyproject.toml packages/shared/uv.lock ./packages/shared/
+COPY --chown=app:app packages/agent/pyproject.toml packages/agent/uv.lock ./packages/agent/
+COPY --chown=app:app packages/notify/pyproject.toml packages/notify/uv.lock ./packages/notify/
+COPY --chown=app:app apps/pipeline/pyproject.toml apps/pipeline/uv.lock ./apps/pipeline/
+COPY --chown=app:app web/server/pyproject.toml web/server/uv.lock ./web/server/
+RUN for p in packages/shared packages/agent apps/pipeline web/server; do \
+      uv sync --locked --no-install-project --no-install-local --project "$p" || exit 1; done
 COPY --chown=app:app packages ./packages
 COPY --chown=app:app apps ./apps
 COPY --chown=app:app web/server ./web/server
-RUN uv sync --locked
+RUN for p in packages/shared packages/agent apps/pipeline web/server; do \
+      uv sync --locked --project "$p" || exit 1; done
 
 COPY --chown=app:app run_daily.sh ./
 COPY --from=web --chown=app:app /web/dist ./web/ui/dist

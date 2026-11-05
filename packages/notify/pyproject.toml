@@ -11,7 +11,7 @@ newsletter-render = "newsletter_notify.render_email:main"
 newsletter-send = "newsletter_notify.send_email:main"
 
 [tool.uv.sources]
-newsletter-shared = { workspace = true }
+newsletter-shared = { path = "../../packages/shared", editable = true }
 
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12"]
