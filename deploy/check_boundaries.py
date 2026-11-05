@@ -22,17 +22,17 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# 成員 id → (目錄, 允許依賴的成員 id)；套件名 newsletter_<id>，發行名 newsletter-<id>
+# 成員 id → (目錄, 允許依賴的成員 id)；發行名 newsletter-<id>，套件名把連字號換成底線
 MEMBERS = {
     "shared": (ROOT / "packages" / "shared", set()),
     "agent": (ROOT / "packages" / "agent", {"shared"}),
     "notify": (ROOT / "packages" / "notify", {"shared"}),
-    "web": (ROOT / "web" / "server", {"shared", "agent"}),
+    "web-server": (ROOT / "apps" / "web-server", {"shared", "agent"}),
     "pipeline": (ROOT / "apps" / "pipeline", {"shared", "agent", "notify"}),
 }
 # 非 Python 模組：id → 目錄；不能被 Python import
 NODE_MODULES = {
-    "web-ui": ROOT / "web" / "ui",
+    "web-ui": ROOT / "apps" / "web-ui",
 }
 
 
@@ -74,7 +74,7 @@ def check(members: dict = MEMBERS) -> list[str]:
         if not base.is_dir():
             errors.append(f"成員 {mid} 的目錄不存在：{base}")
             continue
-        ok = {f"newsletter_{m}" for m in allowed | {mid}}
+        ok = {f"newsletter_{m.replace('-', '_')}" for m in allowed | {mid}}
         errors += [f"成員 {mid} 不可依賴 apps/ 底下的 {a}" for a in sorted(allowed) if a in members and members[a][0].parent.name == "apps"]
         for py in sorted((base / "src").rglob("*.py")):
             errors += _check_file(mid, base, py, ok)
@@ -148,7 +148,7 @@ def selftest() -> None:
         assert any("apps/" in e for e in check(apps))
 
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        ui = root / "web" / "ui"
+        ui = root / "apps" / "web-ui"
         ui.mkdir(parents=True)
         (ui / "package.json").write_text('{"name": "newsletter-web-ui"}')
         (ui / "project.json").write_text('{"name": "newsletter-web-ui"}')
@@ -158,7 +158,7 @@ def selftest() -> None:
         (ui / "package.json").write_text('{"name": "newsletter-web"}')
         assert any("應為 newsletter-web-ui" in e for e in check_projects(root, {}, node))
         assert any("沒有登記" in e for e in check_projects(root, {}, {}))
-        subprocess.run(["git", "rm", "-q", "--cached", "web/ui/project.json"], cwd=root, check=True)
+        subprocess.run(["git", "rm", "-q", "--cached", "apps/web-ui/project.json"], cwd=root, check=True)
         assert any("沒有進版控" in e for e in check_projects(root, {}, node))
 
         py = root / "packages" / "shared"

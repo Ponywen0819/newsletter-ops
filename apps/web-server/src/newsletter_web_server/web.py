@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Web 層：JSON API ＋ 提供 web/ui/dist 的前端。API 列表與安全設計見 web/README.md。
+"""Web 層：JSON API ＋ 提供 apps/web-ui/dist 的前端。API 列表與安全設計見 apps/web-server/README.md。
 
-用法：uv run --project web/server newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N] [--auth-check-interval 3600] [--selftest]
+用法：uv run --project apps/web-server newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N] [--auth-check-interval 3600] [--selftest]
 """
 from __future__ import annotations
 
@@ -35,9 +35,9 @@ MAX_BODY = 4096
 CHECK_TIMEOUT = 90  # 秒
 CHECK_INTERVAL = 3600  # 秒
 
-# 與 web/ui/src/App.tsx 的路由同步
+# 與 apps/web-ui/src/App.tsx 的路由同步
 SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
-BUILD_COMMAND = "cd web/ui && npm install && npm run build"
+BUILD_COMMAND = "cd apps/web-ui && npm install && npm run build"
 STATIC_TYPES = {  # 副檔名白名單
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -117,7 +117,7 @@ def run_auth_check(token: str) -> dict:
             return {"ok": result["ok"], "kind": str(result.get("kind", "other")),
                     "message": str(result.get("message", "")).replace(token, "***")}
     if p.returncode == 2:  # agent_run 在沒有 SDK 時、還沒走到驗證就以 2 結束
-        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run --project web/server newsletter-web` 啟動"}
+        return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run --project apps/web-server newsletter-web` 啟動"}
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
 
 
@@ -139,7 +139,7 @@ class Site:
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
                  checker: Callable[[str], dict] | None = None):
         self.root = root
-        self.dist = root / "web" / "ui" / "dist"
+        self.dist = root / "apps" / "web-ui" / "dist"
         self.today = today or (lambda: f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}")
         self.feedback_path = root / "state" / "feedback.jsonl"
         self.token_path = auth_store.token_path(root)
@@ -311,7 +311,7 @@ class Site:
                 return
 
     def auth_health(self) -> dict:
-        """給所有人看的粗略狀態，不含驗證訊息與 token（state 見 web/README.md）。"""
+        """給所有人看的粗略狀態，不含驗證訊息與 token（state 見 apps/web-server/README.md）。"""
         if auth_store.resolve(self.token_path) is None:
             return {"state": "missing", "kind": "missing", "checked_at": None}
         last = self.last_check
@@ -381,7 +381,7 @@ class Handler(BaseHTTPRequestHandler):
         index = self.site.index_html()
         if index is None:
             hint = (f"<!DOCTYPE html><meta charset=\"utf-8\"><title>前端尚未建置</title>"
-                    f"<p>找不到 <code>web/ui/dist</code>。先建置前端：<code>{BUILD_COMMAND}</code></p>")
+                    f"<p>找不到 <code>apps/web-ui/dist</code>。先建置前端：<code>{BUILD_COMMAND}</code></p>")
             self._send(HTTPStatus.SERVICE_UNAVAILABLE, hint, "text/html; charset=utf-8")
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
@@ -544,19 +544,19 @@ def selftest() -> None:
             {"items": [{"uid": uid_a, "title": "重點", "source": "S1", "topic": "ai-industry",
                         "matched_keywords": ["llm"]}]}, ensure_ascii=False), encoding="utf-8")
         # 前端的建置結果（假的）；dist 之外放一個檔案，確認拿不到
-        (root / "web" / "ui" / "dist" / "assets").mkdir(parents=True)
+        (root / "apps" / "web-ui" / "dist" / "assets").mkdir(parents=True)
         shell = '<!doctype html><div id="root"></div><script type="module" src="/assets/app-abc123.js"></script>'
-        (root / "web" / "ui" / "dist" / "index.html").write_text(shell, encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "sw.js").write_text("self.skipWaiting()", encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "icons").mkdir()
-        (root / "web" / "ui" / "dist" / "icons" / "icon-192.png").write_text("png", encoding="utf-8")
-        (root / "web" / "ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
-        (root / "web" / "secret.txt").write_text("dist 之外", encoding="utf-8")
-        (root / "secret.txt").write_text("dist 之外", encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "index.html").write_text(shell, encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "sw.js").write_text("self.skipWaiting()", encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "icons").mkdir()
+        (root / "apps" / "web-ui" / "dist" / "icons" / "icon-192.png").write_text("png", encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
+        for d in (root / "apps" / "web-ui", root / "apps", root):
+            (d / "secret.txt").write_text("dist 之外", encoding="utf-8")
         site = Site(root, today=lambda: "2026-09-28")
 
         with served(site) as req:
@@ -836,8 +836,8 @@ def _selftest_auth_http(secret: str) -> None:
         (root / "reports" / "2026-09-28.md").write_text(
             f"# 每日晨間簡報 2026-09-28\n\n<!-- subject: x -->\n\n> **今日頭條：** y\n\n## 科技\n\n"
             f"**[t](https://a.example/1)**\n\n- a\n<!-- mark:    uid={uid} -->\n", encoding="utf-8")
-        (root / "web" / "ui" / "dist").mkdir(parents=True)
-        (root / "web" / "ui" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+        (root / "apps" / "web-ui" / "dist").mkdir(parents=True)
+        (root / "apps" / "web-ui" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
         site = Site(root, today=lambda: "2026-09-28", checker=checker)
 
         with served(site) as raw_req:
@@ -1078,7 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
     site = Site()
     if site.index_html() is None:
-        print(f"[web] 找不到 web/ui/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
+        print(f"[web] 找不到 apps/web-ui/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
     server = make_server(site, args.host, args.port)
     print(f"[web] http://{args.host}:{server.server_address[1]}/  （Ctrl-C 結束）", file=sys.stderr)
     stop = threading.Event()

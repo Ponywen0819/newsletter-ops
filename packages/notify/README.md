@@ -23,7 +23,7 @@ uv run --project packages/notify newsletter-render | uv run --project packages/n
 ## 版型
 
 email 與網頁吃 shared 的 `report_data.py` 解出的同一份結構，由 `render_email.py` 排成 inline-CSS HTML；
-兩邊版型各自維護（網頁在 [web/ui](../web/ui/README.md)）。哪些條目可以投票由 `report_data.py` 的 `votable` 決定，兩邊一致。
+兩邊版型各自維護（網頁在 [apps/web-ui](../../apps/web-ui/README.md)）。哪些條目可以投票由 `report_data.py` 的 `votable` 決定，兩邊一致。
 
 ## email 裡的「有用／沒用」連結
 
@@ -32,7 +32,7 @@ email 的連結文字帶 emoji（「👍 有用／👎 沒用」；網頁上的�
 
 - 與網頁一致：「其餘收錄」那種沒有標題段落的整張單行清單不放連結；併了多篇文章的新聞（報告裡連著好幾行 mark，每篇一個 uid）只放一組，
   uid 用逗號接起來 `<base>/feedback/<uid>,<uid>?v=…`，確認頁一次對每個 uid 各投一票（單一 uid 的舊連結照常可用）。
-- **連結不會一點就寫入**：信箱的安全掃描會自動開連結，所以 GET 只顯示「確認標為 有用」的頁面（`web/ui/src/pages/FeedbackPage.tsx`，
+- **連結不會一點就寫入**：信箱的安全掃描會自動開連結，所以 GET 只顯示「確認標為 有用」的頁面（`apps/web-ui/src/pages/FeedbackPage.tsx`，
   資料來自 `GET /api/feedback/<uid>`，純讀取），按了確認才 `POST /api/feedback`。已經是同一個標記就只顯示「已記下」；
   標記不同則說明會覆蓋。
 - 沒設 `NEWSLETTER_BASE_URL`（本機測試）就不加按鈕；格式不對會在 stderr 警告並不加。

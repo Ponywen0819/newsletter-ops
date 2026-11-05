@@ -404,7 +404,7 @@ version = "0.1.0"
 source = { editable = "../../packages/shared" }
 
 [[package]]
-name = "newsletter-web"
+name = "newsletter-web-server"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

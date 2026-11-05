@@ -12,7 +12,7 @@ monorepo，用 [Nx](https://nx.dev/) 管所有模組（不分語言）的任務�
 依賴方向由 `deploy/check_boundaries.py` 檢查（main 上的 CI 也跑），違規的 import 會失敗：
 
 ```
-shared ◄── agent ◄── web
+shared ◄── agent ◄── web-server ◄┄┄ web-ui    web-ui 不 import 任何模組，只呼叫 web-server 的 API
    ▲
    └────── notify
 
@@ -24,11 +24,9 @@ pipeline ──▶ shared、agent、notify    apps/：只負責編排每日流�
 | [packages/shared/](packages/shared/) | `newsletter-shared` | Python | 共用底層（標準庫）：repo 路徑、報告格式的解析與驗證、回饋標記、量測、OAuth token 儲存 | [README](packages/shared/README.md) |
 | [packages/agent/](packages/agent/) | `newsletter-agent` | Python | 核心：抓取 → 整理 → Claude 寫報告。唯一的第三方依賴 `claude-agent-sdk` 在這裡，**不認得 email** | [README](packages/agent/README.md) |
 | [packages/notify/](packages/notify/) | `newsletter-notify` | Python | 外圍：報告 → email → 寄出；之後加別的通知管道放這裡 | [README](packages/notify/README.md) |
-| [web/server/](web/server/) | `newsletter-web` | Python | 晨報網頁的後端 JSON API；依賴 `agent` 只為了驗證 OAuth token | [README](web/README.md) |
-| [web/ui/](web/ui/) | `newsletter-web-ui` | TypeScript | 晨報網頁的前端：Vite + React PWA | [README](web/ui/README.md) |
+| [apps/web-server/](apps/web-server/) | `newsletter-web-server` | Python | 晨報網頁的後端 JSON API（指令 `newsletter-web`），並提供 web-ui 的建置結果；依賴 `agent` 只為了驗證 OAuth token | [README](apps/web-server/README.md) |
+| [apps/web-ui/](apps/web-ui/) | `newsletter-web-ui` | TypeScript | 晨報網頁的前端：Vite + React PWA | [README](apps/web-ui/README.md) |
 | [apps/pipeline/](apps/pipeline/) | `newsletter-pipeline` | Python | 每日流程編排：fetch → agent → render → send 四步串起來，整條握一把防重疊的鎖；排程與手動補跑都走它 | [README](apps/pipeline/README.md) |
-
-`web/` 之後會拆成 `apps/web-server/`（`newsletter-web-server`）與 `apps/web-ui/`。
 
 ### 模組慣例
 
@@ -55,7 +53,7 @@ run_daily.sh                   排程入口（見「排程」）
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
 ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 固定所有 Python 模組的直譯器版本
-package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 web/ui/package.json
+package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json
 
 # 執行期生成物（都不進版控；位置都在 repo 根，Docker 裡是 volume）
 data/raw/<date>.jsonl          當日原始抓取（append，供回溯）
@@ -85,7 +83,7 @@ uv lock --project packages/agent --upgrade         # 升級該模組鎖定的版
 指令都在 repo 根目錄執行：程式讀寫的 `config/`、`reports/`、`data/`、`state/`、`logs/` 以**工作目錄**為根（`newsletter_shared.ROOT`），
 要放別處就設環境變數 `NEWSLETTER_ROOT`。
 
-所有模組的 lint、自我檢查、前端測試都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `web/ui` 各 `npm ci`：
+所有模組的 lint、自我檢查、前端測試都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `apps/web-ui` 各 `npm ci`：
 
 ```bash
 npx nx run-many -t lint selftest typecheck test   # 全部模組；改成 `nx affected -t …` 只跑受影響的
@@ -93,7 +91,7 @@ npx nx run newsletter-agent:selftest              # 單一模組的單一任務
 npx nx graph                                      # 模組依賴圖
 ```
 
-Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是 oxlint（規則在 web/ui/.oxlintrc.json）。不屬於任何模組的檢查另外跑：
+Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是 oxlint（規則在 apps/web-ui/.oxlintrc.json）。不屬於任何模組的檢查另外跑：
 
 ```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
@@ -117,12 +115,12 @@ uv run --project packages/agent newsletter-fetch --no-report   # 只產 curated 
 uv run --project packages/agent newsletter-agent               # Claude 依 skill 寫 reports/<date>.md 並驗收（需要 OAuth token）
 uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send   # 轉成 email 並寄出
 uv run --project apps/pipeline newsletter-run                 # 整條流程一次跑完（抓取 → agent → render → 寄信），排程跑的就是它；有防重疊的鎖
-(cd web/ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
-uv run --project web/server newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
+(cd apps/web-ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
+uv run --project apps/web-server newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
 uv run --project packages/shared newsletter-feedback            # 收集報告裡填的標記
 ```
 
-各指令的選項與細節：抓取與 agent → [agent/README.md](agent/README.md)；email 與寄信 → [notify/README.md](notify/README.md)；網頁 → [web/README.md](web/README.md)。
+各指令的選項與細節：抓取與 agent → [agent/README.md](packages/agent/README.md)；email 與寄信 → [notify/README.md](packages/notify/README.md)；網頁 → [web-server/README.md](apps/web-server/README.md)。
 
 ## 排程
 
@@ -147,7 +145,7 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-f
 
 **漸變**（慢慢偏移，自己察覺不到）→ 靠標記累積資料。看完報告每則填 `+`（有用）、`-`（沒用）：
 可以直接寫在報告 Markdown 裡再跑 `uv run --project packages/shared newsletter-feedback` 收集（格式見 [shared/README.md](shared/README.md)「回饋標記」），
-或在網頁（[web/README.md](web/README.md)）、email 連結（[notify/README.md](notify/README.md)）按按鈕，都累積到 `state/feedback.jsonl`。
+或在網頁（[web-server/README.md](apps/web-server/README.md)）、email 連結（[notify/README.md](packages/notify/README.md)）按按鈕，都累積到 `state/feedback.jsonl`。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
 不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。

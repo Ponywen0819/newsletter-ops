@@ -66,7 +66,7 @@ uv run --project packages/shared python -m newsletter_shared.report_data --selft
 跑 `uv run --project packages/shared newsletter-feedback` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
 報告裡的標記只匯入 `feedback.jsonl` 還沒有紀錄的那一則；已有紀錄的（含網頁標的）以 jsonl 為準，不會被覆蓋。
 
-網頁（[web/README.md](../web/README.md)）與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊（見[檔案鎖](#檔案鎖lockpy)）。
+網頁（[web-server/README.md](../../apps/web-server/README.md)）與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊（見[檔案鎖](#檔案鎖lockpy)）。
 `uv run --project packages/shared newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
 
 ## 量測（debug）

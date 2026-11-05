@@ -9,8 +9,8 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
                                     三個容器共用一個 volume：newsletter-data（reports／data／state／logs）
 ```
 
-- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，要執行的模組各自一個 `.venv`，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`web/ui/`），
-  只把 `web/ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `web/ui/public/`（圖示）要放行才進得了 build context。
+- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，要執行的模組各自一個 `.venv`，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`apps/web-ui/`），
+  只把 `apps/web-ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `web.py` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。主 port（8787）不 publish，host 不會對外開它；
@@ -72,7 +72,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
 | **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的「有用」 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
-| 裝成 PWA、離線、Access 逾時 | 照 [web/ui/README.md](../web/ui/README.md)「PWA」一節的「正式站驗收」表 |
+| 裝成 PWA、離線、Access 逾時 | 照 [apps/web-ui/README.md](../apps/web-ui/README.md)「PWA」一節的「正式站驗收」表 |
 | `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的「👍 有用」連結 | 先經 Access 登入，再看到「確認標為 有用」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
 | `docker compose run --rm scheduler uv run --project packages/agent newsletter-agent --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
@@ -131,8 +131,8 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 
 ```bash
 git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops
-cd ~/newsletter-ops && for p in apps/pipeline web/server; do uv sync --locked --project $p; done   # 建各自的 .venv、裝 claude-agent-sdk；沒有 Python 3.11 時 uv 會自己下載
-(cd web/ui && npm ci && npm run build)          # 建置網頁前端到 web/ui/dist；沒做的話 web service 的頁面都回 503
+cd ~/newsletter-ops && for p in apps/pipeline apps/web-server; do uv sync --locked --project $p; done   # 建各自的 .venv、裝 claude-agent-sdk；沒有 Python 3.11 時 uv 會自己下載
+(cd apps/web-ui && npm ci && npm run build)          # 建置網頁前端到 apps/web-ui/dist；沒做的話 web service 的頁面都回 503
 uv run --project packages/agent newsletter-fetch --list-sources             # 不連網，確認設定可用
 ```
 
@@ -163,7 +163,7 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行，開機自動�
 - 手動跑一次排程：`systemctl --user start newsletter-daily.service`（會真的呼叫 Claude 並寄信，約數分鐘、用掉訂閱額度），
   失敗時 `systemctl --user status newsletter-daily` 會顯示 failed，原因在 `logs/<YYYY-MM>.log`。
 - 更新（`interests.md`、`config/`、程式等被追蹤的檔案）：
-  `git -C ~/newsletter-ops pull && (cd ~/newsletter-ops && uv sync --locked --project apps/pipeline && uv sync --locked --project web/server && cd web/ui && npm ci && npm run build) && systemctl --user restart newsletter-web`。
+  `git -C ~/newsletter-ops pull && (cd ~/newsletter-ops && uv sync --locked --project apps/pipeline && uv sync --locked --project apps/web-server && cd apps/web-ui && npm ci && npm run build) && systemctl --user restart newsletter-web`。
   （前端沒變動時，`npm ci && npm run build` 可以省略。）排程每次都重新讀檔，不必重啟。
 
 **4. cloudflared Tunnel**
@@ -196,7 +196,7 @@ Application domain 填 `news.example.com`；Policy 一條就好：Action = Allow
 | **未登入**：`curl -sI https://news.example.com/reports` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200** |
 | **未登入**：`curl -s -X POST -H 'Content-Type: application/json' -d '{}' https://news.example.com/api/feedback` | 同上，到不了 `web.py`（它自己會回 400，看到 400 代表 Access 沒擋住） |
 | 登入後按一則的「有用」 | host 上 `tail -n1 ~/newsletter-ops/state/feedback.jsonl` 多一行 |
-| 裝成 PWA、離線、Access 逾時 | 照 [web/ui/README.md](../web/ui/README.md)「PWA」一節的「正式站驗收」表 |
+| 裝成 PWA、離線、Access 逾時 | 照 [apps/web-ui/README.md](../apps/web-ui/README.md)「PWA」一節的「正式站驗收」表 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上 `uv run --project packages/agent newsletter-agent`
 （或上面的手動排程）先產一份。

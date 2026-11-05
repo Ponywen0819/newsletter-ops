@@ -65,8 +65,8 @@
 !/.github/**
 
 # 刻意不放行（每日生成物與本機狀態；本 repo 是 public，也不留備份，見 README「資料保存」）：
-#   web/ui/dist/             前端建置產物，`cd web/ui && npm run build` 重建
-#   web/ui/node_modules/     套件，`npm install` 重建
+#   apps/web-ui/dist/             前端建置產物，`cd apps/web-ui && npm run build` 重建
+#   apps/web-ui/node_modules/     套件，`npm install` 重建
 #   data/raw、data/curated   每日抓取結果，可重跑
 #   reports/                 每日報告
 #   state/feedback.jsonl     人工標記，只是更新 config/interests.md 時參考的中間產物

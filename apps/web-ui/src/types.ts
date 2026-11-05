@@ -1,4 +1,4 @@
-// 後端 JSON 的型別。結構定義在 shared 的 report_data.py（晨報）、auth_store.py（授權狀態）與 web/server 的 web.py（API）。
+// 後端 JSON 的型別。結構定義在 shared 的 report_data.py（晨報）、auth_store.py（授權狀態）與 apps/web-server 的 web.py（API）。
 
 export type Mark = '+' | '-' | ''
 
@@ -83,7 +83,7 @@ export type AuthStatus =
 
 /** 後端定時驗證的最近結果（GET /api/auth-health，所有人都讀得到，所以不含驗證訊息） */
 export interface AuthHealth {
-  /** state 的意思見 web/README.md */
+  /** state 的意思見 apps/web-server/README.md */
   state: 'ok' | 'expiring' | 'missing' | 'invalid' | 'unknown'
   kind: string
   /** 最近一次驗證的時間（ISO）；還沒驗證過是 null */
