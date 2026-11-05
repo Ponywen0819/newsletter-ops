@@ -1,7 +1,9 @@
 name: selftest
 
-# 各模組的自我檢查（不連網）、lint、前端測試；release.yml 接在這個 workflow 後面
-on: push
+# 各模組的自我檢查（不連網）、lint、前端測試；只在 main 跑，release.yml 接在後面
+on:
+  push:
+    branches: [main]
 
 permissions:
   contents: read

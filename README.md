@@ -7,7 +7,7 @@
 ## 架構
 
 monorepo，用 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) 組成：每個模組是獨立的 Python 套件，
-`uv sync` 把它們以 editable 裝進同一個環境。依賴方向由 `deploy/check_boundaries.py` 檢查（CI 也跑），違規的 import 會失敗：
+`uv sync` 把它們以 editable 裝進同一個環境。依賴方向由 `deploy/check_boundaries.py` 檢查（main 上的 CI 也跑），違規的 import 會失敗：
 
 ```
 shared ◄── agent ◄── web
@@ -65,7 +65,7 @@ uv add --package newsletter-agent <套件>   # 替某個成員新增依賴（改
 uv lock --upgrade     # 升級鎖定的版本
 ```
 
-Lint（CI 也跑；工具不進依賴，用 `uvx` 直接執行）：
+Lint（main 上的 CI 也跑；工具不進依賴，用 `uvx` 直接執行）：
 
 ```bash
 uvx ruff@0.17.3 check                                          # Python，規則在 pyproject.toml
