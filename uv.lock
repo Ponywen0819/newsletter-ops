@@ -395,7 +395,7 @@ wheels = [
 [[package]]
 name = "newsletter-agent"
 version = "0.1.0"
-source = { editable = "agent" }
+source = { editable = "packages/agent" }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "newsletter-shared" },
@@ -404,24 +404,24 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.123" },
-    { name = "newsletter-shared", editable = "shared" },
+    { name = "newsletter-shared", editable = "packages/shared" },
 ]
 
 [[package]]
 name = "newsletter-notify"
 version = "0.1.0"
-source = { editable = "notify" }
+source = { editable = "packages/notify" }
 dependencies = [
     { name = "newsletter-shared" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "newsletter-shared", editable = "shared" }]
+requires-dist = [{ name = "newsletter-shared", editable = "packages/shared" }]
 
 [[package]]
 name = "newsletter-pipeline"
 version = "0.1.0"
-source = { editable = "pipeline" }
+source = { editable = "apps/pipeline" }
 dependencies = [
     { name = "newsletter-agent" },
     { name = "newsletter-notify" },
@@ -430,15 +430,15 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "newsletter-agent", editable = "agent" },
-    { name = "newsletter-notify", editable = "notify" },
-    { name = "newsletter-shared", editable = "shared" },
+    { name = "newsletter-agent", editable = "packages/agent" },
+    { name = "newsletter-notify", editable = "packages/notify" },
+    { name = "newsletter-shared", editable = "packages/shared" },
 ]
 
 [[package]]
 name = "newsletter-shared"
 version = "0.1.0"
-source = { editable = "shared" }
+source = { editable = "packages/shared" }
 
 [[package]]
 name = "newsletter-web"
@@ -451,8 +451,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "newsletter-agent", editable = "agent" },
-    { name = "newsletter-shared", editable = "shared" },
+    { name = "newsletter-agent", editable = "packages/agent" },
+    { name = "newsletter-shared", editable = "packages/shared" },
 ]
 
 [[package]]

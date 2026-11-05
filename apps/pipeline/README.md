@@ -2,7 +2,7 @@
 
 每日流程的編排：抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡。專案全貌見[根目錄 README](../README.md)。
 
-站在依賴圖最上層：依賴 `shared`、`agent`、`notify`，**沒有任何成員可以依賴它**（`deploy/check_boundaries.py` 檢查）。
+站在依賴圖最上層：依賴 `shared`、`agent`、`notify`，**沒有任何成員可以依賴它**（放在 `apps/` 的模組都是這樣，`deploy/check_boundaries.py` 檢查）。
 `agent` 不認得 email、`notify` 不認得 agent；把兩邊串起來是這個模組唯一的工作。純標準庫。
 
 ```
@@ -26,12 +26,12 @@ uv run newsletter-run --selftest         # 用假步驟驗證，不連網、不�
 - 四步各自是獨立的程序（`python -m newsletter_agent.run` 等），由這裡依序啟動；任一步失敗就停下，exit code 是那一步的，被訊號殺掉的算 128+訊號。
 - render 的 stdout（一行 JSON）原封不動餵給 send 的 stdin；其餘 stdout／stderr 和這裡的進度行（`=== 時間 === 步驟`）一起進 log。
 - **鎖**：整條流程握著 `state/pipeline.lock`（`shared` 的 `lock.locked(timeout=0)`）。搶不到就**不排隊**、exit **75**（`EX_TEMPFAIL`），log 留一行說明。
-  程序死掉鎖就放掉，不會留下過期的鎖。這把鎖只防「兩條 pipeline 同時跑」；各個檔案自己的讀寫排隊見 [shared/README.md](../shared/README.md)「檔案鎖」。
+  程序死掉鎖就放掉，不會留下過期的鎖。這把鎖只防「兩條 pipeline 同時跑」；各個檔案自己的讀寫排隊見 [shared/README.md](../../packages/shared/README.md)「檔案鎖」。
 
 | exit code | 意義 |
 | --- | --- |
 | 0 | 全部完成 |
-| 1～6 | `newsletter-agent` 的（見 [agent/README.md](../agent/README.md)「exit code」） |
+| 1～6 | `newsletter-agent` 的（見 [agent/README.md](../../packages/agent/README.md)「exit code」） |
 | 2、3 | `newsletter-fetch` 的（來源設定有誤、一則都沒抓到） |
 | 75 | 另一條 pipeline 正在跑，這次沒執行 |
 | 78 | 由 `run_daily.sh` 回傳：env 檔權限太鬆 |

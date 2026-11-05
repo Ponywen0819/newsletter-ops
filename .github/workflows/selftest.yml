@@ -1,6 +1,6 @@
 name: selftest
 
-# 各模組的自我檢查（不連網）、lint、前端測試；release.yml 接在這個 workflow 後面
+# 各模組的 lint、自我檢查（不連網）、前端測試都交給 Nx；release.yml 接在這個 workflow 後面
 on: push
 
 permissions:
@@ -9,6 +9,8 @@ permissions:
 jobs:
   selftest:
     runs-on: ubuntu-latest
+    env:
+      NX_NO_CLOUD: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,45 +21,18 @@ jobs:
         with:
           version: "0.11.13"
           enable-cache: true
-      - run: uv sync --locked
-      - run: uv run --locked python -m newsletter_agent.curate
-      - run: uv run --locked python -m newsletter_agent.fetch
-      - run: uv run --locked newsletter-metrics --selftest
-      - run: uv run --locked newsletter-render --selftest
-      - run: uv run --locked newsletter-send --selftest
-      - run: uv run --locked newsletter-feedback --selftest
-      - run: uv run --locked python -m newsletter_shared.lock --selftest
-      - run: uv run --locked python -m newsletter_shared.auth_store --selftest
-      - run: uv run --locked python -m newsletter_shared.report_data --selftest
-      - run: uv run --locked newsletter-web --selftest
-      - run: uv run --locked newsletter-run --selftest
-      - run: uv run --locked newsletter-fetch --list-sources
-      - run: python3 deploy/check_boundaries.py --selftest
-      - run: python3 deploy/check_boundaries.py
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          version: "0.11.13"
-      - run: uvx ruff@0.17.3 check
-      - run: git ls-files '*.sh' | xargs shellcheck --severity=warning
-
-  web:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web/ui
-    steps:
-      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/ui/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            web/ui/package-lock.json
+      - run: uv sync --locked
       - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
+      - run: npm ci
+        working-directory: web/ui
+      - run: npx nx run-many -t lint selftest typecheck test
+      - run: git ls-files '*.sh' | xargs shellcheck --severity=warning
+      - run: uv run --locked python deploy/check_boundaries.py --selftest
+      - run: uv run --locked python deploy/check_boundaries.py
