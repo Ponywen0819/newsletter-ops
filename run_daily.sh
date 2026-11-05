@@ -23,4 +23,4 @@ fi
 
 exec >> "$LOG" 2>&1
 
-exec uv run --locked newsletter-run "$@"
+exec uv run --locked --project apps/pipeline newsletter-run "$@"

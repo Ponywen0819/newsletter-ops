@@ -7,7 +7,7 @@
   ],
   "targets": {
     "selftest": {
-      "command": "uv run --locked python -m newsletter_agent.curate && uv run --locked python -m newsletter_agent.fetch && uv run --locked newsletter-fetch --list-sources"
+      "command": "uv run --locked --project {projectRoot} python -m newsletter_agent.curate && uv run --locked --project {projectRoot} python -m newsletter_agent.fetch && uv run --locked --project {projectRoot} newsletter-fetch --list-sources"
     },
     "lint": {
       "command": "uvx ruff@0.17.3 check {projectRoot}"

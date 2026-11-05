@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """email 層：reports/<date>.md → reports/<date>.html（inline CSS，email client 會剝掉 <style>）。
 
-用法：uv run newsletter-render [YYYY-MM-DD] [--selftest]
+用法：uv run --project packages/notify newsletter-render [YYYY-MM-DD] [--selftest]
 stdout 印一行 JSON：{"subject", "headline", "html_path"}，給 send_email 用。
 
 有設 NEWSLETTER_BASE_URL 才在可投票的新聞底下放 👍／👎 連結（<base>/feedback/<uid>[,<uid>...]?v=…）；
@@ -19,7 +19,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from newsletter_shared import metrics
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 from newsletter_shared.report_data import parse_report
 
 BASE_URL_ENV = "NEWSLETTER_BASE_URL"

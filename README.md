@@ -7,7 +7,7 @@
 ## 架構
 
 monorepo，用 [Nx](https://nx.dev/) 管所有模組（不分語言）的任務與依賴圖；依賴本身仍由各語言的工具管：
-Python 模組組成 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)，`uv sync` 把它們以 editable 裝進同一個環境；
+每個 Python 模組是獨立的 uv 專案（自己的 `uv.lock`、`.venv`），依賴其他模組時用 path 依賴以 editable 裝進來；
 前端用 npm。Nx 透過 [`@nxlv/python`](https://github.com/lucasvieirasilva/nx-plugins) 從 `pyproject.toml` 讀出 Python 模組間的依賴。
 依賴方向由 `deploy/check_boundaries.py` 檢查（main 上的 CI 也跑），違規的 import 會失敗：
 
@@ -36,7 +36,7 @@ pipeline ──▶ shared、agent、notify    apps/：只負責編排每日流�
 - 目錄名 = id = 套件名去掉 `newsletter-`（`packages/agent/` → `newsletter-agent`）；Python 的 import 名把連字號換成底線（`newsletter_agent`）。
   指令名（`newsletter-run`、`newsletter-web`…）不跟套件名綁在一起。
 - 每個模組有一個 `project.json`（Nx 專案名 = 套件名），定義 `lint`、`selftest` 等任務；前端的任務直接來自 `package.json` 的 scripts。
-- 新增模組：建目錄與 `project.json`；Python 模組再加進根 `pyproject.toml` 的 workspace members；最後登記到 `deploy/check_boundaries.py` 的 `MEMBERS`（Python）或 `NODE_MODULES`。
+- 新增模組：建目錄與 `project.json`；Python 模組再 `uv lock --project <目錄>` 產生自己的鎖檔；最後登記到 `deploy/check_boundaries.py` 的 `MEMBERS`（Python）或 `NODE_MODULES`。
   `.gitignore`、`.dockerignore` 用萬用字元放行 `*/*/` 底下的模組檔，不必另外加；Dockerfile 要不要帶進映像則要自己決定。
 
 分工原則：**確定性的部分交給 Python，判斷性的部分交給 Claude。**
@@ -54,7 +54,7 @@ config/sources.d/*.json        來源清單，一個主題一個檔
 run_daily.sh                   排程入口（見「排程」）
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
-pyproject.toml, uv.lock        uv workspace 的根（只列成員）與整個 workspace 的鎖檔；.python-version 固定直譯器版本
+ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 固定所有 Python 模組的直譯器版本
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 web/ui/package.json
 
 # 執行期生成物（都不進版控；位置都在 repo 根，Docker 裡是 volume）
@@ -71,14 +71,19 @@ logs/<YYYY-MM>.log             排程執行紀錄
 
 ## 環境（uv）
 
-Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-version` 固定直譯器（3.11）、`uv.lock` 鎖定依賴。
-安裝 uv 後不必自己建 venv，`uv run` 第一次執行會自動建立 `.venv` 並裝好依賴；沒有該版本的 Python 時 uv 會自動下載。
+Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-version` 固定直譯器（3.11，所有模組共用），每個模組的 `uv.lock` 鎖定它自己的依賴。
+安裝 uv 後不必自己建 venv，`uv run --project <模組>` 第一次執行會在該模組底下建 `.venv` 並裝好依賴；沒有該版本的 Python 時 uv 會自動下載。
 
 ```bash
-uv sync               # 依 uv.lock 同步環境（所有成員一起裝）
-uv add --package newsletter-agent <套件>   # 替某個成員新增依賴（改該成員的 pyproject.toml 與 uv.lock，一起 commit）
-uv lock --upgrade     # 升級鎖定的版本
+uv sync --project apps/pipeline                    # 依該模組的 uv.lock 同步它的環境
+uv add --project packages/agent <套件>              # 替某個模組新增依賴（改它的 pyproject.toml 與 uv.lock，一起 commit）
+uv lock --project packages/agent --upgrade         # 升級該模組鎖定的版本
 ```
+
+改了被依賴的模組的依賴（例如 `agent` 加了套件）時，依賴它的模組也要各自 `uv lock --project …`，否則 `--locked` 會失敗。
+
+指令都在 repo 根目錄執行：程式讀寫的 `config/`、`reports/`、`data/`、`state/`、`logs/` 以**工作目錄**為根（`newsletter_shared.ROOT`），
+要放別處就設環境變數 `NEWSLETTER_ROOT`。
 
 所有模組的 lint、自我檢查、前端測試都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `web/ui` 各 `npm ci`：
 
@@ -88,11 +93,11 @@ npx nx run newsletter-agent:selftest              # 單一模組的單一任務
 npx nx graph                                      # 模組依賴圖
 ```
 
-Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 pyproject.toml），前端是 oxlint（規則在 web/ui/.oxlintrc.json）。不屬於任何模組的檢查另外跑：
+Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是 oxlint（規則在 web/ui/.oxlintrc.json）。不屬於任何模組的檢查另外跑：
 
 ```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
-uv run python deploy/check_boundaries.py
+uv run --no-project python deploy/check_boundaries.py
 ```
 
 commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：
@@ -101,20 +106,20 @@ commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit 
 git config core.hooksPath .githooks
 ```
 
-抓取、整理、寄信都只用標準庫，只有 `agent` 成員（`agent_run`）需要第三方套件（`claude-agent-sdk`）。
-skill 裡由 agent 呼叫的指令都是 `uv run --locked …`，要在 repo 根目錄、有 uv 的環境下執行。
+抓取、整理、寄信都只用標準庫，只有 `agent` 模組（`agent_run`）需要第三方套件（`claude-agent-sdk`）。
+skill 裡由 agent 呼叫的指令都是 `uv run --locked --project <模組> …`，要在 repo 根目錄、有 uv 的環境下執行。
 
 ## 快速開始
 
 ```bash
-uv run newsletter-fetch --dry-run     # 只測來源連通性
-uv run newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
-uv run newsletter-agent               # Claude 依 skill 寫 reports/<date>.md 並驗收（需要 OAuth token）
-uv run newsletter-render | uv run newsletter-send   # 轉成 email 並寄出
-uv run newsletter-run                 # 整條流程一次跑完（抓取 → agent → render → 寄信），排程跑的就是它；有防重疊的鎖
+uv run --project packages/agent newsletter-fetch --dry-run     # 只測來源連通性
+uv run --project packages/agent newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
+uv run --project packages/agent newsletter-agent               # Claude 依 skill 寫 reports/<date>.md 並驗收（需要 OAuth token）
+uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send   # 轉成 email 並寄出
+uv run --project apps/pipeline newsletter-run                 # 整條流程一次跑完（抓取 → agent → render → 寄信），排程跑的就是它；有防重疊的鎖
 (cd web/ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
-uv run newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
-uv run newsletter-feedback            # 收集報告裡填的標記
+uv run --project web/server newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
+uv run --project packages/shared newsletter-feedback            # 收集報告裡填的標記
 ```
 
 各指令的選項與細節：抓取與 agent → [agent/README.md](agent/README.md)；email 與寄信 → [notify/README.md](notify/README.md)；網頁 → [web/README.md](web/README.md)。
@@ -141,7 +146,7 @@ uv run newsletter-feedback            # 收集報告裡填的標記
 skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-fetch` 每次執行都會在 stderr 提醒一行。
 
 **漸變**（慢慢偏移，自己察覺不到）→ 靠標記累積資料。看完報告每則填 `+`（有用）、`-`（沒用）：
-可以直接寫在報告 Markdown 裡再跑 `uv run newsletter-feedback` 收集（格式見 [shared/README.md](shared/README.md)「回饋標記」），
+可以直接寫在報告 Markdown 裡再跑 `uv run --project packages/shared newsletter-feedback` 收集（格式見 [shared/README.md](shared/README.md)「回饋標記」），
 或在網頁（[web/README.md](web/README.md)）、email 連結（[notify/README.md](notify/README.md)）按按鈕，都累積到 `state/feedback.jsonl`。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻

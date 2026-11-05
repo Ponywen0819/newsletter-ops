@@ -3,8 +3,8 @@
 
 開關：config.json 的 "debug"，或 NEWSLETTER_DEBUG=1（0 強制關閉）。測試執行設 NEWSLETTER_RUN_LABEL=test；紀錄一律保留。
 
-  uv run newsletter-metrics claude [--since ISO] [--until ISO] [--session FILE]
-  uv run newsletter-metrics summary [天數] [--all]
+  uv run --project packages/shared newsletter-metrics claude [--since ISO] [--until ISO] [--session FILE]
+  uv run --project packages/shared newsletter-metrics summary [天數] [--all]
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 METRICS_DIR = ROOT / "logs" / "metrics"
 TZ = ZoneInfo("Asia/Taipei")
@@ -198,7 +198,7 @@ def cmd_summary(argv: list[str]) -> int:
 
 
 def selftest() -> None:
-    # 路徑都從 paths.ROOT 推算：紀錄在 ROOT/logs/metrics，Claude session 紀錄的位置由 cwd（＝ROOT）決定，debug 旗標讀 ROOT/config/config.json
+    # 路徑都從 ROOT 推算：紀錄在 ROOT/logs/metrics，Claude session 紀錄的位置由 cwd（＝ROOT）決定，debug 旗標讀 ROOT/config/config.json
     assert METRICS_DIR == ROOT / "logs" / "metrics"
     assert TRANSCRIPTS.name == re.sub(r"[^A-Za-z0-9]", "-", str(ROOT)), TRANSCRIPTS
     assert (ROOT / "config" / "config.json").is_file()

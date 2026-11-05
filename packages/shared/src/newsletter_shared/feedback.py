@@ -1,6 +1,6 @@
 """回饋層：收集報告裡的人工標記到 state/feedback.jsonl。
 
-報告每則末尾有 `<!-- mark:  uid=... -->`，在 `mark:` 後填 + / - / ++ / --，再跑 `uv run newsletter-feedback`。
+報告每則末尾有 `<!-- mark:  uid=... -->`，在 `mark:` 後填 + / - / ++ / --，再跑 `uv run --project packages/shared newsletter-feedback`。
 網頁的 👍／👎 寫同一個檔；兩邊都只 append、共用同一把鎖。
 報告裡的標記只匯入 jsonl 還沒有紀錄的那一則，已有紀錄的以 jsonl 為準。
 """
@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from newsletter_shared.lock import locked
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 MARK_RE = re.compile(r"<!--\s*mark:\s*([+-]{0,2})\s*uid=([0-9a-f]{16})\s*-->")
 VALID_MARKS = {"+", "-", "++", "--"}

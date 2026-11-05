@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """跨程序的檔案鎖（flock）。
 
-用法：uv run python -m newsletter_shared.lock --selftest
+用法：uv run --project packages/shared python -m newsletter_shared.lock --selftest
 
     with locked(path):             # 等到拿到為止
     with locked(path, timeout=0):  # 搶不到就丟 LockBusy

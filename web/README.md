@@ -9,15 +9,15 @@ ui/                                前端：Vite + React + TypeScript（晨報�
 ```
 
 後端 `newsletter-web` 只出 JSON，頁面全由前端畫，前端見 [ui/README.md](ui/README.md)。
-後端依賴 [agent](../packages/agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；`web.py` 本身不 import agent），用 `uv run newsletter-web` 啟動就有 SDK。
+後端依賴 [agent](../packages/agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；`web.py` 本身不 import agent），用 `uv run --project web/server newsletter-web` 啟動就有 SDK。
 
 ## 啟動
 
 ```bash
 (cd web/ui && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
-uv run newsletter-web               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
-uv run newsletter-web --auth-check-interval 1800   # 背景驗證 Claude 認證的間隔（秒），預設 3600；0＝不驗證
-uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制、定時驗證
+uv run --project web/server newsletter-web               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
+uv run --project web/server newsletter-web --auth-check-interval 1800   # 背景驗證 Claude 認證的間隔（秒），預設 3600；0＝不驗證
+uv run --project web/server newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制、定時驗證
 ```
 
 `/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則主要新聞末尾有「有用／沒用」兩顆按鈕（上／下箭頭圖示），按下即 append 一行到
@@ -64,7 +64,7 @@ API 都是 JSON，型別見 `ui/src/types.ts`：
 ## 自我檢查
 
 ```bash
-uv run newsletter-web --selftest
+uv run --project web/server newsletter-web --selftest
 ```
 
 涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、`/auth` 的本機限制、定時驗證與 `/api/auth-health`，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](ui/README.md)。

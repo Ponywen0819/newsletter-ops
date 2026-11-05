@@ -1,13 +1,7 @@
-# uv workspace 的根：只列成員，本身沒有 [project]（根目錄不是套件）。
-# 依賴宣告在各成員的 pyproject.toml（只有 agent 需要第三方套件 claude-agent-sdk）；
-# `uv sync`、`uv run` 會把所有成員以 editable 裝進同一個環境。
-[tool.uv.workspace]
-members = ["packages/shared", "packages/agent", "packages/notify", "web/server", "apps/pipeline"]
-
-[tool.ruff]
+# 全 repo 共用的 Ruff 設定（uvx ruff@0.17.3 check）
 target-version = "py311"
 
-[tool.ruff.lint]
+[lint]
 # 只開抓 bug 與明顯 smell 的規則，不開純風格的
 select = ["E", "F", "W", "B", "SIM", "C90", "PL", "RUF"]
 ignore = [

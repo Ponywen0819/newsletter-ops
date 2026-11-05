@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """報告資料層：reports/<date>.md → 結構化資料，網頁與 email 共用這一個解析器。
 
-用法：uv run newsletter-report-check [YYYY-MM-DD]
-      uv run python -m newsletter_shared.report_data --selftest
+用法：uv run --project packages/shared newsletter-report-check [YYYY-MM-DD]
+      uv run --project packages/shared python -m newsletter_shared.report_data --selftest
 
 回傳 {"title", "date", "subject", "headline", "blocks", "sources"}；blocks：
   {"type": "title", "title", "date"}
@@ -23,7 +23,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from newsletter_shared.feedback import MARK_RE
-from newsletter_shared.paths import ROOT
+from newsletter_shared import ROOT
 
 LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 COMMENT = re.compile(r"^\s*<!--(.*?)-->\s*$")
