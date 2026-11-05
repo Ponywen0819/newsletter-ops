@@ -29,10 +29,10 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
-            web/ui/package-lock.json
+            apps/web-ui/package-lock.json
       - run: npm ci
       - run: npm ci
-        working-directory: web/ui
+        working-directory: apps/web-ui
       - run: npx nx run-many -t lint selftest typecheck test
       - run: git ls-files '*.sh' | xargs shellcheck --severity=warning
       - run: uv run --no-project python deploy/check_boundaries.py --selftest

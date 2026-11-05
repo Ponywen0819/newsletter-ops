@@ -127,10 +127,10 @@ uv run --project packages/agent newsletter-agent --auth-check     # 只驗證 to
 
 1. 在**自己的電腦**執行 `claude setup-token`，在瀏覽器完成授權；它會印出效期一年的 token（CLI 不會幫你存）。
    需要 Pro / Max / Team / Enterprise 方案。
-2. 本機直接跑或 systemd 部署：開 `http://127.0.0.1:8787/auth`（`uv run --project web/server newsletter-web`），把 token 貼上送出。伺服器會先用它實際呼叫一次 Claude
+2. 本機直接跑或 systemd 部署：開 `http://127.0.0.1:8787/auth`（`uv run --project apps/web-server newsletter-web`），把 token 貼上送出。伺服器會先用它實際呼叫一次 Claude
    （極小的請求）驗證，**通過才儲存**到 `state/oauth_token.json`（權限 600、不進版控）；貼錯的 token 不會蓋掉原本可用的。
    頁面也顯示授權狀態與預計到期日（以一年效期推算，剩 30 天內會提醒），並可「測試連線」或「刪除已存的 token」
-   （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。`/auth` 的使用限制見 [web/README.md](../web/README.md)。
+   （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。`/auth` 的使用限制見 [web-server/README.md](../../apps/web-server/README.md)。
 3. Docker 部署：在 host 本機的瀏覽器開管理 port `http://127.0.0.1:8788/auth`（主 port 上的 `/auth` 開不了），見 [deploy/README.md](../deploy/README.md)。
 
 - **token 的來源只有 `state/oauth_token.json`**（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑）。**沒有就直接 exit 2**，

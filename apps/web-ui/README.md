@@ -1,23 +1,23 @@
-# web/ui
+# web-ui
 
-晨報網頁的前端：Vite + React + TypeScript。後端 `newsletter-web`（[web/README.md](../README.md)）只出 JSON，頁面全由前端畫；
+晨報網頁的前端：Vite + React + TypeScript。後端 `newsletter-web`（[web-server](../web-server/README.md)）只出 JSON，頁面全由前端畫；
 晨報是 shared 的 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
 版面是自適應的（手機單欄、筆電左側欄＋內文，樣式在 `src/styles.css`）。筆電版面由路由決定、不看內容：`/`、`/reports`、`/reports/<date>` 是左側欄＋內文（頁面用 `ReaderShell`，載入中與出錯也一樣，站內切換外框才不會跳），
 `/feedback`、`/auth`、找不到頁面維持單欄卡片（`App.tsx` 的兩組 layout route）；email 吃同一份結構，由 notify 的 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
-cd web/ui
+cd apps/web-ui
 npm install          # 第一次；需要 Node ^20.19 或 >=22.12
-npm run build        # 型別檢查 + 建置到 web/ui/dist，newsletter-web 直接提供
-npm run dev          # 開發：Vite 在 :5173，/api 代理到 newsletter-web（需另外用 uv run --project web/server newsletter-web 開後端）
+npm run build        # 型別檢查 + 建置到 apps/web-ui/dist，newsletter-web 直接提供
+npm run dev          # 開發：Vite 在 :5173，/api 代理到 newsletter-web（需另外用 uv run --project apps/web-server newsletter-web 開後端）
 npm test             # Vitest + Testing Library：元件與路由
 npm run typecheck
 ```
 
-- 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web/README.md](../README.md)「安全邊界」）。後端對這幾條回 `index.html`，
-  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`web/server/src/newsletter_web/web.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web/README.md](../README.md)。
+- 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
+  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/web.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（後端每小時才驗一次，不輪詢），
-  有問題才在頁首顯示。`/api/session` 的 `local` 為真時附「前往授權」連結，否則（經 Tunnel）只寫「請在主機上重新授權」。各狀態的意思見 [web/README.md](../README.md)。
+  有問題才在頁首顯示。`/api/session` 的 `local` 為真時附「前往授權」連結，否則（經 Tunnel）只寫「請在主機上重新授權」。各狀態的意思見 [web-server/README.md](../web-server/README.md)。
 - 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
@@ -45,7 +45,7 @@ npm run typecheck
   只有 `/api/today`、`/api/reports`、`/api/reports/<date>` 走這個判斷；`POST`、`/api/session`、`/api/auth*`、`/api/feedback/*` 照舊直接送出。
 - **更新**：新版 service worker 直接接手（`skipWaiting`＋`clientsClaim`），不提示重新整理；舊版的 precache 自動清掉。
 - **檔案**：`vite.config.ts`（`vite-plugin-pwa`：manifest、註冊）、`src/sw.ts`（service worker 的路由）、`public/icons/`（`icon.svg` 是來源，另有 192、512、maskable 512、apple-touch-icon 180 的 PNG；換圖示就重新輸出這四張）。
-  `public/` 的檔案原樣複製到 `dist/` 根目錄；它被 `.gitignore`、`.dockerignore` 放行，`Dockerfile` 也有 `COPY web/ui/public`，新增這類目錄時三處都要加。
+  `public/` 的檔案原樣複製到 `dist/` 根目錄；它被 `.gitignore`、`.dockerignore` 放行，`Dockerfile` 也有 `COPY apps/web-ui/public`，新增這類目錄時三處都要加。
 
 **`sw.ts` 的原則**（改它之前先讀）
 
@@ -59,7 +59,7 @@ npm run typecheck
 
 **測試**：`npm test` 的 `pwa.test.ts` 會建置到暫存目錄（不動 `dist/`），檢查 manifest 欄位、`crossorigin`、沒有行內 script、service worker 的路由範圍與順序、cache 名稱與保險逾時；
 `connectivity.test.ts`（判定、逾時、重用、事件、恢復計數）、`api.test.ts`（連不上讀快取、登入逾時不讀、不相關的請求不受影響）、`Layout.test.tsx`（橫幅）鎖住連線偵測；
-後端 `uv run --project web/server newsletter-web --selftest` 檢查 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`，以及 heartbeat 的回應、`no-store`、不寫入任何檔案。
+後端 `uv run --project apps/web-server newsletter-web --selftest` 檢查 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`，以及 heartbeat 的回應、`no-store`、不寫入任何檔案。
 
 **正式站驗收**（Docker 與 systemd 兩種部署共用，部署步驟見 [deploy/README.md](../../deploy/README.md)；Access 的行為只有在真實網域上測得到）
 

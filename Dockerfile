@@ -3,11 +3,11 @@
 FROM node:22-slim AS web
 WORKDIR /web
 # 不要整個 COPY web/，會把 host 的 node_modules 蓋過來
-COPY web/ui/package.json web/ui/package-lock.json ./
+COPY apps/web-ui/package.json apps/web-ui/package-lock.json ./
 RUN npm ci
-COPY web/ui/index.html web/ui/tsconfig.json web/ui/vite.config.ts ./
-COPY web/ui/src ./src
-COPY web/ui/public ./public
+COPY apps/web-ui/index.html apps/web-ui/tsconfig.json apps/web-ui/vite.config.ts ./
+COPY apps/web-ui/src ./src
+COPY apps/web-ui/public ./public
 RUN npm run build
 
 FROM python:3.11-slim-bookworm
@@ -24,7 +24,7 @@ ENV TZ=Asia/Taipei \
     PYTHONUNBUFFERED=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy \
-    PATH="/app/web/server/.venv/bin:${PATH}"
+    PATH="/app/apps/web-server/.venv/bin:${PATH}"
 USER app
 WORKDIR /app
 
@@ -35,17 +35,17 @@ COPY --chown=app:app packages/shared/pyproject.toml packages/shared/uv.lock ./pa
 COPY --chown=app:app packages/agent/pyproject.toml packages/agent/uv.lock ./packages/agent/
 COPY --chown=app:app packages/notify/pyproject.toml packages/notify/uv.lock ./packages/notify/
 COPY --chown=app:app apps/pipeline/pyproject.toml apps/pipeline/uv.lock ./apps/pipeline/
-COPY --chown=app:app web/server/pyproject.toml web/server/uv.lock ./web/server/
-RUN for p in packages/shared packages/agent apps/pipeline web/server; do \
+COPY --chown=app:app apps/web-server/pyproject.toml apps/web-server/uv.lock ./apps/web-server/
+RUN for p in packages/shared packages/agent apps/pipeline apps/web-server; do \
       uv sync --locked --no-install-project --no-install-local --project "$p" || exit 1; done
 COPY --chown=app:app packages ./packages
 COPY --chown=app:app apps ./apps
-COPY --chown=app:app web/server ./web/server
-RUN for p in packages/shared packages/agent apps/pipeline web/server; do \
+COPY --chown=app:app apps/web-server ./apps/web-server
+RUN for p in packages/shared packages/agent apps/pipeline apps/web-server; do \
       uv sync --locked --project "$p" || exit 1; done
 
 COPY --chown=app:app run_daily.sh ./
-COPY --from=web --chown=app:app /web/dist ./web/ui/dist
+COPY --from=web --chown=app:app /web/dist ./apps/web-ui/dist
 COPY --chown=app:app config ./config
 COPY --chown=app:app .claude ./.claude
 COPY --chown=app:app docker ./docker
