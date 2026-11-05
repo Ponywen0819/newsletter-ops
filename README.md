@@ -9,7 +9,7 @@
 monorepo，用 [Nx](https://nx.dev/) 管所有模組（不分語言）的任務與依賴圖；依賴本身仍由各語言的工具管：
 Python 模組組成 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)，`uv sync` 把它們以 editable 裝進同一個環境；
 前端用 npm。Nx 透過 [`@nxlv/python`](https://github.com/lucasvieirasilva/nx-plugins) 從 `pyproject.toml` 讀出 Python 模組間的依賴。
-依賴方向由 `deploy/check_boundaries.py` 檢查（CI 也跑），違規的 import 會失敗：
+依賴方向由 `deploy/check_boundaries.py` 檢查（main 上的 CI 也跑），違規的 import 會失敗：
 
 ```
 shared ◄── agent ◄── web
@@ -80,7 +80,7 @@ uv add --package newsletter-agent <套件>   # 替某個成員新增依賴（改
 uv lock --upgrade     # 升級鎖定的版本
 ```
 
-所有模組的 lint、自我檢查、前端測試都由 Nx 跑（CI 也跑這一行）。第一次先在根目錄與 `web/ui` 各 `npm ci`：
+所有模組的 lint、自我檢查、前端測試都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `web/ui` 各 `npm ci`：
 
 ```bash
 npx nx run-many -t lint selftest typecheck test   # 全部模組；改成 `nx affected -t …` 只跑受影響的
