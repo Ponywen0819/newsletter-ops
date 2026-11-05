@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OAuth token 的儲存與讀取，web.py 與 agent_run.py 共用。
+"""OAuth token 的儲存與讀取，newsletter-web 與 agent_run.py 共用。
 
 用法：uv run --project packages/shared python -m newsletter_shared.auth_store --selftest
 

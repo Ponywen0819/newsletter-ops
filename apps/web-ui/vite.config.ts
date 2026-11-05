@@ -26,7 +26,7 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         display: 'standalone',
-        theme_color: '#ffffff', // 標頭底色（styles.css 的 --card）
+        theme_color: '#ffffff', // 標頭底色（styles/base.css 的 --card）
         background_color: '#f3f4f6', // --page
         icons: [
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },

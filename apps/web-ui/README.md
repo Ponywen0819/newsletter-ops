@@ -2,7 +2,7 @@
 
 晨報網頁的前端：Vite + React + TypeScript。後端 `newsletter-web`（[web-server](../web-server/README.md)）只出 JSON，頁面全由前端畫；
 晨報是 shared 的 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
-版面是自適應的（手機單欄、筆電左側欄＋內文，樣式在 `src/styles.css`）。筆電版面由路由決定、不看內容：`/`、`/reports`、`/reports/<date>` 是左側欄＋內文（頁面用 `ReaderShell`，載入中與出錯也一樣，站內切換外框才不會跳），
+版面是自適應的（手機單欄、筆電左側欄＋內文，樣式在 `src/styles/`，依 `main.tsx` 的 import 順序疊加）。筆電版面由路由決定、不看內容：`/`、`/reports`、`/reports/<date>` 是左側欄＋內文（頁面用 `ReaderShell`，載入中與出錯也一樣，站內切換外框才不會跳），
 `/feedback`、`/auth`、找不到頁面維持單欄卡片（`App.tsx` 的兩組 layout route）；email 吃同一份結構，由 notify 的 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
@@ -15,14 +15,14 @@ npm run typecheck
 ```
 
 - 路由：`/` 當日、`/reports` 歷史、`/reports/<date>` 單日、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
-  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/web.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
+  其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/server.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（後端每小時才驗一次，不輪詢），
   有問題才在頁首顯示。`/api/session` 的 `local` 為真時附「前往授權」連結，否則（經 Tunnel）只寫「請在主機上重新授權」。各狀態的意思見 [web-server/README.md](../web-server/README.md)。
 - 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
 - 深色模式：預設跟系統（`prefers-color-scheme`），頁首「配色」可改成淺色／深色，選擇存在瀏覽器的 localStorage（key `theme`，只收 `light`／`dark`，沒有＝自動），後端不知道。
-  `<html data-theme>` 是唯一真相；顏色在 `styles.css` 的 `:root` 用 `light-dark(淺, 深)` 定義（需要 2024 年中以後的瀏覽器）。
+  `<html data-theme>` 是唯一真相；顏色在 `styles/base.css` 的 `:root` 用 `light-dark(淺, 深)` 定義（需要 2024 年中以後的瀏覽器）。
   `public/theme-init.js` 在 `<head>` 同步套用儲存的主題，避免先閃一下錯的顏色；CSP 不許行內腳本，所以它必須是外部檔。
   放進 `public/` 的檔案要同時放行 `.gitignore`（白名單）、`.dockerignore`，並在 `Dockerfile` 的前端階段 COPY，否則不會進版控或映像。
 

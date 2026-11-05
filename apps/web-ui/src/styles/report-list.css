@@ -1,0 +1,51 @@
+/* /reports 歷史列表 */
+.reports {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+/*
+ * 手機（預設）：日期連結一行、標題一行。
+ * 原本兩者接在同一行，標題一長，換行點就落在日期後面的半行，標題第二行又退回最左邊，很難讀。
+ * 欄寬用 minmax(0, 1fr)：不讓一長串不能斷的標題把欄撐得比卡片寬，才不會橫向捲動。
+ * justify-items: start：日期連結只佔它自己的寬度，不會整列都變成可點區而誤觸。
+ */
+.reports li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: var(--fs-list);
+  line-height: var(--lh-body);
+}
+.reports a {
+  font-weight: 600;
+}
+.reports span {
+  color: var(--muted);
+  overflow-wrap: anywhere; /* 標題常有英文長字串／網址，在自己那一行內強制斷行 */
+}
+/* 手指點的裝置：日期連結是整列唯一的連結，高度至少 44px（與 .fb-btn 同一個門檻） */
+@media (pointer: coarse) {
+  .reports li {
+    padding-top: 0; /* 44px 的連結框本身就撐出日期上方的空間，不再多留 10px */
+  }
+  .reports a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
+/*
+ * ≥768px：日期固定寬度欄、標題在右，兩者以文字基線對齊（一行標題時日期與標題在同一條線上）。
+ * 只套在有日期連結的 <li>：空列表那一格只有一段提示文字，沒有 a／span，
+ * 若也切成 8em 欄，文字會被擠進 8em 寬的窄欄裡斷成好幾行。
+ */
+@media (min-width: 768px) {
+  .reports li:has(> a) {
+    grid-template-columns: 8em minmax(0, 1fr);
+    align-items: baseline;
+  }
+}
+

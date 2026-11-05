@@ -136,7 +136,7 @@ def pick_auth() -> auth_store.Auth | None:
     """選出這次的認證並整理環境；回傳 None 表示沒有可用的 OAuth token（呼叫端要結束，不退回別的方式）。"""
     auth = auth_store.resolve(auth_store.token_path())
     if auth is None:
-        print("[agent] 沒有可用的 OAuth token。請在自己的電腦跑 `claude setup-token`，把 token 貼到 web.py 的 /auth 頁面"
+        print("[agent] 沒有可用的 OAuth token。請在自己的電腦跑 `claude setup-token`，把 token 貼到 newsletter-web 的 /auth 頁面"
               "（只能從本機開；Docker 的做法見 deploy/README.md）。本專案不使用 API key，也不退回本機 claude 的登入。",
               file=sys.stderr)
         if os.environ.get(auth_store.TOKEN_ENV):
@@ -299,7 +299,7 @@ def judge(usage: Usage, sdk_error: str | None, stamp: str, started: float) -> tu
         return 0, "ok", None
     kind = usage.failure_kind()
     if kind == "auth":
-        return EXIT_AUTH, "auth_failed", f"授權失敗：{usage.error_text or reason}。請到 web.py 的 /auth 重新貼上 `claude setup-token` 的 token"
+        return EXIT_AUTH, "auth_failed", f"授權失敗：{usage.error_text or reason}。請到 newsletter-web 的 /auth 重新貼上 `claude setup-token` 的 token"
     if kind == "quota":
         return EXIT_QUOTA, "quota_exhausted", f"額度用完：{usage.error_text or reason}。不會改用別的認證方式，等訂閱額度恢復再跑"
     return 1, "agent_failed", reason

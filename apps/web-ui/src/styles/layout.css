@@ -1,0 +1,146 @@
+/* 離線橫幅：標頭下方一條。內容跟卡片的內文欄對齊；沒內容（有網路）時整條不佔空間 */
+.offline-bar {
+  box-sizing: border-box;
+  padding: 8px var(--gutter);
+  background: #fef3c7;
+  color: #92400e; /* 比 --warn 深：12px 小字在淺黃底上要有 6:1 以上的對比 */
+  font-size: var(--fs-small);
+  text-align: center;
+}
+.offline-bar:empty {
+  display: none;
+}
+.offline-bar button {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* 授權橫幅：有問題才出現（壞＝紅、可能有問題＝黃）。顏色寫死，亮暗主題都夠對比（同離線橫幅） */
+.auth-bar {
+  box-sizing: border-box;
+  padding: 8px var(--gutter);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+.auth-bar-warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+.auth-bar-bad {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.auth-bar a {
+  margin-left: 8px;
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* 標頭列：白底、下緣一條細線，滿版（卡片才受 --content-w 限制） */
+header {
+  background: var(--card);
+  border-bottom: 1px solid var(--rule);
+}
+/* 桌機：捲動時標頭蓋在卡片上面；手機直向高度寶貴，不黏 */
+@media (min-width: 1024px) {
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+}
+header nav {
+  display: flex;
+  flex-wrap: wrap; /* 窄到 375px 也放不下時（例如 320px）寧可換行，也不要撐出水平捲軸 */
+  align-items: center;
+  /* 寬度與左右 padding 跟 .card 一致，站名與連結才會對齊卡片的內文欄 */
+  box-sizing: border-box;
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  font-size: var(--fs-body);
+}
+.site-name {
+  margin-right: 12px;
+  font-weight: 700;
+  color: var(--heading);
+}
+header nav a {
+  display: inline-flex;
+  align-items: center;
+  /* 觸控目標至少 44px 高；水平 padding 讓相鄰連結的點擊區不互相擠壓 */
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--link);
+  text-decoration: none;
+}
+header nav a[aria-current='page'] {
+  font-weight: 600;
+}
+/* 配色切換：推到導覽列右端；顏色吃變數，展開的原生選單由 color-scheme 跟著變 */
+.theme-select {
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+@media (pointer: coarse) {
+  .theme-select {
+    min-height: 44px;
+  }
+}
+
+.card {
+  /* --content-w 是含 padding 的卡片總寬：不加 border-box 的話，720px 會變成內文 720px、卡片 800px */
+  box-sizing: border-box;
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: var(--card-pad-y) var(--gutter);
+  background: var(--card);
+  border-radius: var(--card-radius);
+}
+
+:where(.card) h1 {
+  margin: 0;
+  font-size: var(--fs-h1);
+  line-height: 1.3;
+  color: var(--heading);
+}
+:where(.card) h2 {
+  margin: 28px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--rule);
+  font-size: var(--fs-h2);
+  color: var(--heading);
+}
+:where(.card) p {
+  margin: 14px 0 6px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere; /* Notice 會原樣顯示伺服器的錯誤訊息，沒有空白的長字串不能撐破卡片 */
+}
+:where(.card) a {
+  color: var(--link);
+  text-decoration: none;
+}
+:where(.card) code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--page);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.loading {
+  color: var(--muted);
+}
+

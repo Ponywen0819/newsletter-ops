@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
 
-// 與 styles.css 的閱讀器斷點同一個值。沒有 matchMedia（jsdom）時當作寬螢幕，鍵盤切換才測得到
+// 與 styles/reader.css 的斷點同一個值。沒有 matchMedia（jsdom）時當作寬螢幕，鍵盤切換才測得到
 export const isWide = () => window.matchMedia?.('(min-width: 1100px)').matches ?? true
 
 /** 左欄目錄與右欄內文的連動（目前項、點擊捲動、#hash、scroll-spy）。右欄每項要帶 `data-unit="<id>"`。 */
