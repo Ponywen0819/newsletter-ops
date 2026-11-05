@@ -5,13 +5,14 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
 
 ```
 手機／筆電 ──https──▶ Cloudflare（Access：只放行你的 email）──Tunnel──▶ cloudflared 容器 ──http://web:8787──▶ web 容器
-                                                                    scheduler 容器：每天 08:00 跑 run_daily.sh
+                                                                    scheduler 容器：每天 08:00 跑 pipeline（自己的 be 網路，web、cloudflared 連不到）
                                     三個容器共用一個 volume：newsletter-data（reports／data／state／logs）
 ```
 
 - `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，要執行的模組各自一個 `.venv`，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`apps/web-ui/`），
   只把 `apps/web-ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
-- `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`cloudflared` 用 Tunnel token 執行，
+- `docker-compose.yml`：`web`、`scheduler`、`cloudflared` 三個服務與 volume。`scheduler` 跑 `newsletter-scheduler`（見 [apps/pipeline/README.md](../apps/pipeline/README.md)），
+  它的 `/status`、`/run` 不 publish，而且只在 `be` 網路：`/run` 會燒額度、寄信，沒有登入的 `web` 與對外的 `cloudflared` 都碰不到。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `newsletter-web` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。主 port（8787）不 publish，host 不會對外開它；
   請不要為了方便從 host 直接開而 publish 它，那會繞過 Access（host 本機仍連得到容器的內部 IP，所以這台 host 本身要信得過）。Tunnel 的網域一定要先掛上 Access 再對外使用（步驟 2、4）。
@@ -57,13 +58,13 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 貼上、按「驗證並儲存」。host 在遠端的話：`ssh -L 8788:127.0.0.1:8788 <host>`，再用自己電腦的瀏覽器開 <http://localhost:8788/auth>。
 `/auth` 只在管理 port 開，從 Tunnel 網域（主 port）開不了；那裡頁面頂端的橫幅只會寫「請在主機上重新授權」。
 伺服器會先實際呼叫一次 Claude 驗證（用掉極少的訂閱額度），通過才存進 volume；舊的 token 不會被無效的覆蓋。
-不用重啟、不用重新部署，scheduler 下一次執行就讀到新的。沒做這一步的話，每天的排程會以 exit 2 結束（沒有 OAuth token）。
+不用重啟、不用重新部署，scheduler 下一次執行就讀到新的（今天已經因此失敗的話，要手動補跑，見步驟 5）。沒做這一步的話，每天的排程會以 exit 2 結束（沒有 OAuth token）。
 
 **4. 驗收**
 
 | 檢查 | 預期 |
 | --- | --- |
-| `docker compose ps` | `web` healthy、`cloudflared` Up、PORTS 欄只有 web 的 `127.0.0.1:8788->8788/tcp` |
+| `docker compose ps` | `web`、`scheduler` healthy、`cloudflared` Up、PORTS 欄只有 web 的 `127.0.0.1:8788->8788/tcp` |
 | `docker compose port web 8788` | `127.0.0.1:8788`（**不能是** `0.0.0.0:8788`） |
 | host 上 `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8788/auth` | `200`（管理 port 的貼 token 頁） |
 | 登入 Access 後開 `https://news.example.com/auth` | 「找不到頁面」（404），不是貼 token 的頁面 |
@@ -74,6 +75,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 | 登入後按一則的「有用」 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
 | 裝成 PWA、離線、Access 逾時 | 照 [apps/web-ui/README.md](../apps/web-ui/README.md)「PWA」一節的「正式站驗收」表 |
 | `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的「👍 有用」連結 | 先經 Access 登入，再看到「確認標為 有用」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
+| `docker network inspect newsletter-ops_be --format '{{range .Containers}}{{.Name}} {{end}}'` | 只有 scheduler 的容器 |
 | `docker compose run --rm scheduler uv run --project packages/agent newsletter-agent --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、用掉訂閱額度）。
@@ -82,14 +84,18 @@ Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理�
 **5. 日常操作**
 
 ```bash
-docker compose logs -f scheduler                  # 排程輸出；run_daily.sh 失敗時會附上 logs/ 的最後 20 行
+docker compose logs -f scheduler                  # 排程輸出：下次執行時間、開始、結束；失敗時附上 logs/ 的最後 20 行
+docker compose exec scheduler python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8790/status').read().decode())"   # 是否在跑、下次幾點、上次結果
+docker compose exec scheduler python -c "import urllib.request as u; print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())"   # 立刻跑一次（記成 manual；執行中回 409）
 docker compose exec web ls reports                # volume 裡的報告
 docker compose run --rm scheduler ./run_daily.sh  # 手動跑一次完整流程（抓取 → agent → render → 寄信）
 docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test scheduler uv run --project packages/agent newsletter-agent   # 只產報告、不寄信
 git pull && docker compose up -d --build          # 手動更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
 
-- 每天 08:00（Asia/Taipei，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器停機時錯過的那一次不會補跑，要補就手動跑。
+- 每天 08:00（`config/config.json` 的時區，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器啟動時，今天過了時間卻還沒跑過（或上次跑到一半被停掉）就補跑一次；
+  只補同一天，跨日就算了。今天跑過但失敗了**不會**自動重跑（避免 token 失效時每次重啟都燒一次），修好後用上面的 `/run` 或 `run_daily.sh` 補。
+  手動跑的也算「今天跑過」，所以 08:00 前手動跑完，08:00 就不會再寄一次。`docker stop` 會等執行中的步驟收尾（最多 2 分鐘）。
 - 每個**新**容器的第一次 `uv run` 會在 log 印出 `Building … Uninstalled 4 packages / Installed 4 packages`：uv 判定 editable 模組比安裝記錄新而重裝
   （約 10 毫秒、不需要網路），之後同一個容器就安靜了。這不是錯誤。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。

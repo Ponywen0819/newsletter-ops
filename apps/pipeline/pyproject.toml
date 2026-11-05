@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 newsletter-run = "newsletter_pipeline.daily:main"
+newsletter-scheduler = "newsletter_pipeline.service:main"
 
 [tool.uv.sources]
 newsletter-shared = { path = "../../packages/shared", editable = true }
