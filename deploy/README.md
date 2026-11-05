@@ -30,7 +30,7 @@ cp .env.example .env && chmod 600 .env
 $EDITOR .env      # GMAIL_USER、GMAIL_APP_PASSWORD；TUNNEL_TOKEN 在下一步取得
 ```
 
-Claude 的 OAuth token（`claude setup-token` 取得，效期一年，只走訂閱額度，見 [agent/README.md](../agent/README.md)「認證」）**不放 `.env`、也不讀環境變數**：
+Claude 的 OAuth token（`claude setup-token` 取得，效期一年，只走訂閱額度，見 [agent/README.md](../packages/agent/README.md)「認證」）**不放 `.env`、也不讀環境變數**：
 放環境變數的話，一年後換新就得改檔並重新部署。它存在 volume 的 `state/oauth_token.json`，換新立刻生效，做法在步驟 3 之後的「貼上 OAuth token」。
 
 **2. Cloudflare：建立 Tunnel 與 Access（Access 一定要做）**
@@ -157,7 +157,7 @@ systemctl --user enable --now newsletter-web.service newsletter-daily.timer
 sudo loginctl enable-linger "$USER"   # 沒登入也持續執行，開機自動啟動
 ```
 
-- 貼 Claude 的 OAuth token：systemd 部署沒有管理 port，`/auth` 就在主 port，在 host 上開 `http://127.0.0.1:8787/auth`（遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>` 後開 `http://localhost:8787/auth`），做法見 [agent/README.md](../agent/README.md)「認證」。沒貼的話排程會以 exit 2 結束。
+- 貼 Claude 的 OAuth token：systemd 部署沒有管理 port，`/auth` 就在主 port，在 host 上開 `http://127.0.0.1:8787/auth`（遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>` 後開 `http://localhost:8787/auth`），做法見 [agent/README.md](../packages/agent/README.md)「認證」。沒貼的話排程會以 exit 2 結束。
 - 每天 08:00（Asia/Taipei）跑 `run_daily.sh`；host 當時關機的話，開機後補跑（`Persistent=true`）。
 - 看 web：`journalctl --user -u newsletter-web -f`；看排程：`systemctl --user list-timers`、`logs/<YYYY-MM>.log`。
 - 手動跑一次排程：`systemctl --user start newsletter-daily.service`（會真的呼叫 Claude 並寄信，約數分鐘、用掉訂閱額度），

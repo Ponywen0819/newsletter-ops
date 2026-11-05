@@ -2,28 +2,42 @@
 
 每日新聞自動蒐集 → 整理 → 報告的 pipeline。主題：AI / 研究論文動態 + 科技產業與市場。
 
-這份 README 只放專案概覽；各模組怎麼運作、怎麼調整，看該模組目錄裡的 README。已知問題與限制記在各模組的 `ISSUES.md`：[agent](agent/ISSUES.md)、[shared](shared/ISSUES.md)。
+這份 README 只放專案概覽；各模組怎麼運作、怎麼調整，看該模組目錄裡的 README。已知問題與限制記在各模組的 `ISSUES.md`：[agent](packages/agent/ISSUES.md)、[shared](packages/shared/ISSUES.md)。
 
 ## 架構
 
-monorepo，用 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/) 組成：每個模組是獨立的 Python 套件，
-`uv sync` 把它們以 editable 裝進同一個環境。依賴方向由 `deploy/check_boundaries.py` 檢查（main 上的 CI 也跑），違規的 import 會失敗：
+monorepo，用 [Nx](https://nx.dev/) 管所有模組（不分語言）的任務與依賴圖；依賴本身仍由各語言的工具管：
+Python 模組組成 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)，`uv sync` 把它們以 editable 裝進同一個環境；
+前端用 npm。Nx 透過 [`@nxlv/python`](https://github.com/lucasvieirasilva/nx-plugins) 從 `pyproject.toml` 讀出 Python 模組間的依賴。
+依賴方向由 `deploy/check_boundaries.py` 檢查（main 上的 CI 也跑），違規的 import 會失敗：
 
 ```
 shared ◄── agent ◄── web
    ▲
    └────── notify
 
-pipeline ──▶ shared、agent、notify    只負責編排每日流程；沒有任何成員依賴它
+pipeline ──▶ shared、agent、notify    apps/：只負責編排每日流程；沒有任何成員依賴它
 ```
 
-| 模組 | 職責 | 文件 |
-| --- | --- | --- |
-| [shared/](shared/) | 共用底層（標準庫）：repo 路徑、報告格式的解析與驗證、回饋標記、量測、OAuth token 儲存 | [README](shared/README.md) |
-| [agent/](agent/) | 核心：抓取 → 整理 → Claude 寫報告。唯一的第三方依賴 `claude-agent-sdk` 在這裡，**不認得 email** | [README](agent/README.md) |
-| [notify/](notify/) | 外圍：報告 → email → 寄出；之後加別的通知管道放這裡 | [README](notify/README.md) |
-| [web/](web/) | 晨報網頁：後端 JSON API（`server/`）＋前端 Vite + React PWA（`ui/`）；依賴 `agent` 只為了驗證 OAuth token | [README](web/README.md)、[前端](web/ui/README.md) |
-| [pipeline/](pipeline/) | 每日流程編排：fetch → agent → render → send 四步串起來，整條握一把防重疊的鎖；排程與手動補跑都走它 | [README](pipeline/README.md) |
+| 模組 | Nx 專案（套件名） | 語言 | 職責 | 文件 |
+| --- | --- | --- | --- | --- |
+| [packages/shared/](packages/shared/) | `newsletter-shared` | Python | 共用底層（標準庫）：repo 路徑、報告格式的解析與驗證、回饋標記、量測、OAuth token 儲存 | [README](packages/shared/README.md) |
+| [packages/agent/](packages/agent/) | `newsletter-agent` | Python | 核心：抓取 → 整理 → Claude 寫報告。唯一的第三方依賴 `claude-agent-sdk` 在這裡，**不認得 email** | [README](packages/agent/README.md) |
+| [packages/notify/](packages/notify/) | `newsletter-notify` | Python | 外圍：報告 → email → 寄出；之後加別的通知管道放這裡 | [README](packages/notify/README.md) |
+| [web/server/](web/server/) | `newsletter-web` | Python | 晨報網頁的後端 JSON API；依賴 `agent` 只為了驗證 OAuth token | [README](web/README.md) |
+| [web/ui/](web/ui/) | `newsletter-web-ui` | TypeScript | 晨報網頁的前端：Vite + React PWA | [README](web/ui/README.md) |
+| [apps/pipeline/](apps/pipeline/) | `newsletter-pipeline` | Python | 每日流程編排：fetch → agent → render → send 四步串起來，整條握一把防重疊的鎖；排程與手動補跑都走它 | [README](apps/pipeline/README.md) |
+
+`web/` 之後會拆成 `apps/web-server/`（`newsletter-web-server`）與 `apps/web-ui/`。
+
+### 模組慣例
+
+- **apps/**：可以執行、部署的模組，**沒有模組可以依賴它**；**packages/**：被其他模組依賴的函式庫。
+- 目錄名 = id = 套件名去掉 `newsletter-`（`packages/agent/` → `newsletter-agent`）；Python 的 import 名把連字號換成底線（`newsletter_agent`）。
+  指令名（`newsletter-run`、`newsletter-web`…）不跟套件名綁在一起。
+- 每個模組有一個 `project.json`（Nx 專案名 = 套件名），定義 `lint`、`selftest` 等任務；前端的任務直接來自 `package.json` 的 scripts。
+- 新增模組：建目錄與 `project.json`；Python 模組再加進根 `pyproject.toml` 的 workspace members；最後登記到 `deploy/check_boundaries.py` 的 `MEMBERS`（Python）或 `NODE_MODULES`。
+  `.gitignore`、`.dockerignore` 用萬用字元放行 `*/*/` 底下的模組檔，不必另外加；Dockerfile 要不要帶進映像則要自己決定。
 
 分工原則：**確定性的部分交給 Python，判斷性的部分交給 Claude。**
 抓取、去重、排序、arXiv 會議判斷、HTML 版型全部可重現；挑選重點與條列改寫由 Claude
@@ -32,7 +46,7 @@ pipeline ──▶ shared、agent、notify    只負責編排每日流程；沒�
 ### 目錄
 
 ```
-shared/ agent/ notify/ web/ pipeline/    五個模組，內容見上表；已知問題在各模組的 ISSUES.md
+apps/ packages/ web/           模組，內容見上表；已知問題在各模組的 ISSUES.md
 config/interests.md            關注範圍（自然語言），報告判讀的依據
 config/config.json             執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json        來源清單，一個主題一個檔
@@ -40,7 +54,8 @@ config/sources.d/*.json        來源清單，一個主題一個檔
 run_daily.sh                   排程入口（見「排程」）
 Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
-pyproject.toml, uv.lock        workspace 的根（只列成員）與整個 workspace 的鎖檔；.python-version 固定直譯器版本
+pyproject.toml, uv.lock        uv workspace 的根（只列成員）與整個 workspace 的鎖檔；.python-version 固定直譯器版本
+package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 web/ui/package.json
 
 # 執行期生成物（都不進版控；位置都在 repo 根，Docker 裡是 volume）
 data/raw/<date>.jsonl          當日原始抓取（append，供回溯）
@@ -65,12 +80,19 @@ uv add --package newsletter-agent <套件>   # 替某個成員新增依賴（改
 uv lock --upgrade     # 升級鎖定的版本
 ```
 
-Lint（main 上的 CI 也跑；工具不進依賴，用 `uvx` 直接執行）：
+所有模組的 lint、自我檢查、前端測試都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `web/ui` 各 `npm ci`：
 
 ```bash
-uvx ruff@0.17.3 check                                          # Python，規則在 pyproject.toml
+npx nx run-many -t lint selftest typecheck test   # 全部模組；改成 `nx affected -t …` 只跑受影響的
+npx nx run newsletter-agent:selftest              # 單一模組的單一任務
+npx nx graph                                      # 模組依賴圖
+```
+
+Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 pyproject.toml），前端是 oxlint（規則在 web/ui/.oxlintrc.json）。不屬於任何模組的檢查另外跑：
+
+```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
-(cd web/ui && npm run lint)                                    # 前端，規則在 web/ui/.oxlintrc.json
+uv run python deploy/check_boundaries.py
 ```
 
 commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：

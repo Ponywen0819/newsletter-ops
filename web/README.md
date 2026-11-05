@@ -9,7 +9,7 @@ ui/                                前端：Vite + React + TypeScript（晨報�
 ```
 
 後端 `newsletter-web` 只出 JSON，頁面全由前端畫，前端見 [ui/README.md](ui/README.md)。
-後端依賴 [agent](../agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；`web.py` 本身不 import agent），用 `uv run newsletter-web` 啟動就有 SDK。
+後端依賴 [agent](../packages/agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；`web.py` 本身不 import agent），用 `uv run newsletter-web` 啟動就有 SDK。
 
 ## 啟動
 
@@ -27,7 +27,7 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
 - 只有主要新聞（標題段落＋清單）有按鈕，「其餘收錄」那種整張單行清單沒有（由 shared 的 `report_data.py` 的 `votable` 決定，網頁與 email 一致）。
   併了多篇文章的新聞（報告裡連著好幾行 mark，每篇一個 uid）只有一組按鈕，按下去對每篇各記一筆。
 - 頁面的標記狀態只看 `feedback.jsonl`；還留在 Markdown 裡、尚未用 `newsletter-feedback` 收集的標記不會顯示，先跑一次 `newsletter-feedback` 匯入即可。
-- 網頁與 `newsletter-feedback` 可以同時跑，見 [shared/README.md](../shared/README.md)「回饋標記」。
+- 網頁與 `newsletter-feedback` 可以同時跑，見 [shared/README.md](../packages/shared/README.md)「回饋標記」。
 
 ## 安全邊界
 
@@ -37,7 +37,7 @@ uv run newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消
 - **`/auth`（貼 OAuth token）只能從本機開**：要同時符合來源是 loopback、`Host` 是本機、沒有 `Cf-*`／`X-Forwarded-*` 等代理標頭、`Origin`（若有）是本機，否則 404。
   cloudflared 也是從 `127.0.0.1` 連進來，所以光看來源位址不夠。遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>`。
   Docker 部署改用 `--admin-port` 另開的管理 port（來源只要求私有位址，其他檢查照舊），見 [deploy/README.md](../deploy/README.md)。
-  token 只存在這一頁存的檔，不讀 `CLAUDE_CODE_OAUTH_TOKEN`，政策見 [agent/README.md](../agent/README.md)「認證」。
+  token 只存在這一頁存的檔，不讀 `CLAUDE_CODE_OAUTH_TOKEN`，政策見 [agent/README.md](../packages/agent/README.md)「認證」。
 - **定時驗證**：啟動時與之後每 `--auth-check-interval` 秒（`NEWSLETTER_AUTH_CHECK_INTERVAL`，預設 3600、0＝關閉）用儲存的 token 跑一次 `--auth-check`，
   每次都是真的呼叫、用掉極少額度，結果只放記憶體。`GET /api/auth-health` 的 `state`：
   `ok`、`expiring`（依一年效期推算快到期）、`missing`（沒有 token）、`invalid`（要重新授權）、`unknown`（額度用完、逾時等，**不代表失效**）。
@@ -59,7 +59,7 @@ API 都是 JSON，型別見 `ui/src/types.ts`：
 | `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理，只限本機 |
 
 - 頁面路由（清單見 [ui/README.md](ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`web.py` 的 `SPA_ROUTES` 要同步。
-- `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../notify/README.md)。
+- `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../packages/notify/README.md)。
 
 ## 自我檢查
 

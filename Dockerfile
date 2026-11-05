@@ -30,17 +30,15 @@ WORKDIR /app
 
 # 先只裝第三方依賴，讓只動程式碼時這層走快取
 COPY --chown=app:app pyproject.toml uv.lock .python-version ./
-COPY --chown=app:app shared/pyproject.toml ./shared/pyproject.toml
-COPY --chown=app:app agent/pyproject.toml ./agent/pyproject.toml
-COPY --chown=app:app notify/pyproject.toml ./notify/pyproject.toml
+COPY --chown=app:app packages/shared/pyproject.toml ./packages/shared/pyproject.toml
+COPY --chown=app:app packages/agent/pyproject.toml ./packages/agent/pyproject.toml
+COPY --chown=app:app packages/notify/pyproject.toml ./packages/notify/pyproject.toml
 COPY --chown=app:app web/server/pyproject.toml ./web/server/pyproject.toml
-COPY --chown=app:app pipeline/pyproject.toml ./pipeline/pyproject.toml
+COPY --chown=app:app apps/pipeline/pyproject.toml ./apps/pipeline/pyproject.toml
 RUN uv sync --locked --no-install-workspace
-COPY --chown=app:app shared ./shared
-COPY --chown=app:app agent ./agent
-COPY --chown=app:app notify ./notify
+COPY --chown=app:app packages ./packages
+COPY --chown=app:app apps ./apps
 COPY --chown=app:app web/server ./web/server
-COPY --chown=app:app pipeline ./pipeline
 RUN uv sync --locked
 
 COPY --chown=app:app run_daily.sh ./

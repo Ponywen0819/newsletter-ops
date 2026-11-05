@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+# 往上找 uv.lock，成員目錄搬動也不必改
+ROOT = next(p for p in Path(__file__).resolve().parents if (p / "uv.lock").is_file())
 
 
 def selftest() -> None:

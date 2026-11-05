@@ -1,0 +1,9 @@
+{
+  "name": "newsletter-ops",
+  "private": true,
+  "description": "monorepo 的根：只裝 Nx。各模組的依賴在自己的 pyproject.toml／package.json",
+  "devDependencies": {
+    "@nxlv/python": "23.3.1",
+    "nx": "24.0.4"
+  }
+}
