@@ -1,0 +1,143 @@
+/* /auth：OAuth token（只限本機） */
+/* 手機單欄：dt 在上、dd 在下。兩欄時 dd 只剩「螢幕寬 − 左欄 − 左右 padding」，
+   tail、日期、「（以一年效期推算…）」這類長字很容易被擠到溢出；單欄 dd 就有整行寬。
+   dt 跟自己的 dd 靠近（2px），跟上一組隔開（dd + dt = 每組的 dt，第一組除外），才看得出誰屬於誰。 */
+.auth-status {
+  display: grid;
+  gap: 2px 0;
+  margin: 16px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.auth-status dt {
+  color: var(--muted);
+}
+.auth-status dd {
+  margin: 0;
+  overflow-wrap: anywhere; /* 沒有空白的長字串（token 尾碼、日期）也要能斷行 */
+}
+.auth-status dd + dt {
+  margin-top: 10px;
+}
+/* 平板以上：左欄 dt、右欄 dd；欄寬夠了，組間距回到列間距 */
+@media (min-width: 768px) {
+  .auth-status {
+    grid-template-columns: max-content 1fr;
+    gap: 6px 16px;
+  }
+  .auth-status dd + dt {
+    margin-top: 0;
+  }
+}
+.auth-state {
+  font-weight: 600;
+}
+.auth-state.auth-ok {
+  color: var(--ok);
+}
+.auth-expiring {
+  color: var(--warn);
+}
+.auth-expired,
+.auth-missing {
+  color: var(--danger);
+}
+.auth-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 6px;
+}
+.auth-steps {
+  margin: 8px 0 14px;
+  padding-left: 22px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+/* 手機直排：輸入框與按鈕各佔一整行（flex 預設 stretch 就會撐滿寬），
+   橫排的話輸入框只剩螢幕寬扣掉按鈕，貼 token 時幾乎看不到內容 */
+#auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+#auth-token {
+  box-sizing: border-box; /* 輸入框預設 content-box，不改的話 min-height 44px 會再加上 padding 與框線 */
+  min-width: 0;
+  padding: 8px 10px;
+  font: 13px var(--mono);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+/* 平板以上才橫排：輸入框吃剩下的寬度，按鈕維持自然寬 */
+@media (min-width: 768px) {
+  #auth-form {
+    flex-direction: row;
+  }
+  #auth-token {
+    flex: 1;
+  }
+}
+.auth-btn {
+  padding: 8px 14px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  cursor: pointer;
+}
+.auth-btn:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.auth-primary {
+  background: var(--link);
+  border-color: var(--link);
+  color: var(--on-link);
+}
+.auth-danger {
+  color: var(--danger);
+}
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap; /* 兩顆放不下（窄螢幕、字放大）就換行，不要把頁面撐出水平捲軸 */
+  gap: 8px;
+  margin: 12px 0;
+}
+.auth-msg {
+  min-height: 1.5em;
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere; /* 錯誤訊息可能帶沒有空白的長字串（路徑、token 片段） */
+}
+.auth-msg.auth-ok {
+  color: var(--ok);
+}
+.auth-msg.auth-err {
+  color: var(--danger);
+}
+.auth-note {
+  margin: 1em 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere; /* 內含 <code>CLAUDE_CODE_OAUTH_TOKEN</code>，系統字級放大時這種沒有空白的字會頂出去 */
+}
+/* 手指點的裝置：按鈕與輸入框至少 44px 高；
+   token 輸入框字級 16px，iOS Safari 在小於 16px 的輸入框 focus 時會自動放大頁面；
+   「測試連線」旁邊就是「刪除」，間距拉開避免誤觸（同 .fb） */
+@media (pointer: coarse) {
+  .auth-btn,
+  #auth-token {
+    min-height: 44px;
+  }
+  #auth-token {
+    font-size: 16px;
+  }
+  .auth-actions {
+    gap: 12px;
+  }
+}
+

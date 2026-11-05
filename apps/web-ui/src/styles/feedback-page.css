@@ -1,0 +1,18 @@
+/*
+ * /feedback 確認頁：確認鈕是 .card 的直接子元素（/auth 的按鈕包在 form／.auth-actions 裡，不會套到）。
+ * 手機滿版好點；桌機維持自然寬度，不要變成橫跨整張卡片的寬條。
+ */
+.card > .auth-btn {
+  width: 100%;
+}
+@media (min-width: 768px) {
+  .card > .auth-btn {
+    width: auto;
+  }
+}
+@media (pointer: coarse) {
+  .card > .auth-btn {
+    min-height: 44px;
+  }
+}
+

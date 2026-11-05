@@ -1,0 +1,93 @@
+/*
+ * 配色沿用 email 版型（notify 的 render_email.py 的 S）：灰底、白色卡片；版面則是自適應，
+ * 不再沿用 email 固定 640px 的寬度（email 客戶端不支援 @media，網頁沒有這個限制）。
+ *
+ * mobile-first：預設值就是手機，斷點只往上加 @media (min-width: …)，
+ * 這樣手機不用先吃一遍桌機樣式再被覆寫回來。
+ * 寬度、間距、字級都收在 :root 變數，斷點只改變數；各元件的規則只「使用」變數，
+ * 不必每個元件各寫一組 @media。
+ * 元素的基本樣式用 :where() 壓低優先權，下面各元件的 class 才不用互相較量。
+ */
+
+/* 配色：light-dark(淺, 深)。沒有 data-theme ＝ 跟系統；public/theme-init.js 與 ThemeSelect 才會設 data-theme。 */
+:root {
+  color-scheme: light dark;
+  --text: light-dark(#1f2937, #e5e7eb);
+  --heading: light-dark(#111827, #f9fafb);
+  --muted: light-dark(#6b7280, #9ca3af);
+  --link: light-dark(#2563eb, #60a5fa);
+  --danger: light-dark(#dc2626, #f87171);
+  --ok: light-dark(#15803d, #4ade80);
+  --warn: light-dark(#b45309, #fbbf24);
+  --border: light-dark(#d1d5db, #374151);
+  --rule: light-dark(#e5e7eb, #2d3748);
+  --page: light-dark(#f3f4f6, #0b0f19);
+  --card: light-dark(#ffffff, #1f2937);
+  --callout-bg: light-dark(#fff7ed, #2a1d10);
+  --callout-bar: light-dark(#f97316, #fb923c);
+  --link-soft: light-dark(#eff6ff, #172554);
+  --danger-soft: light-dark(#fef2f2, #3b1212);
+  --on-link: light-dark(#ffffff, #0b1220);
+  --mono: Menlo, Consolas, monospace;
+
+  /* 版面（預設＝手機：卡片滿版、貼齊螢幕左右、無圓角） */
+  /* 手機不設上限：卡片就是整個視窗寬，用 100% 才不會在 720–767px 之間被卡在 720px 而露出一條灰邊 */
+  --content-w: 100%;
+  --gutter: 16px; /* 卡片左右 padding */
+  --card-pad-y: 20px; /* 卡片上下 padding */
+  --card-radius: 0;
+  --page-pad-x: 0; /* 卡片外圍留白（套在 .page 上，標頭不受影響）；手機要讓卡片貼邊，所以左右為 0 */
+  --page-pad-y: 0;
+
+  /* 字級：手機 15px 起跳，≥768px 才放大，避免在小螢幕一行塞不下幾個字 */
+  --fs-body: 15px;
+  --fs-list: 15px; /* 列表內文（晨報條列、歷史列表） */
+  --fs-small: 12px; /* 資料來源、提示 */
+  --fs-h1: 24px;
+  --fs-h2: 18px;
+  --lh-body: 1.8; /* 中文長文行高要比英文鬆：1.6 讀久了字會擠在一起 */
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+/* 平板：卡片置中、圓角、四邊留白加大；內文欄 720px（扣掉左右 40px 後每行約 40 個全形字） */
+@media (min-width: 768px) {
+  :root {
+    --content-w: 720px;
+    --gutter: 40px;
+    --card-pad-y: 40px;
+    --card-radius: 10px;
+    --page-pad-x: 24px;
+    --page-pad-y: 24px;
+    --fs-body: 16px;
+    --fs-list: 16px;
+    --fs-small: 13px;
+    --fs-h1: 28px;
+    --fs-h2: 20px;
+  }
+}
+
+/* 桌機：只加寬卡片外面的留白；--content-w 與 --gutter 不動，行長才不會隨螢幕無限拉長 */
+@media (min-width: 1024px) {
+  :root {
+    --page-pad-x: 32px;
+    --page-pad-y: 40px;
+  }
+}
+
+body {
+  /* 不放 padding：標頭列要貼齊視窗頂端、橫跨整個視窗，外圍留白改由 .page 套在卡片那一層 */
+  margin: 0;
+  background: var(--page);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', 'Helvetica Neue',
+    Arial, sans-serif;
+}
+.page {
+  padding: var(--page-pad-y) var(--page-pad-x);
+}

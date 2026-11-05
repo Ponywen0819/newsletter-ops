@@ -1,0 +1,122 @@
+/* 晨報 */
+/* 字級吃 :root 的變數（手機／桌機的差別在變數）；間距在這裡手機收緊、≥768px 回到寬鬆 */
+.report-date {
+  margin: 4px 0 16px;
+  font-size: var(--fs-small); /* 日期是次要資訊，比內文小一級、維持 muted 色 */
+  line-height: normal;
+  color: var(--muted);
+}
+.callout {
+  margin: 0 0 8px;
+  /* 手機寬度寶貴：callout 左邊框＋左右 padding 已吃掉 30px 以上，padding 收緊一點給文字 */
+  padding: 12px 14px;
+  background: var(--callout-bg);
+  border-left: 4px solid var(--callout-bar);
+  border-radius: 6px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+/* 分類標題（科技與 AI…）與「資料來源」：手機上下收緊，一屏能多看到一點內容 */
+.report h2 {
+  margin: 22px 0 10px;
+}
+.report ul,
+.report ol {
+  margin: 4px 0 10px;
+  /* 巢狀列表每一層都吃一次縮排，手機上 22px 兩層就是 44px；18px 仍容得下項目符號 */
+  padding-left: 18px;
+}
+.report li {
+  margin: 3px 0;
+  font-size: var(--fs-list);
+  line-height: var(--lh-body);
+}
+/* 資料來源編號有兩位數（常到 30 多），縮排比一般列表多留一點，編號才不會掛到卡片邊緣外；手機桌機同一個值 */
+.report ol.sources {
+  padding-left: 26px;
+}
+.report ol.sources li {
+  margin: 2px 0;
+  font-size: var(--fs-small);
+  line-height: 1.7;
+  color: var(--muted);
+}
+/* 長標題、長網址（含沒有空白的英文字串）要在容器內斷行；anywhere 還會把它算進 min-content，
+   不會在 flex／grid 容器裡把版面撐破。晨報內容來自 Markdown，標題與網址長度不可控，連結、列表、callout、段落、標題都可能遇到 */
+.report a,
+.report li,
+.report p,
+.report h2,
+.callout {
+  overflow-wrap: anywhere;
+}
+@media (min-width: 768px) {
+  .report-date {
+    margin: 4px 0 20px;
+  }
+  .callout {
+    padding: 14px 16px;
+  }
+  .report h2 {
+    margin: 28px 0 12px;
+  }
+  .report ul,
+  .report ol {
+    padding-left: 22px;
+  }
+}
+
+/* 每則的有用／沒用：SVG 箭頭吃 currentColor，狀態只靠顏色／底色切換 */
+.fb {
+  display: flex;
+  flex-wrap: wrap; /* 錯誤訊息獨佔下一行，兩顆按鈕永遠同排 */
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+}
+.fb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+.fb-btn:hover {
+  color: var(--text);
+}
+.fb-btn:disabled {
+  cursor: wait;
+}
+.fb-btn[aria-pressed='true'] {
+  color: var(--link);
+  background: var(--link-soft);
+  border-color: var(--link);
+}
+.fb-btn[data-mark='-'][aria-pressed='true'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+.fb-msg {
+  font-size: 12px;
+  color: var(--danger);
+}
+/* 有訊息才佔滿一行；空的時候留在原位（不用 display:none，role="status" 要一直在無障礙樹裡才會被朗讀） */
+.fb-msg:not(:empty) {
+  flex-basis: 100%;
+}
+/* 手指點的裝置：觸控目標至少 44px，間距拉開避免誤觸 */
+@media (pointer: coarse) {
+  .fb {
+    gap: 12px;
+  }
+  .fb-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+

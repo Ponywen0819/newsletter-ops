@@ -2,8 +2,18 @@
 
 晨報網頁的後端（`newsletter-web`）：JSON API（`/api/*`）＋提供前端 [web-ui](../web-ui/README.md) 的建置結果 `apps/web-ui/dist`；有用／沒用寫進 `feedback.jsonl`；`/auth` 貼 OAuth token。標準庫，無登入。專案全貌見[根目錄 README](../../README.md)。
 
-頁面全由前端畫，兩邊的合約是 API（型別在 `apps/web-ui/src/types.ts`）與 `web.py` 的 `SPA_ROUTES`，改了要兩邊同步。
-依賴 [agent](../../packages/agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；`web.py` 本身不 import agent），用 `uv run --project apps/web-server newsletter-web` 啟動就有 SDK。
+頁面全由前端畫，兩邊的合約是 API（型別在 `apps/web-ui/src/types.ts`）與 `server.py` 的 `SPA_ROUTES`，改了要兩邊同步。
+依賴 [agent](../../packages/agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；程式本身不 import agent），用 `uv run --project apps/web-server newsletter-web` 啟動就有 SDK。
+
+```
+src/newsletter_web_server/
+  web.py       入口：參數、啟動伺服器與定時驗證
+  server.py    HTTP：路由、本機判斷、靜態檔；Site 把 reports 與 auth 組起來給 Handler 用
+  reports.py   晨報與回饋的讀寫
+  auth.py      OAuth token 的驗證、儲存、定時檢查
+  errors.py    NotFound、ApiError
+  selftest.py  --selftest
+```
 
 ## 啟動
 
@@ -52,7 +62,7 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | `GET /api/auth-health` | `{state, kind, checked_at}` | 認證健康狀態，所有人可讀 |
 | `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理，只限本機 |
 
-- 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`web.py` 的 `SPA_ROUTES` 要同步。
+- 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。
 - `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../../packages/notify/README.md)。
 
 ## 自我檢查

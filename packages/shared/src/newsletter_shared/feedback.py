@@ -52,7 +52,7 @@ def load_curated_index(curated_dir: Path) -> dict[str, dict]:
 
 
 def build_row(uid: str, mark: str, report: str, item: dict, collected_at: str | None = None) -> dict:
-    """feedback.jsonl 的一列。web.py 與 collect() 共用，欄位只在這裡定義。"""
+    """feedback.jsonl 的一列。newsletter-web 與 collect() 共用，欄位只在這裡定義。"""
     return {
         "uid": uid,
         "mark": mark,
