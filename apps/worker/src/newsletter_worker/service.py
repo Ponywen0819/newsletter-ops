@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """排程服務：每天 NEWSLETTER_RUN_AT 跑一次 run_pipeline，啟動時補跑今天錯過的；GET /status、POST /run 只給 compose 內網。
 
-用法：uv run --project apps/pipeline newsletter-scheduler [--host 0.0.0.0] [--port 8790]
-      uv run --project apps/pipeline newsletter-scheduler --selftest
+用法：uv run --project apps/worker newsletter-worker [--host 0.0.0.0] [--port 8790]
+      uv run --project apps/worker newsletter-worker --selftest
 
 要不要跑只看 state/last_run.json（run_pipeline 寫的，手動跑的也算）和 pipeline 的鎖：
 今天跑完了（不論成敗）就等明天；失敗不自動重跑，要重跑用 POST /run。
@@ -67,7 +67,7 @@ def lock_held() -> bool:
 
 
 def say(message: str) -> None:
-    print(f"[scheduler] {datetime.now():%Y-%m-%d %H:%M:%S} {message}", flush=True)
+    print(f"[worker] {datetime.now():%Y-%m-%d %H:%M:%S} {message}", flush=True)
 
 
 class Service:
@@ -129,7 +129,7 @@ class Service:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "newsletter-scheduler"
+    server_version = "newsletter-worker"
 
     def log_message(self, format: str, *args) -> None:
         if not getattr(self.server, "quiet", False):
@@ -167,9 +167,9 @@ def make_server(service: Service, host: str, port: int, quiet: bool = False) -> 
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="每日 pipeline 的排程服務")
+    ap = argparse.ArgumentParser(description="worker 常駐服務：每日排程與內網 API")
     ap.add_argument("--host", default="0.0.0.0", help="容器內綁全部介面；compose 不 publish 這個 port")
-    ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_SCHEDULER_PORT", DEFAULT_PORT)))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WORKER_PORT", DEFAULT_PORT)))
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
     if args.selftest:
@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         at = parse_hhmm(os.environ.get("NEWSLETTER_RUN_AT", "08:00"))
     except ValueError as exc:
-        print(f"[scheduler] NEWSLETTER_RUN_AT {exc}", file=sys.stderr)
+        print(f"[worker] NEWSLETTER_RUN_AT {exc}", file=sys.stderr)
         return 2
     service = Service(at, daily.tz())
     server = make_server(service, args.host, args.port)

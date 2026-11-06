@@ -22,10 +22,10 @@ services:
       timeout: 5s
       retries: 3
 
-  scheduler:
+  worker:
     <<: *app
     # 每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run 不 publish，只在 be 網路
-    command: ["/app/apps/pipeline/.venv/bin/newsletter-scheduler", "--port", "8790"]
+    command: ["/app/apps/worker/.venv/bin/newsletter-worker", "--port", "8790"]
     networks: [be]
     # 停止時要等執行中的步驟收尾、寫好紀錄
     stop_grace_period: 2m
@@ -56,5 +56,5 @@ volumes:
   newsletter-data:
 
 networks:
-  # 只有 scheduler：web 沒有登入、cloudflared 對外，都不該連得到 /run
+  # 只有 worker：web 沒有登入、cloudflared 對外，都不該連得到 /run
   be:

@@ -2,7 +2,6 @@
 # 本機的 reports/、data/、state/、logs/、.env、.git、.venv 一律不進映像。
 *
 !.python-version
-!run_daily.sh
 # 模組（apps/、packages/、web/ 底下一個目錄一個）
 !*/*/pyproject.toml
 !*/*/uv.lock

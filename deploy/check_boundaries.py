@@ -7,7 +7,7 @@
   2. 成員 pyproject.toml 的 newsletter-* 依賴要與 MEMBERS 一致；沒有成員可以依賴 apps/ 底下的模組
   3. 不准用 `__file__`：資料目錄由執行環境決定（newsletter_shared.ROOT），不從原始碼位置推算
   4. 成員目錄都存在；repo 根沒有 src/、pyproject.toml、uv.lock（每個模組是獨立的 uv 專案）
-  5. 每個 Nx 專案（*/*/project.json）都登記在 MEMBERS 或 NODE_MODULES，名稱是 newsletter-<id>，
+  5. 每個 Nx 專案（*/*/project.json）都登記在 MEMBERS 或 NODE_MODULES，project.json 的名稱是 <id>、manifest 的是 newsletter-<id>，
      project.json、manifest（Python 再加 uv.lock）都有進版控
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ MEMBERS = {
     "agent": (ROOT / "packages" / "agent", {"shared"}),
     "notify": (ROOT / "packages" / "notify", {"shared"}),
     "web-server": (ROOT / "apps" / "web-server", {"shared", "agent"}),
-    "pipeline": (ROOT / "apps" / "pipeline", {"shared", "agent", "notify"}),
+    "worker": (ROOT / "apps" / "worker", {"shared", "agent", "notify"}),
 }
 # 非 Python 模組：id → 目錄；不能被 Python import
 NODE_MODULES = {
@@ -101,12 +101,13 @@ def check_projects(root: Path = ROOT, members: dict = MEMBERS, node: dict = NODE
         if base not in registered:
             errors.append(f"{rel}/project.json 沒有登記在 MEMBERS 或 NODE_MODULES")
             continue
-        want = f"newsletter-{registered[base]}"
+        mid = registered[base]
         manifest = "package.json" if base in node.values() else "pyproject.toml"
         text = (base / manifest).read_text(encoding="utf-8")
         names = {"project.json": json.loads(pj.read_text(encoding="utf-8")).get("name"),
                  manifest: json.loads(text)["name"] if manifest == "package.json" else tomllib.loads(text)["project"]["name"]}
-        errors += [f"{rel}/{f} 的名稱是 {n}，應為 {want}" for f, n in names.items() if n != want]
+        want = {"project.json": mid, manifest: f"newsletter-{mid}"}
+        errors += [f"{rel}/{f} 的名稱是 {n}，應為 {want[f]}" for f, n in names.items() if n != want[f]]
         files = ("project.json", manifest) if manifest == "package.json" else ("project.json", manifest, "uv.lock")
         errors += [f"{rel}/{f} 沒有進版控（.gitignore 白名單？）" for f in files if f"{rel}/{f}" not in tracked]
     for base, mid in registered.items():
@@ -144,19 +145,23 @@ def selftest() -> None:
         assert any("uv.lock" in e for e in check_root(root))
         (root / "uv.lock").unlink()
 
-        apps = {"pipeline": (Path(d) / "apps" / "pipeline", set()), "agent": (base, {"pipeline"})}
+        apps = {"worker": (Path(d) / "apps" / "worker", set()), "agent": (base, {"worker"})}
         assert any("apps/" in e for e in check(apps))
 
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         ui = root / "apps" / "web-ui"
         ui.mkdir(parents=True)
         (ui / "package.json").write_text('{"name": "newsletter-web-ui"}')
-        (ui / "project.json").write_text('{"name": "newsletter-web-ui"}')
+        (ui / "project.json").write_text('{"name": "web-ui"}')
         node = {"web-ui": ui}
         subprocess.run(["git", "add", "."], cwd=root, check=True)
         assert check_projects(root, {}, node) == [], check_projects(root, {}, node)
         (ui / "package.json").write_text('{"name": "newsletter-web"}')
         assert any("應為 newsletter-web-ui" in e for e in check_projects(root, {}, node))
+        (ui / "package.json").write_text('{"name": "newsletter-web-ui"}')
+        (ui / "project.json").write_text('{"name": "newsletter-web-ui"}')
+        assert any("project.json 的名稱是 newsletter-web-ui，應為 web-ui" in e for e in check_projects(root, {}, node))
+        (ui / "project.json").write_text('{"name": "web-ui"}')
         assert any("沒有登記" in e for e in check_projects(root, {}, {}))
         subprocess.run(["git", "rm", "-q", "--cached", "apps/web-ui/project.json"], cwd=root, check=True)
         assert any("沒有進版控" in e for e in check_projects(root, {}, node))
@@ -164,7 +169,7 @@ def selftest() -> None:
         py = root / "packages" / "shared"
         py.mkdir(parents=True)
         (py / "pyproject.toml").write_text('[project]\nname = "newsletter-shared"\n')
-        (py / "project.json").write_text('{"name": "newsletter-shared"}')
+        (py / "project.json").write_text('{"name": "shared"}')
         subprocess.run(["git", "add", "packages"], cwd=root, check=True)
         assert any("uv.lock 沒有進版控" in e for e in check_projects(root, {"shared": (py, set())}, {}))
     print("ok")

@@ -16,24 +16,25 @@ shared ◄── agent ◄── web-server ◄┄┄ web-ui    web-ui 不 impor
    ▲
    └────── notify
 
-pipeline ──▶ shared、agent、notify    apps/：只負責編排每日流程；沒有任何成員依賴它
+worker ──▶ shared、agent、notify      apps/：網頁以外的常駐服務；沒有任何成員依賴它
 ```
 
-| 模組 | Nx 專案（套件名） | 語言 | 職責 | 文件 |
+| 模組 | 套件名 | 語言 | 職責 | 文件 |
 | --- | --- | --- | --- | --- |
 | [packages/shared/](packages/shared/) | `newsletter-shared` | Python | 共用底層（標準庫）：repo 路徑、報告格式的解析與驗證、回饋標記、量測、OAuth token 儲存 | [README](packages/shared/README.md) |
 | [packages/agent/](packages/agent/) | `newsletter-agent` | Python | 核心：抓取 → 整理 → Claude 寫報告。唯一的第三方依賴 `claude-agent-sdk` 在這裡，**不認得 email** | [README](packages/agent/README.md) |
 | [packages/notify/](packages/notify/) | `newsletter-notify` | Python | 外圍：報告 → email → 寄出；之後加別的通知管道放這裡 | [README](packages/notify/README.md) |
 | [apps/web-server/](apps/web-server/) | `newsletter-web-server` | Python | 晨報網頁的後端 JSON API（指令 `newsletter-web`），並提供 web-ui 的建置結果；依賴 `agent` 只為了驗證 OAuth token | [README](apps/web-server/README.md) |
 | [apps/web-ui/](apps/web-ui/) | `newsletter-web-ui` | TypeScript | 晨報網頁的前端：Vite + React PWA | [README](apps/web-ui/README.md) |
-| [apps/pipeline/](apps/pipeline/) | `newsletter-pipeline` | Python | 每日流程編排：fetch → agent → render → send 四步串起來，整條握一把防重疊的鎖；排程與手動補跑都走它 | [README](apps/pipeline/README.md) |
+| [apps/worker/](apps/worker/) | `newsletter-worker` | Python | 網頁以外的常駐服務：每日排程、補跑，把 fetch → agent → render → send 四步串起來，整條握一把防重疊的鎖 | [README](apps/worker/README.md) |
 
 ### 模組慣例
 
 - **apps/**：可以執行、部署的模組，**沒有模組可以依賴它**；**packages/**：被其他模組依賴的函式庫。
-- 目錄名 = id = 套件名去掉 `newsletter-`（`packages/agent/` → `newsletter-agent`）；Python 的 import 名把連字號換成底線（`newsletter_agent`）。
+- 目錄名 = id = Nx 專案名；套件名是 `newsletter-<id>`（`packages/agent/` → `newsletter-agent`），import 名把連字號換成底線（`newsletter_agent`）。
+  前綴只留在套件名：import 名在 venv 裡是全域的，`agent`、`shared` 這種名字容易撞到第三方套件。
   指令名（`newsletter-run`、`newsletter-web`…）不跟套件名綁在一起。
-- 每個模組有一個 `project.json`（Nx 專案名 = 套件名），定義 `lint`、`selftest` 等任務；前端的任務直接來自 `package.json` 的 scripts。
+- 每個模組有一個 `project.json`（`name` 是 id），定義 `lint`、`selftest` 等任務；前端的任務直接來自 `package.json` 的 scripts。
 - 新增模組：建目錄與 `project.json`；Python 模組再 `uv lock --project <目錄>` 產生自己的鎖檔；最後登記到 `deploy/check_boundaries.py` 的 `MEMBERS`（Python）或 `NODE_MODULES`。
   `.gitignore`、`.dockerignore` 用萬用字元放行 `*/*/` 底下的模組檔，不必另外加；Dockerfile 要不要帶進映像則要自己決定。
 
@@ -44,13 +45,12 @@ pipeline ──▶ shared、agent、notify    apps/：只負責編排每日流�
 ### 目錄
 
 ```
-apps/ packages/ web/           模組，內容見上表；已知問題在各模組的 ISSUES.md
+apps/ packages/                模組，內容見上表；已知問題在各模組的 ISSUES.md
 config/interests.md            關注範圍（自然語言），報告判讀的依據
 config/config.json             執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json        來源清單，一個主題一個檔
 .claude/skills/news-digest/    報告撰寫的 skill，隨專案進版控
-run_daily.sh                   排程入口（見「排程」）
-Dockerfile, docker-compose.yml, docker/   容器部署：web + scheduler + cloudflared，生成物放 volume
+Dockerfile, docker-compose.yml, docker/   容器部署：web + worker + cloudflared，生成物放 volume
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
 ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 固定所有 Python 模組的直譯器版本
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json
@@ -63,7 +63,8 @@ reports/<date>.html            email 版（newsletter-render 產生）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
-state/pipeline.lock            newsletter-run 的防重疊鎖（空檔，只是鎖的載體）
+state/last_run.json            上次每日流程的開始、結束與 exit code（worker 據此判斷今天跑過沒）
+state/pipeline.lock            每日流程的防重疊鎖（空檔，只是鎖的載體）
 logs/<YYYY-MM>.log             排程執行紀錄
 ```
 
@@ -73,7 +74,7 @@ Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-ver
 安裝 uv 後不必自己建 venv，`uv run --project <模組>` 第一次執行會在該模組底下建 `.venv` 並裝好依賴；沒有該版本的 Python 時 uv 會自動下載。
 
 ```bash
-uv sync --project apps/pipeline                    # 依該模組的 uv.lock 同步它的環境
+uv sync --project apps/worker                    # 依該模組的 uv.lock 同步它的環境
 uv add --project packages/agent <套件>              # 替某個模組新增依賴（改它的 pyproject.toml 與 uv.lock，一起 commit）
 uv lock --project packages/agent --upgrade         # 升級該模組鎖定的版本
 ```
@@ -87,7 +88,7 @@ uv lock --project packages/agent --upgrade         # 升級該模組鎖定的版
 
 ```bash
 npx nx run-many -t lint selftest typecheck test   # 全部模組；改成 `nx affected -t …` 只跑受影響的
-npx nx run newsletter-agent:selftest              # 單一模組的單一任務
+npx nx run agent:selftest                         # 單一模組的單一任務
 npx nx graph                                      # 模組依賴圖
 ```
 
@@ -114,7 +115,7 @@ uv run --project packages/agent newsletter-fetch --dry-run     # 只測來源連
 uv run --project packages/agent newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run --project packages/agent newsletter-agent               # Claude 依 skill 寫 reports/<date>.md 並驗收（需要 OAuth token）
 uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send   # 轉成 email 並寄出
-uv run --project apps/pipeline newsletter-run                 # 整條流程一次跑完（抓取 → agent → render → 寄信），排程跑的就是它；有防重疊的鎖
+uv run --project apps/worker newsletter-run                 # 整條流程一次跑完（抓取 → agent → render → 寄信），排程跑的就是它；有防重疊的鎖
 (cd apps/web-ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
 uv run --project apps/web-server newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
 uv run --project packages/shared newsletter-feedback            # 收集報告裡填的標記
@@ -124,16 +125,11 @@ uv run --project packages/shared newsletter-feedback            # 收集報告�
 
 ## 排程
 
-Docker 版跑常駐的 `newsletter-scheduler`；systemd、cron、本機都走 `run_daily.sh`：補 PATH、載入 env 檔（預設 `~/.config/newsletter-ops/env`，權限須為 600）、輸出導向 `logs/<YYYY-MM>.log`，再交給 `newsletter-run`。
-兩條路都進 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/pipeline/README.md](apps/pipeline/README.md)，所以混用是安全的。
+排程只有一種：常駐的 `newsletter-worker`，Docker 是 `worker` 容器，不用 Docker 是 systemd 的 `deploy/newsletter-worker.service`。
+每天 08:00（`NEWSLETTER_RUN_AT` 可改）跑一次，輸出進 `logs/<YYYY-MM>.log`；停機錯過了，啟動後補跑（同一天內；失敗的不重跑，要重跑用 `POST /run`）。
+手動的 `newsletter-run` 和它進同一個 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/worker/README.md](apps/worker/README.md)，所以混用是安全的。
 
-| 觸發 | 時間 | 錯過了（停機、關機） |
-| --- | --- | --- |
-| Docker 的 scheduler 容器 | 每天 08:00，`.env` 的 `NEWSLETTER_RUN_AT` 可改 | 啟動後補跑（同一天內；失敗的不重跑） |
-| systemd timer（`deploy/newsletter-daily.timer`） | 每天 08:00 | 開機後補跑 |
-| cron：`0 8 * * * $HOME/newsletter-ops/run_daily.sh` | 自訂 | 不補跑（macOS 要給 cron「完整磁碟取用權」） |
-
-**規劃中**：認證的定時驗證從 web 搬到 scheduler 見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。
+**規劃中**：認證的定時驗證從 web 搬到 worker 見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。
 
 ## 讓它跟著你的研究重心走
 

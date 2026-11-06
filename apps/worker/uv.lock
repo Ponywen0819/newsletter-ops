@@ -410,7 +410,12 @@ dependencies = [
 requires-dist = [{ name = "newsletter-shared", editable = "../../packages/shared" }]
 
 [[package]]
-name = "newsletter-pipeline"
+name = "newsletter-shared"
+version = "0.1.0"
+source = { editable = "../../packages/shared" }
+
+[[package]]
+name = "newsletter-worker"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -425,11 +430,6 @@ requires-dist = [
     { name = "newsletter-notify", editable = "../../packages/notify" },
     { name = "newsletter-shared", editable = "../../packages/shared" },
 ]
-
-[[package]]
-name = "newsletter-shared"
-version = "0.1.0"
-source = { editable = "../../packages/shared" }
 
 [[package]]
 name = "opentelemetry-api"

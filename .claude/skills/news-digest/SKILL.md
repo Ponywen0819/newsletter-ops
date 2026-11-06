@@ -179,7 +179,7 @@ cd ROOT && uv run --locked --project packages/shared newsletter-metrics claude
 - 不要停下來問，不確定的地方照上面的規則自行判斷。
 - 中途無法完成（例如 `newsletter-fetch` exit 3、`newsletter-report-check` 修不好）就停止，**不要留下殘缺或空的報告**，
   最後一則回覆寫清楚原因。agent_run 會檢查 `reports/<date>.md` 有沒有在這次執行更新、格式是否正確，
-  不成功就以非 0 結束，讓 cron 看得出來；你的最後一則回覆會進 cron 的 log。
+  不成功就以非 0 結束，讓排程看得出來；你的最後一則回覆會進排程的 log。
 - 互動與無人值守用同一份流程，不要為了其中一邊改變報告格式。
 
 ## 常見調整
