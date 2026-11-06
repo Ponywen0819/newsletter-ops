@@ -8,18 +8,16 @@ token 唯一的來源是 state/oauth_token.json（/auth 貼上後存的，權限
 """
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, MutableMapping
 
-from newsletter_shared import lock
+from newsletter_shared import atomic, lock
 from newsletter_shared import ROOT
 
 TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
@@ -70,22 +68,10 @@ def check_format(token: str) -> str | None:
 
 
 def save(token: str, path: Path, now: datetime | None = None) -> None:
-    """寫成權限 600 的暫存檔再 os.replace，讀的人不會看到半寫入的內容。"""
+    """權限 600，整檔取代：讀的人不會看到半寫入的內容。"""
     now = now or datetime.now(timezone.utc)
-    payload = json.dumps({"token": token, "saved_at": now.isoformat()})
-    path.parent.mkdir(parents=True, exist_ok=True)
     with lock.locked(path):
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")  # mkstemp 建的檔是 600
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(payload)
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, path)
-        except BaseException:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(tmp)
-            raise
+        atomic.write_text(path, json.dumps({"token": token, "saved_at": now.isoformat()}))
 
 
 def load(path: Path) -> dict | None:

@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
-from newsletter_shared import ROOT
+from newsletter_shared import ROOT, atomic
 
 STATE = ROOT / "state" / "seen.json"
 STOP = re.compile(r"[^\w一-鿿]+")
@@ -69,15 +69,7 @@ def load_seen(retention_days: int = 30) -> dict:
 
 
 def save_seen(seen: dict) -> None:
-    """先寫暫存檔、fsync，再整個換掉 seen.json：寫到一半被中斷（kill、斷電、磁碟滿），舊檔仍完整。
-    # ponytail: 中途失敗會留下 seen.json.<pid>.tmp，不自動清；檔名帶 pid 只是避免兩個程序寫同一個暫存檔"""
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE.with_name(f"{STATE.name}.{os.getpid()}.tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(seen, fh, ensure_ascii=False, indent=0)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, STATE)
+    atomic.write_text(STATE, json.dumps(seen, ensure_ascii=False, indent=0))
 
 
 def in_window(item: dict, default_hours: int) -> bool:
@@ -317,19 +309,19 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/agent pyt
     assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
     assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的：沒帶 redo 才會往下一梯隊走
 
-    # 寫入中斷：舊的 seen.json 要完好；寫成功時不留暫存檔
+    # 寫入中斷：舊的 seen.json 要完好、不留暫存檔
     save_seen({"old": now})
-    assert list(STATE.parent.glob("*.tmp")) == [] and load_seen() == {"old": now}
-    real_dump = json.dump
+    real_replace = os.replace
     def boom(*args, **kwargs): raise OSError("disk full")
-    json.dump = boom
+    os.replace = boom
     try:
         save_seen({"new": now})
         raise AssertionError("寫入失敗時應該丟出例外")
     except OSError:
         pass
     finally:
-        json.dump = real_dump
+        os.replace = real_replace
+    assert list(STATE.parent.glob(f"{STATE.name}.*")) == []
     assert load_seen() == {"old": now}
 
     # 壞檔當作空的：空檔、寫到一半、形狀不對

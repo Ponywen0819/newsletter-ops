@@ -124,15 +124,16 @@ uv run --project packages/shared newsletter-feedback            # 收集報告�
 
 ## 排程
 
-`run_daily.sh` 是唯一的排程入口：補 PATH、載入 env 檔（預設 `~/.config/newsletter-ops/env`，權限須為 600）、輸出導向 `logs/<YYYY-MM>.log`，再交給 `newsletter-run`（四步、失敗語意與防重疊的鎖見 [pipeline/README.md](pipeline/README.md)）。
+Docker 版跑常駐的 `newsletter-scheduler`；systemd、cron、本機都走 `run_daily.sh`：補 PATH、載入 env 檔（預設 `~/.config/newsletter-ops/env`，權限須為 600）、輸出導向 `logs/<YYYY-MM>.log`，再交給 `newsletter-run`。
+兩條路都進 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/pipeline/README.md](apps/pipeline/README.md)，所以混用是安全的。
 
 | 觸發 | 時間 | 錯過了（停機、關機） |
 | --- | --- | --- |
-| Docker 的 scheduler 容器 | 每天 08:00，`.env` 的 `NEWSLETTER_RUN_AT` 可改 | 不補跑 |
+| Docker 的 scheduler 容器 | 每天 08:00，`.env` 的 `NEWSLETTER_RUN_AT` 可改 | 啟動後補跑（同一天內；失敗的不重跑） |
 | systemd timer（`deploy/newsletter-daily.timer`） | 每天 08:00 | 開機後補跑 |
 | cron：`0 8 * * * $HOME/newsletter-ops/run_daily.sh` | 自訂 | 不補跑（macOS 要給 cron「完整磁碟取用權」） |
 
-**規劃中**：scheduler 升級成常駐服務見 [#41](https://github.com/Ponywen0819/newsletter-ops/issues/41)；認證的定時驗證從 web 搬過去見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。
+**規劃中**：認證的定時驗證從 web 搬到 scheduler 見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。
 
 ## 讓它跟著你的研究重心走
 

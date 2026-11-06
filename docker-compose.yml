@@ -24,7 +24,16 @@ services:
 
   scheduler:
     <<: *app
-    command: ["/app/docker/scheduler.sh"]
+    # 每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run 不 publish，只在 be 網路
+    command: ["/app/apps/pipeline/.venv/bin/newsletter-scheduler", "--port", "8790"]
+    networks: [be]
+    # 停止時要等執行中的步驟收尾、寫好紀錄
+    stop_grace_period: 2m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8790/status', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     environment:
       GMAIL_USER: ${GMAIL_USER:?請在 .env 設定 GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:?請在 .env 設定 GMAIL_APP_PASSWORD}
@@ -45,3 +54,7 @@ services:
 
 volumes:
   newsletter-data:
+
+networks:
+  # 只有 scheduler：web 沒有登入、cloudflared 對外，都不該連得到 /run
+  be:
