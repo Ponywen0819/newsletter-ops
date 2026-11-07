@@ -1,6 +1,6 @@
 # shared
 
-共用底層，只用標準庫、不依賴其他模組；`agent`、`notify`、`web`、`pipeline` 都依賴它。專案全貌見[根目錄 README](../../README.md)，已知問題見 [ISSUES.md](ISSUES.md)。
+共用底層，只用標準庫、不依賴其他模組；`agent`、`notify`、`web-server`、`worker` 都依賴它。專案全貌見[根目錄 README](../../README.md)，已知問題見 [ISSUES.md](ISSUES.md)。
 
 ```
 src/newsletter_shared/

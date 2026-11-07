@@ -1,4 +1,4 @@
-"""newsletter-scheduler --selftest：假的四步、暫存目錄，不連網、不呼叫 Claude。"""
+"""newsletter-worker --selftest：假的四步、暫存目錄，不連網、不呼叫 Claude。"""
 from __future__ import annotations
 
 import http.client
@@ -173,7 +173,7 @@ def _selftest_tick(tmp: Path) -> None:
 # 真的程序收 SIGTERM：子程序被終止、紀錄寫好、期限內離開
 SIGTERM_CHILD = """import sys
 from pathlib import Path
-from newsletter_pipeline import daily, service
+from newsletter_worker import daily, service
 with daily.fake_steps(Path(sys.argv[1])):
     import os
     os.environ.update(FAKE_FAIL="agent:hang", NEWSLETTER_RUN_AT="00:00")

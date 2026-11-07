@@ -15,7 +15,7 @@ src/newsletter_notify/
 uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send   # 寄出當日 email
 ```
 
-`render_email.py` 的 stdout 是一行 JSON，`send_email.py` 從 stdin 讀它；排程（`newsletter-run`，見 [pipeline/README.md](../../apps/pipeline/README.md)）把前者的 stdout 原封不動餵給 `send_email.py`。
+`render_email.py` 的 stdout 是一行 JSON，`send_email.py` 從 stdin 讀它；排程（`newsletter-run`，見 [worker/README.md](../../apps/worker/README.md)）把前者的 stdout 原封不動餵給 `send_email.py`。
 
 `send_email.py` 讀環境變數 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（Google 帳號的應用程式密碼，需先開兩步驟驗證）、
 `NEWSLETTER_MAIL_TO`（逗號分隔，沒設就寄給自己）。加 `--dry-run` 只印標頭不寄。
@@ -37,7 +37,7 @@ email 的連結文字帶 emoji（「👍 有用／👎 沒用」；網頁上的�
   標記不同則說明會覆蓋。
 - 沒設 `NEWSLETTER_BASE_URL`（本機測試）就不加按鈕；格式不對會在 stderr 警告並不加。
 - 網址要是 Tunnel + Access 保護的那個網域：點連結時 Access 會先要求登入，掃描器看到的只是登入頁。
-- Docker 部署在 `.env` 設；systemd／cron 部署在 `~/.config/newsletter-ops/env` 設（見 [deploy/README.md](../deploy/README.md)）。
+- Docker 部署在 `.env` 設；systemd 部署在 `~/.config/newsletter-ops/env` 設（見 [deploy/README.md](../deploy/README.md)）。
 
 ## 自我檢查
 

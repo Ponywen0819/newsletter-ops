@@ -1,27 +1,26 @@
-# pipeline
+# worker
 
-每日流程的編排：抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡。專案全貌見[根目錄 README](../../README.md)。
+網頁以外的常駐服務：每日排程與補跑，以及每日流程的編排（抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡）。專案全貌見[根目錄 README](../../README.md)。
 
 站在依賴圖最上層：依賴 `shared`、`agent`、`notify`，**沒有任何成員可以依賴它**（放在 `apps/` 的模組都是這樣，`deploy/check_boundaries.py` 檢查）。
-`agent` 不認得 email、`notify` 不認得 agent；把兩邊串起來是這個模組唯一的工作。純標準庫。
+`agent` 不認得 email、`notify` 不認得 agent；把兩邊串起來是這裡的事。純標準庫。
 
 ```
-src/newsletter_pipeline/
+src/newsletter_worker/
   daily.py             run_pipeline()：鎖 → 紀錄 → 四步 → 失敗語意；newsletter-run 的入口與自我檢查
-  service.py           newsletter-scheduler：每日時鐘、補跑、GET /status、POST /run（Docker 的 scheduler 容器跑它）
-  service_selftest.py  newsletter-scheduler --selftest
+  service.py           newsletter-worker：每日時鐘、補跑、GET /status、POST /run（Docker 的 worker 容器、systemd 的 newsletter-worker.service 跑它）
+  service_selftest.py  newsletter-worker --selftest
 ```
 
 ## 用法
 
 ```bash
-uv run --project apps/pipeline newsletter-run                    # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
-uv run --project apps/pipeline newsletter-run --lookback 72      # 額外參數轉給 newsletter-fetch
-uv run --project apps/pipeline newsletter-run --selftest         # 用假步驟驗證，不連網、不寄信
+uv run --project apps/worker newsletter-run                    # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
+uv run --project apps/worker newsletter-run --lookback 72      # 額外參數轉給 newsletter-fetch
+uv run --project apps/worker newsletter-run --selftest         # 用假步驟驗證，不連網、不寄信
 ```
 
-平常不必直接跑它：Docker 版由 `newsletter-scheduler` 呼叫，systemd／cron 經根目錄的 `run_daily.sh`（補 PATH、載入機密、導向 log，再 exec 它）。
-直接跑時輸出印在終端機，不進 `logs/`。
+平常不必直接跑它：排程由 `newsletter-worker` 呼叫。直接跑時輸出印在終端機，不進 `logs/`。
 
 ## 行為
 
@@ -40,16 +39,15 @@ uv run --project apps/pipeline newsletter-run --selftest         # 用假步驟�
 | 1～6 | `newsletter-agent` 的（見 [agent/README.md](../../packages/agent/README.md)「exit code」） |
 | 2、3 | `newsletter-fetch` 的（來源設定有誤、一則都沒抓到） |
 | 75 | 另一條 pipeline 正在跑，這次沒執行 |
-| 143 | 被要求停止（`newsletter-scheduler` 收到 SIGTERM，轉給執行中的那一步） |
-| 78 | 由 `run_daily.sh` 回傳：env 檔權限太鬆 |
+| 143 | 被要求停止（`newsletter-worker` 收到 SIGTERM，轉給執行中的那一步） |
 
 數字會重疊（agent 和 fetch 都用 2），要知道是哪一步，看 log 最後一行 `失敗，exit N：<步驟>`。
 
-## 排程服務（newsletter-scheduler）
+## 排程服務（newsletter-worker）
 
 ```bash
-uv run --project apps/pipeline newsletter-scheduler              # 0.0.0.0:8790（--port／NEWSLETTER_SCHEDULER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00
-uv run --project apps/pipeline newsletter-scheduler --selftest   # 時鐘、補跑判斷、HTTP、SIGTERM，不連網
+uv run --project apps/worker newsletter-worker              # 0.0.0.0:8790（--port／NEWSLETTER_WORKER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00
+uv run --project apps/worker newsletter-worker --selftest   # 時鐘、補跑判斷、HTTP、SIGTERM，不連網
 ```
 
 每 30 秒醒來看一次牆上時鐘（主機睡眠、校時都不怕），依 `state/last_run.json` 和鎖決定要不要跑：
@@ -67,7 +65,7 @@ uv run --project apps/pipeline newsletter-scheduler --selftest   # 時鐘、補�
 | `GET /status` | `{state: idle\|running, next_run_at, current: {trigger, started_at} \| null, last: last_run.json \| null}` |
 | `POST /run` | 202 `{started_at}`；已經在跑（這裡或別的程序握著鎖）回 409。不收 body |
 
-沒有登入，靠網路隔離：compose 不 publish 這個 port，`scheduler` 只在自己的 `be` 網路（見 [deploy/README.md](../../deploy/README.md)）。
+沒有登入，靠網路隔離：compose 不 publish 這個 port，`worker` 只在自己的 `be` 網路；systemd 版綁 `127.0.0.1`（見 [deploy/README.md](../../deploy/README.md)）。
 輸出進 `logs/<YYYY-MM>.log`（月份以開始時間為準），服務自己的訊息印 stdout；失敗時附上這次 log 的最後 20 行。
 SIGTERM：轉給執行中的那一步、等它結束、紀錄記成 143，然後離開；被打斷的那天下次啟動會補跑。
 

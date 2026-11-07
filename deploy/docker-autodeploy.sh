@@ -3,10 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-docker compose pull --quiet web scheduler
+docker compose pull --quiet web worker
 
-if [ -n "$(docker compose ps --status running -q scheduler)" ] \
-   && ! docker compose exec -T scheduler python -c \
+if [ -n "$(docker compose ps --status running -q worker)" ] \
+   && ! docker compose exec -T worker python -c \
      'import fcntl; fcntl.flock(open("state/pipeline.lock", "a"), fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/null; then
   echo "[autodeploy] pipeline 正在跑，這輪不更新"
   exit 0
