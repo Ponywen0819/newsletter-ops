@@ -1,4 +1,4 @@
-"""newsletter-worker --selftest：假的四步、暫存目錄，不連網、不呼叫 Claude。"""
+"""worker --selftest 的服務部分：假的四步、暫存目錄，不連網、不呼叫 Claude。"""
 from __future__ import annotations
 
 import http.client

@@ -29,7 +29,7 @@ uv run --project packages/agent newsletter-agent               # 依 skill 寫�
 同一天可以重跑 `newsletter-fetch`：當天 `data/curated/<date>.json` 上次收錄的項目不算「看過」，會重新排名，所以頭條不會因為重跑而消失。
 
 agent（`agent_run.py`，或在對話裡手動跑 skill）只負責寫 `reports/<date>.md` 並驗證格式，**不產 email HTML、也不寄信**；
-要 email 就用 notify（`uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send`，排程由 `newsletter-run` 代勞，見 [worker/README.md](../../apps/worker/README.md)）。
+要 email 就用 notify（`uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send`，排程由 worker 代勞，見 [worker/README.md](../../apps/worker/README.md)）。
 
 ## 調整來源
 

@@ -11,7 +11,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
 
 - `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，要執行的模組各自一個 `.venv`，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`apps/web-ui/`），
   只把 `apps/web-ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
-- `docker-compose.yml`：`web`、`worker`、`cloudflared` 三個服務與 volume。`worker` 跑 `newsletter-worker`（見 [apps/worker/README.md](../apps/worker/README.md)），
+- `docker-compose.yml`：`web`、`worker`、`cloudflared` 三個服務與 volume。`worker` 跑 `worker`（見 [apps/worker/README.md](../apps/worker/README.md)），
   它的 `/status`、`/run` 不 publish，而且只在 `be` 網路：`/run` 會燒額度、寄信，沒有登入的 `web` 與對外的 `cloudflared` 都碰不到。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `newsletter-web` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。主 port（8787）不 publish，host 不會對外開它；
