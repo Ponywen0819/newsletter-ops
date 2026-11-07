@@ -7,7 +7,7 @@ WorkingDirectory=%h/newsletter-ops
 # 機密：GMAIL_USER、GMAIL_APP_PASSWORD 等，範本見 deploy/newsletter.env.example
 EnvironmentFile=%h/.config/newsletter-ops/env
 # --host 寫死 127.0.0.1：/status、/run 沒有登入
-ExecStart=/usr/bin/env uv run --locked --project apps/worker newsletter-worker --host 127.0.0.1 --port 8790
+ExecStart=/usr/bin/env uv run --locked --project apps/worker worker --host 127.0.0.1 --port 8790
 Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PYTHONUNBUFFERED=1
 # 停止時要等執行中的步驟收尾、寫好紀錄

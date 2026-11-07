@@ -33,7 +33,7 @@ worker ──▶ shared、agent、notify      apps/：網頁以外的常駐服�
 - **apps/**：可以執行、部署的模組，**沒有模組可以依賴它**；**packages/**：被其他模組依賴的函式庫。
 - 目錄名 = id = Nx 專案名；套件名是 `newsletter-<id>`（`packages/agent/` → `newsletter-agent`），import 名把連字號換成底線（`newsletter_agent`）。
   前綴只留在套件名：import 名在 venv 裡是全域的，`agent`、`shared` 這種名字容易撞到第三方套件。
-  指令名（`newsletter-run`、`newsletter-web`…）不跟套件名綁在一起。
+  指令名不跟套件名綁在一起：被依賴的模組的指令會裝進每個依賴它的 venv，所以帶前綴（`newsletter-fetch`、`newsletter-web`…）；最頂層的 worker 就叫 `worker`。
 - 每個模組有一個 `project.json`（`name` 是 id），定義 `lint`、`selftest` 等任務；前端的任務直接來自 `package.json` 的 scripts。
 - 新增模組：建目錄與 `project.json`；Python 模組再 `uv lock --project <目錄>` 產生自己的鎖檔；最後登記到 `deploy/check_boundaries.py` 的 `MEMBERS`（Python）或 `NODE_MODULES`。
   `.gitignore`、`.dockerignore` 用萬用字元放行 `*/*/` 底下的模組檔，不必另外加；Dockerfile 要不要帶進映像則要自己決定。
@@ -115,7 +115,8 @@ uv run --project packages/agent newsletter-fetch --dry-run     # 只測來源連
 uv run --project packages/agent newsletter-fetch --no-report   # 只產 curated JSON，報告留給 Claude 寫
 uv run --project packages/agent newsletter-agent               # Claude 依 skill 寫 reports/<date>.md 並驗收（需要 OAuth token）
 uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send   # 轉成 email 並寄出
-uv run --project apps/worker newsletter-run                 # 整條流程一次跑完（抓取 → agent → render → 寄信），排程跑的就是它；有防重疊的鎖
+npx nx run worker:once                                  # 整條流程一次跑完（抓取 → agent → render → 寄信），和排程跑的是同一件事；有防重疊的鎖
+npx nx run worker:start                                 # 常駐排程服務（每天 08:00，見「排程」）
 (cd apps/web-ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
 uv run --project apps/web-server newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
 uv run --project packages/shared newsletter-feedback            # 收集報告裡填的標記
@@ -125,9 +126,9 @@ uv run --project packages/shared newsletter-feedback            # 收集報告�
 
 ## 排程
 
-排程只有一種：常駐的 `newsletter-worker`，Docker 是 `worker` 容器，不用 Docker 是 systemd 的 `deploy/newsletter-worker.service`。
+排程只有一種：常駐的 `worker`，Docker 是 `worker` 容器，不用 Docker 是 systemd 的 `deploy/newsletter-worker.service`。
 每天 08:00（`NEWSLETTER_RUN_AT` 可改）跑一次，輸出進 `logs/<YYYY-MM>.log`；停機錯過了，啟動後補跑（同一天內；失敗的不重跑，要重跑用 `POST /run`）。
-手動的 `newsletter-run` 和它進同一個 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/worker/README.md](apps/worker/README.md)，所以混用是安全的。
+手動的 `worker --once` 和它進同一個 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/worker/README.md](apps/worker/README.md)，所以混用是安全的。
 
 **規劃中**：認證的定時驗證從 web 搬到 worker 見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。
 

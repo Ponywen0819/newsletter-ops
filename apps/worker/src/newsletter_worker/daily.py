@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """每日流程：抓取 → agent 寫報告 → render → 寄信，整條握一把防重疊的鎖。
 
-用法：uv run --project apps/worker newsletter-run [newsletter-fetch 的參數，如 --lookback 72]
-      uv run --project apps/worker newsletter-run --selftest
+入口在 service.py：worker --once 跑一次、worker 常駐排程，都進 run_pipeline()。
 
 任一步失敗就停，exit code 是該步的；被訊號殺掉是 128+訊號；鎖被占用是 75（EX_TEMPFAIL）。
 拿到鎖才算執行：開始與結束都寫進 state/last_run.json（排程服務用它判斷今天跑過沒）。
@@ -233,15 +232,3 @@ def selftest() -> None:
         assert RECORD.read_text() == before
         assert run()[0] == 0
     print("ok")
-
-
-def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    if argv == ["--selftest"]:
-        selftest()
-        return 0
-    return run_pipeline(argv, sys.stderr)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

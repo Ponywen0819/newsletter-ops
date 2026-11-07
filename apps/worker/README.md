@@ -7,20 +7,21 @@
 
 ```
 src/newsletter_worker/
-  daily.py             run_pipeline()：鎖 → 紀錄 → 四步 → 失敗語意；newsletter-run 的入口與自我檢查
-  service.py           newsletter-worker：每日時鐘、補跑、GET /status、POST /run（Docker 的 worker 容器、systemd 的 newsletter-worker.service 跑它）
-  service_selftest.py  newsletter-worker --selftest
+  daily.py             run_pipeline()：鎖 → 紀錄 → 四步 → 失敗語意，與它的自我檢查
+  service.py           入口 worker：每日時鐘、補跑、GET /status、POST /run，以及 --once（Docker 的 worker 容器、systemd 的 newsletter-worker.service 跑它）
+  service_selftest.py  服務的自我檢查
 ```
 
 ## 用法
 
 ```bash
-uv run --project apps/worker newsletter-run                    # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
-uv run --project apps/worker newsletter-run --lookback 72      # 額外參數轉給 newsletter-fetch
-uv run --project apps/worker newsletter-run --selftest         # 用假步驟驗證，不連網、不寄信
+npx nx run worker:once                   # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
+npx nx run worker:once --lookback 72     # 額外參數轉給 newsletter-fetch
+npx nx run worker:start                  # 常駐排程服務，見下面「排程服務」
+npx nx run worker:selftest               # 用假步驟驗證，不連網、不寄信
 ```
 
-平常不必直接跑它：排程由 `newsletter-worker` 呼叫。直接跑時輸出印在終端機，不進 `logs/`。
+Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`，其餘同理。`--once` 的輸出印在終端機，不進 `logs/`。
 
 ## 行為
 
@@ -39,15 +40,15 @@ uv run --project apps/worker newsletter-run --selftest         # 用假步驟驗
 | 1～6 | `newsletter-agent` 的（見 [agent/README.md](../../packages/agent/README.md)「exit code」） |
 | 2、3 | `newsletter-fetch` 的（來源設定有誤、一則都沒抓到） |
 | 75 | 另一條 pipeline 正在跑，這次沒執行 |
-| 143 | 被要求停止（`newsletter-worker` 收到 SIGTERM，轉給執行中的那一步） |
+| 143 | 被要求停止（`worker` 收到 SIGTERM，轉給執行中的那一步） |
 
 數字會重疊（agent 和 fetch 都用 2），要知道是哪一步，看 log 最後一行 `失敗，exit N：<步驟>`。
 
-## 排程服務（newsletter-worker）
+## 排程服務
 
 ```bash
-uv run --project apps/worker newsletter-worker              # 0.0.0.0:8790（--port／NEWSLETTER_WORKER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00
-uv run --project apps/worker newsletter-worker --selftest   # 時鐘、補跑判斷、HTTP、SIGTERM，不連網
+npx nx run worker:start                  # 0.0.0.0:8790（--port／NEWSLETTER_WORKER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00
+npx nx run worker:start --port 9000      # 參數直接接在後面
 ```
 
 每 30 秒醒來看一次牆上時鐘（主機睡眠、校時都不怕），依 `state/last_run.json` 和鎖決定要不要跑：
