@@ -85,7 +85,7 @@ def lock_held() -> bool:
 
 
 def say(message: str) -> None:
-    print(f"[worker] {datetime.now():%Y-%m-%d %H:%M:%S} {message}", flush=True)
+    print(f"[worker] {datetime.now(daily.TZ):%Y-%m-%d %H:%M:%S} {message}", flush=True)
 
 
 STEP_LABEL = {"collect": "蒐集新聞", "write": "撰寫報告", "render": "排版", "send": "寄信"}
@@ -148,7 +148,7 @@ class Service:
         say(f"開始（{trigger}）" if first == "collect" else f"開始（{trigger}，從 {first} 起）")
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
-            path = self.log_dir / f"{datetime.now():%Y-%m}.log"  # 月份以開始時間為準
+            path = self.log_dir / f"{datetime.now(self.tz):%Y-%m}.log"  # 月份以開始時間為準
             with path.open("a+", encoding="utf-8") as log:
                 start = log.tell()
                 code = daily.run_pipeline([], log, trigger=trigger, stop=self.stop, start=first)
