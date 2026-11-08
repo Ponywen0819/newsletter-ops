@@ -23,6 +23,7 @@ STATE = ROOT / "state" / "seen.json"
 STOP = re.compile(r"[^\w一-鿿]+")
 _ASCII_KW = re.compile(r"^[\x00-\x7f]+$")
 _PATTERN_CACHE: dict[str, re.Pattern | None] = {}
+_REJECTED = re.compile(r"reject|not accepted|declined", re.I)
 _SUBMITTED = re.compile(r"submitted|under review|in submission|under submission", re.I)
 # 「DocInsights at EMNLP 2026」＝掛在會議底下的 workshop；這些字接 at 則是主會議本身
 _MAIN_BEFORE_AT = {"accepted", "published", "presented", "appear", "appears", "appearing",
@@ -111,8 +112,8 @@ def venue_of(note: str, venues: dict) -> dict | None:
     {"status": main|minor|submitted, "kind": conference|journal, "name", "track", "label"} 或 None。
 
     大小寫敏感：'Nature' 不該命中 'the nature of'。
-    ponytail: 清單＋正規表示式，「rejected from ICLR」會誤判成 main、「以前曾在某 workshop 發表」
-    會把主會議降成 minor；兩者都少見，遇到再把寫法加進清單或規則。
+    名稱前面 30 字內有 reject 之類的字（「Rejected from ICLR」）不算那一個。
+    ponytail: 清單＋正規表示式，「以前曾在某 workshop 發表」會把主會議降成 minor；少見，遇到再把寫法加進清單或規則。
     """
     if not note:
         return None
@@ -120,6 +121,7 @@ def venue_of(note: str, venues: dict) -> dict | None:
             if (h := _find(venues.get(kind, []), note))]
     if not hits and (h := _find_lower(venues.get("conference", []), note)):
         hits = [(h, "conference")]  # 期刊不放寬：Nature 不該命中 the nature of
+    hits = [(h, kind) for h, kind in hits if not _REJECTED.search(note[max(0, h[0] - 30):h[0]])]
     if not hits:
         return None
     (pos, name, _), kind = min(hits, key=lambda x: x[0][0])
@@ -299,6 +301,9 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert venue_of("to appear in iclr 2027", V)["label"] == "已被 ICLR 2027 接受（主會議）"
     assert st("Project page: https://www.example.com/acl") is None  # 小寫沒有年份不算
     assert st("12 pages, nature 2026 style") is None  # 期刊不放寬
+    assert st("Rejected from ICLR 2026") is None
+    assert st("Rejected from ICLR 2026; published in TMLR") == ("main", "TMLR", "")
+    assert st("Accepted at NeurIPS 2026. Previously rejected elsewhere") == ("main", "NeurIPS 2026", "")
     assert st("ACLU report analysis") is None
     assert st("") is None
     assert _hits("openai agents tried to bruteforce", "agent") and _hits("new gpus", "gpu")

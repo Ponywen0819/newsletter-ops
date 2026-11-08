@@ -40,7 +40,7 @@
 ### 低：已知限制，先記錄
 
 **9. arXiv 會議判斷的誤判情境**（`curate.venue_of`）
-- 「rejected from ICLR」會被判成主會議。
+- 「rejected from ICLR」：名稱前 30 字內有 reject／not accepted／declined 就不算（2026-11-08）。
 - 「以前在某 workshop 發表過，現被主會議接受」會被降成非主會議。
 - 會議名稱先大小寫敏感比對；沒命中時，大小寫寫錯但後面接年份的（「neurips 2026」）也算（2026-11-08）。期刊不放寬。
 - arXiv API 不提供作者機構，由 enrich 抓 arXiv HTML 版存進 `fulltext`，writer 從裡面判斷。
