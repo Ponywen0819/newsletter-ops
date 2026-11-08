@@ -81,7 +81,7 @@ def step(log: IO[str], module: str, *args: str, input: str | None = None, captur
 
 
 def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", stop: threading.Event | None = None) -> int:
-    """trigger：schedule / catchup / manual / cli，只是寫進紀錄。"""
+    """trigger：schedule / catchup / retry / manual / cli，寫進紀錄；排程服務靠 retry 判斷重跑過沒。"""
     try:
         with lock.locked(LOCK, timeout=0):
             rec = {"date": f"{datetime.now(tz()):%Y-%m-%d}", "trigger": trigger, "started_at": now_iso(),

@@ -98,7 +98,7 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
 ```
 
 - 每天 08:00（`config/config.json` 的時區，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器啟動時，今天過了時間卻還沒跑過（或上次跑到一半被停掉）就補跑一次；
-  只補同一天，跨日就算了。今天跑過但失敗了**不會**自動重跑（避免 token 失效時每次重啟都燒一次），修好後用上面的 `/run` 補。
+  只補同一天，跨日就算了。今天跑過但失敗了，30 分鐘後自動重跑**一次**（網路、來源暫時掛掉）；認證失效或額度用完不重跑（避免每次都燒一次），修好後用上面的 `/run` 補。
   手動跑的也算「今天跑過」，所以 08:00 前手動跑完，08:00 就不會再寄一次。`docker stop` 會等執行中的步驟收尾（最多 2 分鐘）。
 - 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT`）worker 驗一次 Claude 認證（一次極小的呼叫），結果寫 `state/auth_health.json`，網頁的授權橫幅讀它。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。

@@ -65,9 +65,10 @@ def _selftest_clock() -> None:
 
 
 def _selftest_due() -> None:
-    def rec(date: str, finished: bool, code: int | None = 0) -> dict:
-        return {"date": date, "trigger": "schedule", "started_at": "x",
-                "finished_at": "y" if finished else None, "exit_code": code if finished else None}
+    def rec(date: str, finished: bool, code: int | None = 0, trigger: str = "schedule", at: str = "08:10") -> dict:
+        end = tpe(f"{date}T{at}").astimezone(timezone.utc).isoformat(timespec="seconds")
+        return {"date": date, "trigger": trigger, "started_at": "x",
+                "finished_at": end if finished else None, "exit_code": code if finished else None}
 
     today, yesterday = "2026-11-03", "2026-11-02"
     rows = [
@@ -78,7 +79,14 @@ def _selftest_due() -> None:
         ("08:05", None, False, "schedule"),
         ("08:06", None, False, "catchup"),                            # 晚了超過 5 分鐘
         ("10:00", rec(today, True), False, None),                     # 今天成功
-        ("10:00", rec(today, True, 1), False, None),                  # 今天失敗：不自動重跑
+        ("08:39", rec(today, True, 1), False, None),                  # 今天失敗：30 分鐘內先等
+        ("08:40", rec(today, True, 1), False, "retry"),               # 之後重跑一次
+        ("08:40", rec(today, True, 1), True, "busy"),
+        ("10:00", rec(today, True, 1, "retry"), False, None),         # 重跑過了還失敗：等明天
+        ("10:00", rec(today, True, 3, "manual"), False, "retry"),     # 手動跑的失敗也重跑一次
+        ("10:00", rec(today, True, 5), False, None),                  # 認證失效、額度用完、被停止：不重跑
+        ("10:00", rec(today, True, 6), False, None),
+        ("10:00", rec(today, True, 143), False, None),
         ("10:00", rec(today, False), False, "catchup"),               # 開始沒結束、鎖空著：被打斷，重跑
         ("10:00", rec(today, False), True, "busy"),                   # 鎖被握著：還在跑
         ("10:00", rec(yesterday, True), False, "catchup"),            # 昨天的紀錄＝今天沒有
