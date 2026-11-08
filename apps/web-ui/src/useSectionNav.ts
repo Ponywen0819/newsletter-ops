@@ -45,7 +45,11 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     [goTo],
   )
 
+  // 開頁時的 #hash 只捲一次：恢復連線重抓資料（ids 換成新的陣列）時不要把讀者拉回去
+  const openedAt = useRef(false)
   useEffect(() => {
+    if (openedAt.current || !ids.length) return
+    openedAt.current = true
     const id = window.location.hash.slice(1)
     if (ids.includes(id)) scrollToUnit(id, true)
   }, [ids, scrollToUnit])

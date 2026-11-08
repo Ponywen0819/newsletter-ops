@@ -210,6 +210,14 @@ describe('ReportView 筆電新聞目錄', () => {
     expect(current()).toBe('重點 <標題>')
   })
 
+  it('重抓資料（恢復連線）換來新的 report 物件：開頁的 hash 不再捲一次', () => {
+    window.history.replaceState(null, '', '/#s-6')
+    const { rerender } = setup()
+    expect(scrolled).toHaveLength(1)
+    rerender(<ReportView report={structuredClone(report)} marks={{}} onMark={() => {}} />)
+    expect(scrolled).toHaveLength(1)
+  })
+
   it('hashchange（上一頁、手改網址）會跟著捲', () => {
     setup()
     window.history.replaceState(null, '', '/#s-sources')
