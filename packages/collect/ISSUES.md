@@ -21,7 +21,7 @@
 - 現象：tech-industry 只收有命中關鍵字的新聞，週末或關鍵字沒對上的日子會整段空掉。這個主題沒有後手：沒過門檻的新聞不會進 curated JSON，Claude 看不到；搜尋補充只在整個主題 0 則時才觸發。
 - 已做（2026-09-28）：修了複數比對；Ars Technica、IEEE Spectrum 保底 0.5，命中任一關鍵字就過門檻。IEEE 試過 0.8（無條件收錄），五則裡三則是無關雜項，所以沒採用。
 - 已做（2026-11-08）：配額沒滿的主題，把差一點過門檻（0 < relevance < min_relevance）的前 3 則附進 curated 的 `near_misses`，命中關鍵字的優先；writer 依興趣決定要不要寫進報告。2026-11-08 附了 The Verge〈US let Nvidia sell chips to an empty office in China〉這類只命中低權重關鍵字的新聞。
-- 觀察：跑幾天看 writer 撈回多少、tech-industry 的則數。
+- 觀察：跑幾天看 writer 撈回多少、tech-industry 的則數。writer 撈回的則數記在 metrics 的 `coverage.near_misses_used`（2026-11-09 起）。
 - 已做（2026-11-08）：boost_low 的 `vision` 太泛（命中〈Poetry for Engineers: The UI Designer's Dream〉），改成 `computer vision`、`vision-language`、`vision model`。
 
 **6. 「其餘收錄」塞了不相關的新聞**
