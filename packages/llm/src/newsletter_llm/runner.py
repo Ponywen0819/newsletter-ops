@@ -31,6 +31,14 @@ EXIT_AUTH, EXIT_QUOTA = 5, 6  # 授權失敗／額度用完：和一般的失敗
 CHECK_PROMPT = "Reply with the single word: ok"
 
 
+class ApiKeyInUse(RuntimeError):
+    pass
+
+
+def uses_api_key(usage: "Usage") -> bool:
+    return usage.api_key_source not in (None, "none")  # None＝沒收到 init，沒有證據就不亂判
+
+
 class Usage:
     """逐則累積訊息串流裡的工具耗時與模型，結束時併入 ResultMessage 的 token 與費用。"""
 
@@ -158,7 +166,7 @@ async def probe(token: str) -> dict:
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
     r, src = usage.result, usage.api_key_source
-    if src not in (None, "none"):  # None＝沒收到 init（呼叫在啟動前就失敗），沒有證據就不亂判
+    if uses_api_key(usage):
         return {"ok": False, "kind": "api_key", "api_key_source": src,
                 "message": f"SDK 正在使用 API key（來源：{src}），不是 OAuth 訂閱額度"}
     if r is not None and not r.is_error and r.subtype == "success":
@@ -191,6 +199,8 @@ def auth_check(from_env: bool) -> int:
 async def _query(prompt: str, options, usage: Usage, tag: str) -> None:
     async for msg in sdk.query(prompt=prompt, options=options):
         usage.feed(msg)
+        if uses_api_key(usage):  # 一開始就停，不要讓整次執行用 API key 計費
+            raise ApiKeyInUse(f"SDK 正在使用 API key（來源：{usage.api_key_source}）")
         if isinstance(msg, sdk.AssistantMessage):
             if msg.error:
                 print(f"[{tag}] API 錯誤：{msg.error}", file=sys.stderr)
@@ -218,13 +228,15 @@ def run(prompt: str, *, tools: list[str], max_turns: int, token: str, tag: str) 
         # 結果是錯誤時（例如超過 max_turns）SDK 會在吐出 ResultMessage 之後丟一般 Exception，
         # 所以不能只接 ClaudeSDKError；已收到的用量照樣留著。
         error = f"{type(exc).__name__}: {exc}"
-        if usage.result is None:  # 連結果都沒有＝非預期的失敗，留下 traceback 方便查
+        if usage.result is None and not isinstance(exc, ApiKeyInUse):  # 連結果都沒有＝非預期的失敗，留下 traceback 方便查
             traceback.print_exc()
     return usage, error, time.monotonic() - t0
 
 
 def failure(usage: Usage, sdk_error: str | None) -> tuple[int, str, str] | None:
     """agent 本身失敗時回傳 (exit code, metrics 的 status, 原因)；成功回傳 None（產出由呼叫端驗收）。"""
+    if uses_api_key(usage):
+        return EXIT_AUTH, "api_key", f"SDK 正在使用 API key（來源：{usage.api_key_source}），不是 OAuth 訂閱額度；已中止"
     r = usage.result
     if r is None:
         reason = f"沒有收到結果（{sdk_error or '串流意外中止'}）"
@@ -319,6 +331,18 @@ def selftest_run() -> None:
         yield ok_result
     with mock.patch.object(sdk, "query", skills), contextlib.redirect_stderr(io.StringIO()):
         assert run("p", tools=["Skill", "Read"], max_turns=3, token="tok", tag="t")[0].result is ok_result
+
+    # 執行中 init 說用了 API key：馬上中止、不再讀後面的訊息，判成需要人處理的失敗
+    async def keyed(prompt, options):
+        yield sdk.SystemMessage(subtype="init", data={"apiKeySource": "ANTHROPIC_API_KEY"})
+        raise AssertionError("不該讀到這裡")
+    with mock.patch.object(sdk, "query", keyed), contextlib.redirect_stderr(io.StringIO()):
+        usage, error, _ = run("p", tools=["Read"], max_turns=3, token="tok", tag="t")
+    assert error.startswith("ApiKeyInUse") and failure(usage, error)[:2] == (EXIT_AUTH, "api_key"), error
+    u = Usage()
+    u.feed(sdk.SystemMessage(subtype="init", data={"apiKeySource": "none"}))
+    u.feed(ok_result)
+    assert failure(u, None) is None
 
 
 def selftest_auth() -> None:
