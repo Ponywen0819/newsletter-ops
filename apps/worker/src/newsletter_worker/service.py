@@ -17,6 +17,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 from datetime import datetime, time, timedelta, timezone
@@ -87,12 +88,45 @@ def say(message: str) -> None:
     print(f"[worker] {datetime.now():%Y-%m-%d %H:%M:%S} {message}", flush=True)
 
 
+STEP_LABEL = {"collect": "蒐集新聞", "write": "撰寫報告", "render": "排版", "send": "寄信"}
+EXIT_HINT = {5: "Claude 授權失效：到 /auth 重新貼上 `claude setup-token` 的 token", 6: "訂閱額度用完：等額度恢復",
+             daily.EXIT_TIMEOUT: "超過時限被停掉"}
+
+
+def failure_notice(code: int, record: dict | None, tail: list[str], retried: bool) -> dict:
+    """失敗通知信的 {subject, text}：今天不會再自動重跑時才寄。"""
+    rec = record or {}
+    step = STEP_LABEL.get(rec.get("step") or "", rec.get("step") or "?")
+    why = EXIT_HINT.get(code, "")
+    lines = [f"今天（{rec.get('date', '?')}）的晨報沒有寄出：在「{step}」這步失敗，exit {code}。"]
+    if why:
+        lines.append(why + "。")
+    lines.append("已經自動重跑過一次，今天不會再試；修好後用 worker 的 POST /run 補跑。" if retried else
+                 "這種失敗重跑也沒用，今天不會自動重跑；修好後用 worker 的 POST /run 補跑。")
+    lines += ["", f"log 最後 {len(tail)} 行：", *tail]
+    return {"subject": f"晨報失敗 {rec.get('date', '')}：{step}（exit {code}）", "text": "\n".join(lines) + "\n"}
+
+
+def send_notice(notice: dict) -> None:
+    """另開程序寄（worker 不 import notify）；寄不出去只記 log。"""
+    try:
+        proc = subprocess.run([sys.executable, "-m", "newsletter_notify.send_email", "--notice"], cwd=ROOT,
+                              input=json.dumps(notice, ensure_ascii=False), encoding="utf-8",
+                              capture_output=True, timeout=120, check=False)
+        ok = proc.returncode == 0
+        detail = proc.stderr.strip().splitlines()[-1:] if not ok else []
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        ok, detail = False, [str(exc)]
+    say("已寄失敗通知" if ok else f"失敗通知寄不出去：{' '.join(detail)}")
+
+
 class Service:
     def __init__(self, at: time, tz: ZoneInfo, check_at: time, log_dir: Path = ROOT / "logs",
                  health: Path | None = None):
         self.at, self.tz, self.check_at, self.log_dir = at, tz, check_at, log_dir
         self.health = health or auth_health.health_path()
         self.checker = auth_health.run_check
+        self.notifier = send_notice
         self.stop = threading.Event()
         self.current: dict | None = None  # {trigger, started_at}
         self._mu = threading.Lock()
@@ -125,6 +159,8 @@ class Service:
                 auth_health.write(False, AUTH_EXIT[code], self.health)
             if code not in (0, daily.EXIT_BUSY):
                 print("\n".join(tail), flush=True)
+            if code not in (0, daily.EXIT_BUSY, daily.EXIT_STOPPED) and (trigger == "retry" or code in NO_RETRY):
+                self.notifier(failure_notice(code, daily.read_record(), tail, retried=trigger == "retry"))
         finally:
             with self._mu:
                 self.current = None

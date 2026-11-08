@@ -63,6 +63,9 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 | 已過 | 開始了沒結束 | 空 | 上次被打斷，重跑 |
 | 已過 | 任何 | 被握著 | 別條正在跑，下次再看 |
 
+**失敗通知**：今天不會再自動重跑時（重跑也失敗，或是 exit 5／6），寄一封純文字信給 `NEWSLETTER_MAIL_TO`：哪一步、exit code、該怎麼處理、log 最後 20 行。
+用 `newsletter-send --notice` 寄（同一組 Gmail 設定）；寄信本身壞掉時通知多半也寄不出去，只會留在 worker 的 log。`worker --once` 不寄（人就在終端機前）。
+
 **認證驗證**：同一個時鐘，每天 `NEWSLETTER_AUTH_CHECK_AT`（預設 07:30）跑一次 `newsletter-llm --auth-check`（一次極小的 Claude 呼叫），
 結果 `{ok, kind, at}` 原子寫入 `state/auth_health.json`，web 的 `/api/auth-health` 讀它（[web-server/README.md](../web-server/README.md)）。
 要不要驗只看這個檔的 `at`：今天排定時間之後驗過就不再驗（web 的 `/auth` 測試、貼上 token 也會寫它，算數）；啟動時已過時間又還沒驗過就補一次。

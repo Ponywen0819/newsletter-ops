@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from newsletter_shared import auth_health, lock
 
 from . import daily
-from .service import Service, check_due, due, make_server, next_run_at, parse_hhmm
+from .service import Service, check_due, due, failure_notice, make_server, next_run_at, parse_hhmm
 
 TPE = ZoneInfo("Asia/Taipei")
 AT = time(8, 0)
@@ -29,6 +29,8 @@ def service_for(tmp: Path, at: time, check_at: time = CHECK_AT) -> Service:
     service = Service(at, TPE, check_at, tmp / "logs", tmp / "state" / "auth_health.json")
     service.checks = []  # type: ignore[attr-defined]
     service.checker = lambda: service.checks.append(1) or {"ok": True, "kind": "ok", "message": ""}  # type: ignore[attr-defined]
+    service.notices = []  # type: ignore[attr-defined]
+    service.notifier = service.notices.append  # type: ignore[attr-defined]
     return service
 
 
@@ -40,6 +42,7 @@ def selftest() -> None:
     _selftest_clock()
     _selftest_due()
     _selftest_check_due()
+    _selftest_notice()
     with tempfile.TemporaryDirectory() as d, daily.fake_steps(Path(d)):
         _selftest_http(Path(d))
         _selftest_tick(Path(d))
@@ -112,6 +115,16 @@ def _selftest_check_due() -> None:
     assert not check_due(tpe("2026-11-03T09:00"), last("2026-11-03T08:15"), CHECK_AT, TPE)  # web 的 /auth 測試也算
     utc = datetime(2026, 11, 2, 23, 30, tzinfo=timezone.utc)  # 台北 11/3 07:30
     assert check_due(utc, last("2026-11-02T07:30"), CHECK_AT, TPE)
+
+
+def _selftest_notice() -> None:
+    rec = {"date": "2026-11-03", "step": "write"}
+    n = failure_notice(5, rec, ["line a", "line b"], retried=False)
+    assert n["subject"] == "晨報失敗 2026-11-03：撰寫報告（exit 5）", n
+    assert "/auth" in n["text"] and "重跑也沒用" in n["text"] and n["text"].endswith("line a\nline b\n"), n
+    n = failure_notice(3, {"date": "2026-11-03", "step": "collect"}, [], retried=True)
+    assert "蒐集新聞" in n["subject"] and "已經自動重跑過一次" in n["text"], n
+    assert "?" in failure_notice(1, None, [], retried=True)["subject"]
 
 
 def _wait(cond, seconds: float = 15) -> None:
@@ -212,6 +225,9 @@ def _selftest_tick(tmp: Path) -> None:
         got = auth_health.read(service.health)
         assert got["ok"] is False and got["kind"] == want, (fail, got)
     os.environ["FAKE_FAIL"] = ""
+    # 失敗通知：5、6 今天不會再重跑 → 各寄一封；collect:3 之後還會重跑 → 不寄
+    subjects = [n["subject"] for n in service.notices]  # type: ignore[attr-defined]
+    assert len(subjects) == 2 and "exit 5" in subjects[0] and "exit 6" in subjects[1], subjects
 
     # 自動重跑：寄信失敗的話只重跑 render、send，不再呼叫 writer
     long_ago = "2000-01-01T00:00:00+00:00"
@@ -224,6 +240,17 @@ def _selftest_tick(tmp: Path) -> None:
     rec = daily.read_record()
     assert rec["trigger"] == "retry" and rec["exit_code"] == 0, rec
     assert not (tmp / "collect").exists() and not (tmp / "write").exists() and (tmp / "send").exists()
+    assert len(service.notices) == 2  # type: ignore[attr-defined]  # 重跑成功：不寄
+
+    # 重跑也失敗：寄一封，說已經重跑過
+    daily.RECORD.write_text(json.dumps({"date": f"{datetime.now(TPE):%Y-%m-%d}", "trigger": "schedule",
+                                        "finished_at": long_ago, "exit_code": 1, "step": "send"}))
+    os.environ["FAKE_FAIL"] = "send:1"
+    service.tick(datetime.now(timezone.utc))
+    service._worker.join(15)
+    os.environ["FAKE_FAIL"] = ""
+    assert daily.read_record()["trigger"] == "retry" and "已經自動重跑過一次" in service.notices[-1]["text"]  # type: ignore[attr-defined]
+    assert len(service.notices) == 3  # type: ignore[attr-defined]
 
 
 # 真的程序收 SIGTERM：子程序被終止、紀錄寫好、期限內離開
