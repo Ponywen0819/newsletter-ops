@@ -27,6 +27,7 @@
 **6. 「其餘收錄」塞了不相關的新聞**
 - 現象：VMAs 紅毯、沉船影片也出現在 email 裡。
 - 原因：skill 規定 curated JSON 的每一則都要出現在報告裡（為了 feedback 標記）；world 和 science 靠保底分過門檻，配額內的都會被收錄。
+- 已做（2026-11-08）：Al Jazeera 的 feed 是全站的，`skip` 掉 `/sports/`、`/video/`；The Guardian World 混了影評、書評、媒體版，`skip` 掉藝文、生活、體育的路徑。2026-11-08 的 world 候選因此少了 14 則（體育 6、影片 5、藝文 3）。
 - 建議：第 4 點改善後會自然減少；或者讓 skill 對 world、science 的低價值項目只保留 mark 註解、不寫可見文字。
 
 **7. 科學段被 ScienceDaily 佔滿**
