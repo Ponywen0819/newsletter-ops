@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { getRecoveries, getStatus, subscribe, type Status } from './connectivity'
-import { sync } from './sync'
+import { adoptBackgroundRecord, sync } from './sync'
 
 export interface Fetched<T> {
   data?: T
@@ -47,6 +47,9 @@ export function useRecovered(): number {
 /** 離線副本的同步時機（sync.ts）：啟動、恢復連線時一定同步；回到前景時隔一段時間才同步。 */
 export function useOfflineSync(): void {
   const recovered = useRecovered()
+  useEffect(() => {
+    void adoptBackgroundRecord() // 背景同步過的紀錄先搬進來，離線橫幅才說得出副本的新舊
+  }, [])
   useEffect(() => {
     void sync(true)
   }, [recovered])
