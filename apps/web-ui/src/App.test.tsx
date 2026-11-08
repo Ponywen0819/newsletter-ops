@@ -30,6 +30,24 @@ describe('路由', () => {
     expect(screen.getByRole('link', { name: '2026-10-02' })).toHaveAttribute('href', '/reports/2026-10-02')
   })
 
+  it.each([
+    [{ finished_at: null, exit_code: null, step: null }, '2026-10-03 的晨報正在產生', '完成後重新整理'],
+    [{ finished_at: 'b', exit_code: 3, step: 'collect' }, '2026-10-03 的晨報產生失敗', '在「蒐集新聞」這步失敗（exit 3），30 分鐘後會自動重跑一次'],
+    [{ finished_at: 'b', exit_code: 3, step: 'collect', trigger: 'retry' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
+    [{ finished_at: 'b', exit_code: 5, step: 'write' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
+  ])('/ 當日沒有晨報、有執行紀錄：說明狀態 %#', async (run, title, text) => {
+    const rec = { trigger: 'schedule', started_at: 'a', ...run }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run: rec } }) })
+    expect(await screen.findByRole('heading', { name: title })).toBeInTheDocument()
+    expect(screen.getByText(text, { exact: false })).toBeInTheDocument()
+  })
+
+  it('/ 當日跑成功但還沒有晨報檔：照一般的還沒產出', async () => {
+    const run = { trigger: 'schedule', started_at: 'a', finished_at: 'b', exit_code: 0, step: null }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run } }) })
+    expect(await screen.findByRole('heading', { name: '2026-10-03 的晨報還沒產出' })).toBeInTheDocument()
+  })
+
   it('/ 一份晨報都沒有', async () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {} } }) })
     expect(await screen.findByText('目前還沒有任何晨報。')).toBeInTheDocument()

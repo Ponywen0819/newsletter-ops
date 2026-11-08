@@ -30,7 +30,7 @@ Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`�
 - **鎖**：整條流程握著 `state/pipeline.lock`（`shared` 的 `lock.locked(timeout=0)`）。搶不到就**不排隊**、exit **75**（`EX_TEMPFAIL`），log 留一行說明。
   程序死掉鎖就放掉，不會留下過期的鎖。這把鎖只防「兩條 pipeline 同時跑」；各個檔案自己的讀寫排隊見 [shared/README.md](../../packages/shared/README.md)「檔案鎖」。
 
-- **執行紀錄**：拿到鎖才寫 `state/last_run.json`（整檔取代）：開始時 `{date, trigger, started_at, finished_at: null, exit_code: null}`，結束補上後兩個。
+- **執行紀錄**：拿到鎖才寫 `state/last_run.json`（整檔取代）：開始時 `{date, trigger, started_at, finished_at: null, exit_code: null, step: null}`，結束補上後三個（`step` 是失敗的那一步，成功是 null）；web 的今日頁讀它顯示失敗。
   `date` 是 `config/config.json` 時區的日期；`trigger` 是 `schedule`／`catchup`／`retry`／`manual`（`/run`）／`cli`。搶不到鎖不寫。
   有 `started_at` 沒 `finished_at`：鎖被握著＝還在跑，鎖空著＝被打斷（程序被 SIGKILL、斷電）。
 

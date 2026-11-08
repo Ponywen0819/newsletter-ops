@@ -58,6 +58,18 @@ export interface TodayPayload {
   marks: Marks
   /** 最新一份晨報的日期；一份都沒有時是 null */
   latest: string | null
+  /** 當天的執行紀錄（worker 的 state/last_run.json）；今天還沒跑是 null。舊的副本沒有這欄 */
+  run?: RunRecord | null
+}
+
+export interface RunRecord {
+  trigger: string
+  started_at: string
+  /** 還在跑時是 null */
+  finished_at: string | null
+  exit_code: number | null
+  /** 失敗的那一步：collect / write / render / send */
+  step: string | null
 }
 
 export interface ReportSummary {

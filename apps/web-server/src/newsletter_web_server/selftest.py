@@ -77,7 +77,8 @@ def selftest() -> None:
             status, _, body = req("GET", "/")
             assert status == 503 and "npm run build" in body
             status, _, body = req("GET", "/api/today")
-            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "latest": None}
+            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "latest": None,
+                                                     "run": None}
             assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
     print("ok")
@@ -123,9 +124,23 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw
 
     # 當日：有就給整份，沒有就給最新一份的日期
-    assert get("/api/today") == (200, {**data, "latest": "2026-09-28"})
+    assert get("/api/today") == (200, {**data, "latest": "2026-09-28", "run": None})
     site.reports.today = lambda: "2026-10-05"
-    assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28"})
+    assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28",
+                                       "run": None})
+
+    # 當天的執行紀錄（worker 寫的 last_run.json）：只給當天的，壞掉當沒有
+    record = root / "state" / "last_run.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"date": "2026-10-05", "trigger": "schedule", "started_at": "a", "finished_at": "b", "exit_code": 3,
+           "step": "collect"}
+    record.write_text(json.dumps(rec), encoding="utf-8")
+    assert get("/api/today")[1]["run"] == {k: v for k, v in rec.items() if k != "date"}
+    record.write_text(json.dumps({**rec, "date": "2026-10-04"}), encoding="utf-8")
+    assert get("/api/today")[1]["run"] is None
+    record.write_text("{", encoding="utf-8")
+    assert get("/api/today")[1]["run"] is None
+    record.unlink()
     site.reports.today = lambda: "2026-09-28"
 
     # 歷史列表：新到舊、略過非日期檔名、顯示頭條

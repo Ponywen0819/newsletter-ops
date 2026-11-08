@@ -4,7 +4,8 @@
 入口在 service.py：worker --once 跑一次、worker 常駐排程，都進 run_pipeline()。
 
 任一步失敗就停，exit code 是該步的；被訊號殺掉是 128+訊號；鎖被占用是 75（EX_TEMPFAIL）。
-拿到鎖才算執行：開始與結束都寫進 state/last_run.json（排程服務用它判斷今天跑過沒）。
+拿到鎖才算執行：開始與結束都寫進 state/last_run.json（排程服務用它判斷今天跑過沒、web 用它顯示失敗）；
+失敗時 step 是哪一步（collect / write / render / send）。
 """
 from __future__ import annotations
 
@@ -85,28 +86,35 @@ def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", st
     try:
         with lock.locked(LOCK, timeout=0):
             rec = {"date": f"{datetime.now(tz()):%Y-%m-%d}", "trigger": trigger, "started_at": now_iso(),
-                   "finished_at": None, "exit_code": None}
+                   "finished_at": None, "exit_code": None, "step": None}
             atomic.write_text(RECORD, json.dumps(rec))
-            code = 1  # _run 丟例外時記成失敗
+            code, failed = 1, []  # _run 丟例外時記成失敗
             try:
-                code = _run(collect_args, log, stop)
+                code = _run(collect_args, log, stop, failed)
                 return code
             finally:
-                atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code}))
+                atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code,
+                                                      "step": failed[-1] if failed else None}))
     except lock.LockBusy:
         say(log, "已有另一條 pipeline 在跑（state/pipeline.lock 被占用），這次不執行")
         return EXIT_BUSY
 
 
-def _run(collect_args: list[str], log: IO[str], stop: threading.Event | None = None) -> int:
+def _run(collect_args: list[str], log: IO[str], stop: threading.Event | None = None,
+         failed: list[str] | None = None) -> int:
+    """failed：失敗（或被停止）的那一步會 append 進去。"""
+    failed = [] if failed is None else failed
+
     def go(label: str, key: str, *args: str, input: str | None = None, capture: bool = False) -> tuple[int, str]:
         if stop is not None and stop.is_set():
             say(log, f"收到停止，不執行：{label}")
+            failed.append(key)
             return EXIT_STOPPED, ""
         say(log, label)
         code, out = step(log, MODULES[key], *args, input=input, capture=capture, stop=stop)
         if code:
             say(log, f"失敗，exit {code}：{label}")
+            failed.append(key)
         return code, out
 
     code, _ = go(" ".join(["newsletter-collect", *collect_args]), "collect", *collect_args)
@@ -190,16 +198,18 @@ def selftest() -> None:
         rec = read_record()
         assert rec is not None and rec["trigger"] == "schedule" and rec["exit_code"] == 0 and rec["finished_at"], rec
         assert rec["date"] == f"{datetime.now(tz()):%Y-%m-%d}" and rec["started_at"] <= rec["finished_at"], rec
+        assert rec["step"] is None, rec
 
         # 任一步失敗：後面的不跑、exit code 是該步的、log 一行說明、紀錄記下 exit code；失敗也會放鎖
         code, text = run(fail="write:5")
         assert code == 5 and ran("collect") and ran("write") and not ran("render") and not ran("send")
         assert "失敗，exit 5：newsletter-write" in text and "完成" not in text
-        assert read_record()["exit_code"] == 5 and read_record()["trigger"] == "cli"
+        assert read_record()["exit_code"] == 5 and read_record()["trigger"] == "cli" and read_record()["step"] == "write"
         code, text = run(fail="collect:3")
         assert code == 3 and ran("collect") and not ran("write")
         code, text = run(fail="render:kill")
         assert code == 128 + 9 and ran("render") and not ran("send") and read_record()["exit_code"] == 128 + 9
+        assert read_record()["step"] == "render"
 
         # stop：對執行中的子程序送 SIGTERM、後面的不跑；紀錄有 finished_at 與 143
         stop, t0 = threading.Event(), time.monotonic()
