@@ -6,7 +6,7 @@ stdout 印一行 JSON：{"subject", "headline", "html_path", "text_path"}，給 
 text_path 是同內容的純文字版（reports/<date>.txt），當信件的 text/plain 部分。
 
 有設 NEWSLETTER_BASE_URL 才在可投票的新聞底下放 👍／👎 連結（<base>/feedback/<uid>[,<uid>...]?v=…）；
-連結只開確認頁，因為信箱的安全掃描會自動開連結。
+連結只開確認頁，因為信箱的安全掃描會自動開連結。信尾另外放網頁版這一天的連結（<base>/reports/<date>）。
 """
 from __future__ import annotations
 
@@ -44,7 +44,14 @@ S = {
     "fb_btn": ("display:inline-block;margin:0 8px 4px 0;padding:8px 14px;border:1px solid #d1d5db;"
                "border-radius:16px;background:#f9fafb;font-size:13px;line-height:1.4;color:#374151;"
                "text-decoration:none;"),
+    "foot": "margin:24px 0 0;padding-top:12px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;",
 }
+
+
+def web_url(report: dict, base_url: str) -> str:
+    """網頁版這一天的網址；沒設 base_url 或標題沒有日期就是空字串。"""
+    date = next((b["date"] for b in report["blocks"] if b["type"] == "title" and b["date"]), "")
+    return f"{base_url}/reports/{date}" if base_url and date else ""
 
 
 def inline(nodes: list[dict]) -> str:
@@ -117,6 +124,9 @@ def render_report(report: dict, base_url: str = "") -> tuple[str, str, str]:
         body += [f'<li style="{S["src_li"]}"><a href="{html.escape(src["url"])}" style="{S["a"]}">'
                  f'{html.escape(src["title"])}</a></li>' for src in report["sources"]]
         body.append("</ol>")
+    if url := web_url(report, base_url):
+        body.append(f'<p style="{S["foot"]}"><a href="{html.escape(url)}" style="{S["a"]}">在網頁版閱讀</a>'
+                    f'（可搜尋歷史晨報、看回饋統計）</p>')
     # 預覽文字（preheader）：收件匣列表在主旨後面顯示的那一行，放今日頭條；本身不顯示
     preheader = (f'<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">'
                  f'{html.escape(report["headline"])}</div>')
@@ -139,7 +149,7 @@ def list_text(items: list[dict], depth: int = 0) -> list[str]:
     return out
 
 
-def render_text(report: dict) -> str:
+def render_text(report: dict, base_url: str = "") -> str:
     """純文字版：連結只留標題，網址集中在最後的資料來源；沒有回饋按鈕。"""
     lines: list[str] = []
     for block in report["blocks"]:
@@ -157,6 +167,8 @@ def render_text(report: dict) -> str:
     if report["sources"]:
         lines += ["", "【資料來源】", ""]
         lines += [f"{n}. {src['title']}\n   {src['url']}" for n, src in enumerate(report["sources"], 1)]
+    if url := web_url(report, base_url):
+        lines += ["", f"網頁版：{url}"]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip() + "\n"
 
 
@@ -209,8 +221,10 @@ def selftest() -> None:
         pass
 
     # 回饋連結：沒設 base_url 就沒有；有設的話每則主要新聞一組，按鈕在巢狀子項目之後、仍在最外層項目裡
-    assert "/feedback/" not in page
+    assert "/feedback/" not in page and "網頁版" not in page and "網頁版" not in text
     page, _, _ = render(md, "https://news.example.com")
+    assert 'href="https://news.example.com/reports/2026-09-28"' in page
+    assert "網頁版：https://news.example.com/reports/2026-09-28\n" in render_text(parse_report(md), "https://news.example.com")
     assert page.count("/feedback/") == 2 and page.count("<ul") == page.count("</ul>") == 3
     uid = "0123456789abcdef"
     assert f"https://news.example.com/feedback/{uid}?v=%2B" in page and f"/feedback/{uid}?v=-" in page
@@ -273,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     out, text_out = src.with_suffix(".html"), src.with_suffix(".txt")
     out.write_text(page, encoding="utf-8")
-    text_out.write_text(render_text(report), encoding="utf-8")
+    text_out.write_text(render_text(report, base_url), encoding="utf-8")
     print(json.dumps({"subject": f"每日晨間簡報 {stamp.replace('-', '/')} — {subject}",
                       "headline": headline, "html_path": str(out), "text_path": str(text_out)}, ensure_ascii=False))
     return 0
