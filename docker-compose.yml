@@ -1,9 +1,8 @@
 # 說明見 deploy/README.md。機密放 .env（chmod 600）。
 name: newsletter-ops
 
+# 同一個 Dockerfile 的兩個 target；兩個映像同一次建置、同一個 tag
 x-app: &app
-  build: .
-  image: ghcr.io/ponywen0819/newsletter-ops:${NEWSLETTER_TAG:-latest}
   restart: unless-stopped
   init: true
   volumes:
@@ -12,6 +11,8 @@ x-app: &app
 services:
   web:
     <<: *app
+    build: {context: ., target: web}
+    image: ghcr.io/ponywen0819/newsletter-ops-web:${NEWSLETTER_TAG:-latest}
     # 不要 publish 8787（會繞過 Access）；8788 只能綁 127.0.0.1（/auth 沒有登入）
     command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787", "--admin-port", "8788"]
     ports:
@@ -24,8 +25,9 @@ services:
 
   worker:
     <<: *app
-    # 每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run 不 publish，只在 be 網路
-    command: ["/app/apps/worker/.venv/bin/worker", "--port", "8790"]
+    build: {context: ., target: worker}
+    image: ghcr.io/ponywen0819/newsletter-ops-worker:${NEWSLETTER_TAG:-latest}
+    # 映像的 CMD 是 worker --port 8790：每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run 不 publish，只在 be 網路
     networks: [be]
     # 停止時要等執行中的步驟收尾、寫好紀錄
     stop_grace_period: 2m

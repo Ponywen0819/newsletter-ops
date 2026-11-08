@@ -164,13 +164,13 @@ collect 每天都會用搜尋補國際新聞的候選（`origin: "search"`），
 ### 5. 驗證報告格式並收尾
 
 ```bash
-cd ROOT && uv run --locked --project packages/shared newsletter-report-check
+cd ROOT && if command -v newsletter-report-check >/dev/null; then newsletter-report-check; else uv run --locked --project packages/shared newsletter-report-check; fi
 ```
 
 它讀當日 `reports/<date>.md`，格式正確就 exit 0。exit code 非 0 代表格式不符（例如缺 `subject` 或今日頭條）或找不到報告，
 原因印在 stderr，照訊息修正報告後重跑，直到通過。轉成 email 與寄出是呼叫端的事，這個 skill 不做。
 
-若 `config/config.json` 的 `debug` 為 `true`（或環境變數 `NEWSLETTER_DEBUG=1`），最後再跑：
+若 `config/config.json` 的 `debug` 為 `true`（或環境變數 `NEWSLETTER_DEBUG=1`），而且**不是**由 `newsletter-write` 呼叫（環境變數 `NEWSLETTER_RUNNER` 不是 `sdk`），最後再跑：
 
 ```bash
 cd ROOT && uv run --locked --project packages/shared newsletter-metrics claude
@@ -178,7 +178,7 @@ cd ROOT && uv run --locked --project packages/shared newsletter-metrics claude
 
 它從本 session 的紀錄統計 news-digest 開始至今的 token、API 回合數與各工具耗時，寫進 `logs/metrics/<date>.jsonl`。
 被排程呼叫時，把這步留給排程 prompt 在寄信之後執行，寄信的用量才會算進去。
-由 `newsletter-write` 呼叫時（環境變數 `NEWSLETTER_RUNNER=sdk`）這步會自動略過，用量由 writer 從 SDK 的結果記錄，含費用。
+由 `newsletter-write` 呼叫時不跑這步（容器裡也沒有 uv），用量由 writer 從 SDK 的結果記錄，含費用。
 使用者只是要測試時，指令前加 `NEWSLETTER_RUN_LABEL=test`（`newsletter-collect` 那步也要加）。`logs/metrics/` 的紀錄一律不刪。
 
 最後一則回覆只寫報告路徑與今日頭條，不要把整份報告貼進對話。寄信由呼叫端（排程 prompt）負責，這個 skill 不寄信。
