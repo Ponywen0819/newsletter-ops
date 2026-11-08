@@ -23,8 +23,8 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
 
 `docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是自動部署（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
 
-用 Podman 代替 Docker 也行（Debian 13 實測）：`apt install podman-docker docker-compose catatonit nftables`、`systemctl enable --now podman.socket podman-restart.service`，
-之後照常用 `docker compose`。`catatonit` 給 `init: true` 用，`nftables` 給 netavark 建網路用。
+用 Podman 代替 Docker 也行（Debian 13 實測）：`apt install podman-docker docker-compose catatonit nftables aardvark-dns`、`systemctl enable --now podman.socket podman-restart.service`，
+之後照常用 `docker compose`。`catatonit` 給 `init: true` 用，`nftables`、`aardvark-dns` 給 netavark 建網路與容器內 DNS 用。
 
 **1. 取得程式與機密**
 
