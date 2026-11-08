@@ -106,7 +106,8 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
 **6. 自動部署（GHCR）**
 
 `main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建兩個映像推到
-`ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 都是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
+`ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
+發行時在 `main` 打的 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`）也會建一次，映像 tag 是同名的 `v1.2.0` 與 `sha-<commit>`。
 host 上的 timer 每 10 分鐘拉一次，有新版才重建容器。
 
 ```bash
@@ -122,7 +123,7 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 
 - 每日流程正在跑時這輪會跳過。
 - 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
-- **退版**：`.env` 加 `NEWSLETTER_TAG=sha-<commit>`，然後 `docker compose up -d`；要回到自動跟新版就把那行刪掉。
+- **退版**：`.env` 加 `NEWSLETTER_TAG=v1.1.0`（或 `sha-<commit>`），然後 `docker compose up -d`；固定 tag 時 timer 只會拉同一個 tag，等於停止自動更新。要回到自動跟新版就把那行刪掉。
 - timer 只更新映像；`docker-compose.yml` 改了要自己 `git pull`。
 - **從單一映像換過來時**（舊的 `ghcr.io/ponywen0819/newsletter-ops`）：先 `git pull` 拿到新的 compose，再 `docker compose up -d`；
   確認兩個容器都 healthy 後，`docker image rm ghcr.io/ponywen0819/newsletter-ops:latest` 刪掉舊映像（不會自己刪）。
@@ -135,6 +136,8 @@ git switch --detach origin/main
 for t in web worker; do docker buildx build --platform linux/arm64 --target "$t" --push \
   -t "ghcr.io/ponywen0819/newsletter-ops-$t:latest" -t "ghcr.io/ponywen0819/newsletter-ops-$t:sha-$(git rev-parse HEAD)" . || break; done
 ```
+
+建版本號的映像時改成 `git switch --detach v1.2.0`，`:latest` 換成 `:v1.2.0`。
 
 **7. 資料保存：不保存**
 

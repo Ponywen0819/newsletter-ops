@@ -1,11 +1,11 @@
 name: release
 
-# main 的 selftest 通過後，建 web、worker 兩個映像推到 GHCR
+# main 或 v* tag 的 selftest 通過後，建 web、worker 兩個映像推到 GHCR：main 打 latest，tag 打同名版本號
 on:
   workflow_run:
     workflows: [selftest]
     types: [completed]
-    branches: [main]
+    branches: [main, 'v*']   # tag push 時 head_branch 是 tag 名稱
 
 permissions:
   contents: read
@@ -38,7 +38,7 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ env.IMAGE }}-${{ matrix.target }}:latest
+            ${{ env.IMAGE }}-${{ matrix.target }}:${{ github.event.workflow_run.head_branch == 'main' && 'latest' || github.event.workflow_run.head_branch }}
             ${{ env.IMAGE }}-${{ matrix.target }}:sha-${{ github.event.workflow_run.head_sha }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
