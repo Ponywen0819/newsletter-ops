@@ -133,6 +133,11 @@ feed 可以設 `skip`（正規表示式），標題或網址命中就不收。BB
 
 不論哪種方式併的，`also_in` 每多一家 rank +0.5、最多 +1.0：多家同時報導是重要性的訊號（arXiv 的跨類別不算）。
 
+### 差一點過門檻的候選（near_misses）
+
+配額沒滿的主題（週末的 tech-industry 常常 0、1 則），collect 另外附上沒過門檻但有一點分數的前 3 則（命中關鍵字的優先，arXiv 不附），放在 curated JSON 頂層的 `near_misses`。
+writer 依 `interests.md` 決定要不要寫進報告；寫了一樣帶 mark，沒寫不算漏（writer 的 uid 比對、回饋的標題查詢都認得它）。不記進 `seen.json`。
+
 ### feed 順序加分
 
 國際新聞沒有關鍵字可評分，排序原本只剩來源權重與新鮮度。編輯排過的 feed 可以設 `order_boost`：前 10 則依序加 rank（第一則加滿，往後線性遞減），只影響排序、不影響是否過門檻。

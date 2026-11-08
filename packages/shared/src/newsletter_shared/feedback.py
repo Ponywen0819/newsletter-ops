@@ -47,7 +47,7 @@ def load_curated_index(curated_dir: Path) -> dict[str, dict]:
         except json.JSONDecodeError:
             print(f"! 跳過損壞的 {path.name}", file=sys.stderr)
             continue
-        for item in payload.get("items", []):
+        for item in [*payload.get("near_misses", []), *payload.get("items", [])]:  # writer 可能撈回 near_misses
             index[item["uid"]] = item
     return index
 

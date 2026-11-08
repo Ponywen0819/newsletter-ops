@@ -286,6 +286,29 @@ def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
     return kept, dropped
 
 
+NEAR_MISS = 3  # 配額沒滿的主題，附幾則差一點過門檻的候選給 writer
+
+
+def near_misses(fresh: list[dict], ranked: list[dict], config: dict) -> list[dict]:
+    """配額沒滿的主題（週末的 tech-industry 常常 0、1 則），附上沒過門檻、但有一點分數的前幾則，讓 writer 決定要不要撈回來。
+    命中關鍵字的排前面，其次看 rank。arXiv 不附（量大，靠配額就夠）。不記進 seen：沒寫進報告的明天還能再出現。"""
+    quota, default_quota = config.get("quota", {}), config.get("default_quota", 5)
+    min_relevance = config.get("min_relevance", 1.0)
+    have: dict[str, int] = {}
+    for item in ranked:
+        have[item["topic"]] = have.get(item["topic"], 0) + 1
+    urls = {i["url"] for i in ranked}
+    pool = sorted((i for i in fresh if 0 < i["relevance"] < min_relevance and i["url"] not in urls
+                   and not i["source"].startswith("arXiv")),
+                  key=lambda i: (bool(i["matched_keywords"]), i["rank"]), reverse=True)
+    out: list[dict] = []
+    for item in pool:
+        topic = item["topic"]
+        if have.get(topic, 0) < quota.get(topic, default_quota) and sum(i["topic"] == topic for i in out) < NEAR_MISS:
+            out.append(item)
+    return out
+
+
 def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], dict]:
     """redo：同一天重跑時，上一次收錄的 uid。它們當作沒看過，否則第二次只剩第二梯隊，頭條全不見。"""
     seen = load_seen()
@@ -314,6 +337,7 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
         "after_dedupe_and_quota": len(ranked),
         "by_topic": {},
         "dropped_by_quota": dropped_by_quota,
+        "near_misses": near_misses(fresh, ranked, config),  # run.py 會搬到 curated JSON 的頂層
     }
     for item in ranked:
         stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1
@@ -395,6 +419,16 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert uids(first) == {"u3", "u2"}
     assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
     assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的：沒帶 redo 才會往下一梯隊走
+
+    # 差一點過門檻：配額沒滿的主題才附；命中關鍵字的優先；0 分與 arXiv 不附
+    def near(uid, topic, rel, rank, **kw):
+        return {"uid": uid, "url": uid, "topic": topic, "relevance": rel, "rank": rank,
+                "matched_keywords": kw.get("hits", []), "source": kw.get("source", "s")}
+    fresh = [near("n1", "tech", 0.5, 0.9), near("n2", "tech", 0.4, 0.5, hits=["ai chip"]), near("n3", "tech", 0.5, 0.4),
+             near("n4", "tech", 0.5, 0.3), near("z", "tech", 0.0, 2.0), near("ax", "tech", 0.5, 3.0, source="arXiv cs.LG"),
+             near("f1", "full", 0.5, 1.0), near("k", "full", 2.0, 1.0)]
+    got = near_misses(fresh, [fresh[-1]], {"min_relevance": 0.8, "quota": {"full": 1}, "default_quota": 5})
+    assert [i["uid"] for i in got] == ["n2", "n1", "n3"], [i["uid"] for i in got]
 
     # 寫入中斷：舊的 seen.json 要完好、不留暫存檔
     save_seen({"old": now})
