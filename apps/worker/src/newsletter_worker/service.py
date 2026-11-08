@@ -7,7 +7,7 @@
       uv run --project apps/worker worker --selftest
 
 要不要跑只看 state/last_run.json（run_pipeline 寫的，手動跑的也算）和 pipeline 的鎖：
-今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
+今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 從失敗的那步自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
 認證的驗證只看 auth_health.json 的時間：今天排定時間之後驗過（web 的 /auth 測試也算）就不再驗。
 """
 from __future__ import annotations
@@ -104,18 +104,20 @@ class Service:
             if self.current is not None or lock_held():
                 return None
             self.current = {"trigger": trigger, "started_at": daily.now_iso()}
-            self._worker = threading.Thread(target=self._work, args=(trigger,))
+            # 自動重跑從失敗的那步開始：send 沒寄出不必再花 token 重寫報告
+            first = daily.resume_from((daily.read_record() or {}).get("step")) if trigger == "retry" else "collect"
+            self._worker = threading.Thread(target=self._work, args=(trigger, first))
             self._worker.start()
             return self.current
 
-    def _work(self, trigger: str) -> None:
-        say(f"開始（{trigger}）")
+    def _work(self, trigger: str, first: str = "collect") -> None:
+        say(f"開始（{trigger}）" if first == "collect" else f"開始（{trigger}，從 {first} 起）")
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             path = self.log_dir / f"{datetime.now():%Y-%m}.log"  # 月份以開始時間為準
             with path.open("a+", encoding="utf-8") as log:
                 start = log.tell()
-                code = daily.run_pipeline([], log, trigger=trigger, stop=self.stop)
+                code = daily.run_pipeline([], log, trigger=trigger, stop=self.stop, start=first)
                 log.seek(start)
                 tail = log.read().splitlines()[-TAIL:]
             say(f"結束，exit {code}")

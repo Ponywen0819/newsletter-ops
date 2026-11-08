@@ -213,6 +213,18 @@ def _selftest_tick(tmp: Path) -> None:
         assert got["ok"] is False and got["kind"] == want, (fail, got)
     os.environ["FAKE_FAIL"] = ""
 
+    # 自動重跑：寄信失敗的話只重跑 render、send，不再呼叫 writer
+    long_ago = "2000-01-01T00:00:00+00:00"
+    daily.RECORD.write_text(json.dumps({"date": f"{datetime.now(TPE):%Y-%m-%d}", "trigger": "schedule",
+                                        "finished_at": long_ago, "exit_code": 1, "step": "send"}))
+    for name in daily.MODULES:
+        (tmp / name).unlink(missing_ok=True)
+    service.tick(datetime.now(timezone.utc))
+    service._worker.join(15)
+    rec = daily.read_record()
+    assert rec["trigger"] == "retry" and rec["exit_code"] == 0, rec
+    assert not (tmp / "collect").exists() and not (tmp / "write").exists() and (tmp / "send").exists()
+
 
 # 真的程序收 SIGTERM：子程序被終止、紀錄寫好、期限內離開
 SIGTERM_CHILD = """import sys
