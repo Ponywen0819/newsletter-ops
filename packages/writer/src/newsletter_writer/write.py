@@ -58,11 +58,13 @@ def check_format(root: Path, stamp: str) -> str | None:
 
 
 def coverage(root: Path, stamp: str) -> tuple[list[str], list[str]]:
-    """(curated 有但報告漏掉的 uid, 報告有但 curated 沒有的 uid)。漏掉的收不到回饋；只警告，不擋寄信。"""
-    items = json.loads((root / "data" / "curated" / f"{stamp}.json").read_text(encoding="utf-8"))["items"]
-    want = [i["uid"] for i in items]
+    """(curated 有但報告漏掉的 uid, 報告有但 curated 沒有的 uid)。漏掉的收不到回饋；只警告，不擋寄信。
+    near_misses 是選用的候選：寫了不算多出來，沒寫也不算漏。"""
+    payload = json.loads((root / "data" / "curated" / f"{stamp}.json").read_text(encoding="utf-8"))
+    want = [i["uid"] for i in payload["items"]]
+    optional = {i["uid"] for i in payload.get("near_misses", [])}
     got = uids_of(parse_report((root / "reports" / f"{stamp}.md").read_text(encoding="utf-8")))
-    return [u for u in want if u not in set(got)], sorted(set(got) - set(want))
+    return [u for u in want if u not in set(got)], sorted(set(got) - set(want) - optional)
 
 
 def judge(usage: runner.Usage, sdk_error: str | None, stamp: str, started: float) -> tuple[int, str, str | None]:
@@ -132,9 +134,9 @@ def selftest() -> None:
         report.write_text("> **今日頭條：** x\n<!-- subject: s -->\n")
         assert check_format(root, stamp) is None
         a, b, c = "a" * 16, "b" * 16, "c" * 16
-        curated.write_text(json.dumps({"items": [{"uid": a}, {"uid": b}]}))
+        curated.write_text(json.dumps({"items": [{"uid": a}, {"uid": b}], "near_misses": [{"uid": "d" * 16}]}))
         report.write_text(f"> **今日頭條：** x\n<!-- subject: s -->\n\n## 段\n\n- 一\n<!-- mark:    uid={a} -->\n"
-                          f"- 二\n<!-- mark:    uid={c} -->\n")
+                          f"- 二\n<!-- mark:    uid={c} -->\n- 三\n<!-- mark:    uid={'d' * 16} -->\n")
         assert coverage(root, stamp) == ([b], [c]), coverage(root, stamp)
     assert "WebSearch" not in TOOLS and "WebFetch" not in TOOLS  # 上網是 collect 的事
     selftest_main()

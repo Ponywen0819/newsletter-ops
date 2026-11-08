@@ -43,6 +43,8 @@ exit code 的意思：
 - `origin: "search"`：RSS 弱的主題由 collect 用搜尋補來的項目，`query` 是找到它的搜尋字串，`source` 是「搜尋：網域」。
   它已經過程式驗收（網址連得到、標題對得上、時間在窗內），和 RSS 的項目一視同仁。
 - 頂層的 `search`：`gaps` 是這次要補的主題、`accepted`／`rejected` 是收下與退回的則數、`error` 是搜尋失敗的原因（沒失敗是 null）。
+- 頂層的 `near_misses`：配額沒滿的主題裡，差一點過門檻的前幾則（欄位和 `items` 一樣）。**選用**：依 `interests.md` 判斷，
+  真的值得的才寫進對應段落（一樣帶它自己的 mark）；不值得的不用寫，也不要放進「其餘收錄」。
 
 `relevance` 是門檻分（來源保底 ＋ 關鍵字），`rank` 是排序分（relevance × 來源權重 ＋ 新鮮度）。
 `stats.dropped_by_quota` 顯示每個主題因配額被砍掉幾則——某主題被砍很多代表該主題當天內容豐富，

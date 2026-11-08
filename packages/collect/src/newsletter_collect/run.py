@@ -125,11 +125,14 @@ def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: 
             stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1
     enrich_mod.enrich(ranked, config)
 
+    near = stats.pop("near_misses")
+    stats["near_misses"] = len(near)
     payload = {
         "generated_at": datetime.now(ZoneInfo(config.get("timezone") or DEFAULT_TZ)).isoformat(),
         "stats": stats,
         "errors": errors,
         "search": search,
+        "near_misses": near,
         "config_digest": {k: config[k] for k in
                           ("lookback_hours", "min_relevance", "quota", "max_items_in_report")},
         "items": ranked,

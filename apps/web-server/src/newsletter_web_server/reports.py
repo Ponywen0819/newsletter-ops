@@ -122,7 +122,8 @@ class Reports:
             payload = json.loads((self.root / "data" / "curated" / f"{date}.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
-        return next((i for i in payload.get("items", []) if i.get("uid") == uid), {})
+        found = [*payload.get("items", []), *payload.get("near_misses", [])]  # writer 可能撈回 near_misses
+        return next((i for i in found if i.get("uid") == uid), {})
 
     def feedback_target(self, uid: str) -> dict:
         """email 連結的確認頁要顯示的資料。任何一份報告裡都沒有這個 uid ＝ NotFound。"""
