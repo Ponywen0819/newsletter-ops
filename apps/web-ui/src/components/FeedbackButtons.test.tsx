@@ -4,8 +4,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { mockFetch } from '../test/fetchMock'
 import { UID_A, UID_B } from '../test/fixtures'
 import type { Mark } from '../types'
+import { getQueue, resetQueue } from '../feedbackQueue'
 import { FeedbackButtons } from './FeedbackButtons'
 
+/** 送出的請求（不含連線探測的 heartbeat） */
+const sent = (net: ReturnType<typeof mockFetch>) => net.calls.filter((c) => c.path !== '/api/heartbeat')
 const up = () => screen.getByRole('button', { name: '有用' })
 const down = () => screen.getByRole('button', { name: '沒用' })
 
@@ -34,23 +37,23 @@ describe('FeedbackButtons', () => {
   it('沒標過 → 按「有用」送 +，畫面以伺服器回傳的為準', async () => {
     const { net, onChange } = setup('')
     await userEvent.click(up())
-    expect(net.calls).toHaveLength(1)
-    expect(net.calls[0]).toMatchObject({ method: 'POST', path: '/api/feedback', body: { uid: UID_A, mark: '+' } })
-    expect(net.calls[0]!.headers['Content-Type']).toBe('application/json')
+    expect(sent(net)).toHaveLength(1)
+    expect(sent(net)[0]).toMatchObject({ method: 'POST', path: '/api/feedback', body: { uid: UID_A, mark: '+' } })
+    expect(sent(net)[0]!.headers['Content-Type']).toBe('application/json')
     expect(onChange).toHaveBeenCalledWith(UID_A, '+')
   })
 
   it('按已亮起的那顆＝取消（送空字串）', async () => {
     const { net, onChange } = setup('+', () => ({ json: { uid: UID_A, mark: '' } }))
     await userEvent.click(up())
-    expect(net.calls[0]!.body).toEqual({ uid: UID_A, mark: '' })
+    expect(sent(net)[0]!.body).toEqual({ uid: UID_A, mark: '' })
     expect(onChange).toHaveBeenCalledWith(UID_A, '')
   })
 
   it('按另一顆＝覆蓋', async () => {
     const { net, onChange } = setup('+', () => ({ json: { uid: UID_A, mark: '-' } }))
     await userEvent.click(down())
-    expect(net.calls[0]!.body).toEqual({ uid: UID_A, mark: '-' })
+    expect(sent(net)[0]!.body).toEqual({ uid: UID_A, mark: '-' })
     expect(onChange).toHaveBeenCalledWith(UID_A, '-')
   })
 
@@ -90,7 +93,7 @@ describe('FeedbackButtons：一則掛多個 uid', () => {
     expect(screen.getAllByRole('button', { name: '有用' })).toHaveLength(1)
     await userEvent.click(up())
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2))
-    expect(net.calls.map((c) => c.body)).toEqual([
+    expect(sent(net).map((c) => c.body)).toEqual([
       { uid: UID_A, mark: '+' },
       { uid: UID_B, mark: '+' },
     ])
@@ -102,8 +105,8 @@ describe('FeedbackButtons：一則掛多個 uid', () => {
     const { net } = setupMulti({ [UID_A]: '+', [UID_B]: '+' })
     expect(up()).toHaveAttribute('aria-pressed', 'true')
     await userEvent.click(up())
-    await waitFor(() => expect(net.calls).toHaveLength(2))
-    expect(net.calls.map((c) => c.body)).toEqual([
+    await waitFor(() => expect(sent(net)).toHaveLength(2))
+    expect(sent(net).map((c) => c.body)).toEqual([
       { uid: UID_A, mark: '' },
       { uid: UID_B, mark: '' },
     ])
@@ -114,8 +117,8 @@ describe('FeedbackButtons：一則掛多個 uid', () => {
     expect(up()).toHaveAttribute('aria-pressed', 'false')
     expect(down()).toHaveAttribute('aria-pressed', 'false')
     await userEvent.click(up()) // 不是「取消」：A 本來就是 +，但 B 還沒有，所以兩篇都送 +
-    await waitFor(() => expect(net.calls).toHaveLength(2))
-    expect(net.calls.map((c) => c.body)).toEqual([
+    await waitFor(() => expect(sent(net)).toHaveLength(2))
+    expect(sent(net).map((c) => c.body)).toEqual([
       { uid: UID_A, mark: '+' },
       { uid: UID_B, mark: '+' },
     ])
@@ -126,8 +129,8 @@ describe('FeedbackButtons：一則掛多個 uid', () => {
     expect(up()).toHaveAttribute('aria-pressed', 'false')
     expect(down()).toHaveAttribute('aria-pressed', 'false')
     await userEvent.click(down())
-    await waitFor(() => expect(net.calls).toHaveLength(2))
-    expect(net.calls.map((c) => c.body)).toEqual([
+    await waitFor(() => expect(sent(net)).toHaveLength(2))
+    expect(sent(net).map((c) => c.body)).toEqual([
       { uid: UID_A, mark: '-' },
       { uid: UID_B, mark: '-' },
     ])
@@ -142,5 +145,22 @@ describe('FeedbackButtons：一則掛多個 uid', () => {
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith(UID_A, '+') // B 沒寫成，畫面不能假裝成功
     expect(up()).toBeEnabled()
+  })
+})
+
+describe('FeedbackButtons：離線時排隊', () => {
+  it('連不上：不送出，畫面立刻更新、標「待同步」，排進佇列', async () => {
+    localStorage.removeItem('feedback-queue')
+    resetQueue()
+    const net = mockFetch({ 'GET /api/heartbeat': () => ({ status: 502, json: {} }) })
+    const onChange = vi.fn()
+    render(<FeedbackButtons uids={[UID_A]} marks={{}} onChange={onChange} />)
+    await userEvent.click(up())
+    expect(sent(net)).toEqual([])
+    expect(onChange).toHaveBeenCalledWith(UID_A, '+')
+    expect(await screen.findByText('待同步')).toBeInTheDocument()
+    expect(getQueue()[UID_A]).toMatchObject({ mark: '+', before: '' })
+    localStorage.removeItem('feedback-queue')
+    resetQueue()
   })
 })

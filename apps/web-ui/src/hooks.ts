@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { getRecoveries, getStatus, subscribe, type Status } from './connectivity'
+import { flush } from './feedbackQueue'
 import { adoptBackgroundRecord, sync } from './sync'
 
 export interface Fetched<T> {
@@ -51,7 +52,7 @@ export function useOfflineSync(): void {
     void adoptBackgroundRecord() // 背景同步過的紀錄先搬進來，離線橫幅才說得出副本的新舊
   }, [])
   useEffect(() => {
-    void sync(true)
+    void flush().finally(() => void sync(true)) // 先補送離線時的標記，副本才會拿到最新的 marks
   }, [recovered])
   useEffect(() => {
     const onVisible = () => document.visibilityState === 'visible' && void sync()

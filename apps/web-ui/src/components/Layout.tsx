@@ -1,9 +1,11 @@
+import { useSyncExternalStore } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import type { Status } from '../connectivity'
 import { useAuthHealth } from '../authHealth'
 import { useConnectivity } from '../hooks'
 import { useSession } from '../session'
 import { lastSync, type SyncRecord } from '../sync'
+import { clearNotice, getNotice, subscribeQueue } from '../feedbackQueue'
 import type { AuthHealth } from '../types'
 import { ThemeSelect } from './ThemeSelect'
 
@@ -62,6 +64,7 @@ function AuthBar({ local }: { local: boolean }) {
 export function Layout({ variant }: { variant: 'reader' | 'single' }) {
   const session = useSession()
   const connectivity = useConnectivity()
+  const notice = useSyncExternalStore(subscribeQueue, getNotice) // 補送離線標記時的衝突、放棄
   return (
     <div data-layout={variant}>
       <header>
@@ -80,6 +83,14 @@ export function Layout({ variant }: { variant: 'reader' | 'single' }) {
       <div className="offline-bar" role="status">
         {connectivity !== 'ok' && BANNER[connectivity]}
         {(connectivity === 'offline' || connectivity === 'unreachable') && copyNote(lastSync())}
+        {connectivity === 'ok' && notice && (
+          <>
+            {notice}
+            <button type="button" onClick={clearNotice}>
+              知道了
+            </button>
+          </>
+        )}
         {connectivity === 'login' && (
           <button type="button" onClick={() => location.reload()}>
             重新登入
