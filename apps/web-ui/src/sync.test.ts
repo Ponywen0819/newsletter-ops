@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { KEEP, resetSync, sync } from './sync'
+import { KEEP, lastSync, resetSync, sync } from './sync'
 import { mockFetch } from './test/fetchMock'
 
 /** 假的 Cache Storage：一個 cache，path → 內容。 */
@@ -22,7 +22,10 @@ const routesFor = (all: string[]) => ({
   ...Object.fromEntries(all.map((d) => [`GET /api/reports/${d}`, () => ({ json: { date: d } })])),
 })
 
-beforeEach(() => resetSync())
+beforeEach(() => {
+  resetSync()
+  localStorage.removeItem('offline-sync')
+})
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -73,6 +76,44 @@ describe('sync（離線副本）', () => {
     expect(await sync(true)).toBe(false)
     expect(net.calls.map((c) => c.path)).toEqual(['/api/heartbeat'])
     expect(open).not.toHaveBeenCalled()
+  })
+
+  it('記下同步時間與份數；沒更新到的另外算', async () => {
+    const all = dates(3)
+    stubCaches({ [`/api/reports/${all[1]}`]: { date: 'old' } })
+    mockFetch({ ...routesFor(all), [`GET /api/reports/${all[1]}`]: () => ({ status: 500, json: {} }), [`GET /api/reports/${all[2]}`]: () => ({ status: 500, json: {} }) })
+    const before = Date.now()
+    await sync(true)
+    const rec = lastSync()
+    expect(rec && rec.at >= before).toBe(true)
+    expect(rec).toMatchObject({ count: 2, failed: 2 }) // 一份新存的＋一份留著舊版；兩份沒更新到
+  })
+
+  it('一份都沒寫入、或列表失敗：不算同步過', async () => {
+    stubCaches()
+    mockFetch({ ...routesFor(dates(1)), [`GET /api/reports/${dates(1)[0]}`]: () => ({ status: 500, json: {} }) })
+    await sync(true)
+    expect(lastSync()).toBeNull()
+    mockFetch({ 'GET /api/reports': () => ({ status: 502, json: {} }) })
+    await sync(true)
+    expect(lastSync()).toBeNull()
+  })
+
+  it('沒有晨報也算同步過（共 0 份）', async () => {
+    stubCaches()
+    mockFetch(routesFor([]))
+    await sync(true)
+    expect(lastSync()).toMatchObject({ count: 0, failed: 0 })
+  })
+
+  it('localStorage 不能用：同步照常，紀錄讀不到', async () => {
+    stubCaches()
+    mockFetch(routesFor(dates(1)))
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    expect(await sync(true)).toBe(true)
+    expect(lastSync()).toBeNull()
   })
 
   it('沒有 Cache API：什麼都不做', async () => {

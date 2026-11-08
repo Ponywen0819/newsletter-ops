@@ -34,6 +34,8 @@ npm run typecheck
 - **離線副本**（`src/sync.ts`）：線上時頁面把今日、歷史列表與**最近 30 份**晨報存進 `api` cache，不必先開過；沒網路或連不上伺服器時讀這份副本，標頭下方出現「離線中」或「連不上伺服器」。
   更舊的日期離線時顯示「讀取失敗」（開過的也會在下次同步時清掉）。同步時機：App 啟動、恢復連線（一定同步）、回到前景（距上次成功超過 10 分鐘才同步）；同時只跑一次，每次全量重抓（約 1＋1＋30 個請求）。
   只存沒被轉址的 200（`redirect: 'manual'`，Access 逾時的登入頁進不來）；列表失敗就整輪放棄、保留舊副本，單份失敗只保留那份的舊版；成功後清掉不在最近 30 份裡的。連不上或登入逾時時不同步。
+  離線或連不上時橫幅寫出副本的新舊：「離線中，顯示的是 10/05 08:12 同步的副本（共 30 份）」，這次沒更新到的另外標「N 份沒更新到」。
+  時間與份數存在 `localStorage`（`offline-sync`，關掉 App 再離線開也看得到）；「同步過」＝列表成功而且至少寫入一份。從沒同步過或讀不到紀錄時，退回「顯示的是上次載入的內容」。
 - **離線**：有網路時永遠先拿最新的（標記狀態、新產出的晨報不會被舊快取蓋住）。離線時按「有用／沒用」會顯示「儲存失敗」，不會排隊補送。
 - **連線偵測**（`GET /api/heartbeat`，`src/connectivity.ts`）：回 `200 {"ok": true}`、`Cache-Control: no-store`，不讀檔、不寫入。前端用它判斷四種狀態，橫幅與資料請求都看同一份結果：
 
@@ -61,7 +63,7 @@ npm run typecheck
 - PWA 的檔案（`manifest.webmanifest`、`sw.js`、圖示）也在 Access 後面，不要為了安裝方便而對它們開 bypass。
 
 **測試**：`npm test` 的 `pwa.test.ts` 會建置到暫存目錄（不動 `dist/`），檢查 manifest 欄位、`crossorigin`、沒有行內 script、service worker 的路由範圍與順序、cache 名稱與保險逾時；
-`sync.test.ts`（離線副本：存哪些、清掉多的、失敗保留舊的、連不上與登入逾時不同步、間隔）、`connectivity.test.ts`（判定、逾時、重用、事件、恢復計數）、`api.test.ts`（連不上讀快取、登入逾時不讀、不相關的請求不受影響）、`Layout.test.tsx`（橫幅）鎖住連線偵測；
+`sync.test.ts`（離線副本：存哪些、清掉多的、失敗保留舊的、連不上與登入逾時不同步、間隔、同步紀錄）、`connectivity.test.ts`（判定、逾時、重用、事件、恢復計數）、`api.test.ts`（連不上讀快取、登入逾時不讀、不相關的請求不受影響）、`Layout.test.tsx`（橫幅，含副本的同步時間與份數）鎖住連線偵測；
 後端 `uv run --project apps/web-server newsletter-web --selftest` 檢查 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`，以及 heartbeat 的回應、`no-store`、不寫入任何檔案。
 
 **正式站驗收**（Docker 與 systemd 兩種部署共用，部署步驟見 [deploy/README.md](../../deploy/README.md)；Access 的行為只有在真實網域上測得到）
