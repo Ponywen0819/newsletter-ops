@@ -133,6 +133,11 @@ feed 可以設 `skip`（正規表示式），標題或網址命中就不收。BB
 
 不論哪種方式併的，`also_in` 每多一家 rank +0.5、最多 +1.0：多家同時報導是重要性的訊號（arXiv 的跨類別不算）。
 
+### 停更的 feed
+
+第三方 feed（例如 Anthropic News 用的社群 feed）停更時不會報錯，只會不再有新東西。抓得到、但最新一則超過 21 天（來源可設 `stale_days`）的，
+會在 curated 的 `errors` 多一句「最新一則是 N 天前，feed 可能停更」，writer 照例寫進「本期備註」。
+
 ### 差一點過門檻的候選（near_misses）
 
 配額沒滿的主題（週末的 tech-industry 常常 0、1 則），collect 另外附上沒過門檻但有一點分數的前 3 則（命中關鍵字的優先，arXiv 不附），放在 curated JSON 頂層的 `near_misses`。
