@@ -81,7 +81,7 @@ export type AuthStatus =
       days_left: number
     }
 
-/** 後端定時驗證的最近結果（GET /api/auth-health，所有人都讀得到，所以不含驗證訊息） */
+/** 最近一次驗證的結果（GET /api/auth-health，所有人都讀得到，所以不含驗證訊息） */
 export interface AuthHealth {
   /** state 的意思見 apps/web-server/README.md */
   state: 'ok' | 'expiring' | 'missing' | 'invalid' | 'unknown'

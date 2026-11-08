@@ -70,6 +70,7 @@ reports/<date>.html            email 版（newsletter-render 產生）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
+state/auth_health.json         最近一次 Claude 認證驗證的結果（worker 每天寫、web 讀來顯示橫幅）
 state/last_run.json            上次每日流程的開始、結束與 exit code（worker 據此判斷今天跑過沒）
 state/pipeline.lock            每日流程的防重疊鎖（空檔，只是鎖的載體）
 logs/<YYYY-MM>.log             排程執行紀錄
@@ -137,7 +138,7 @@ uv run --project packages/shared newsletter-feedback            # 收集報告�
 每天 08:00（`NEWSLETTER_RUN_AT` 可改）跑一次，輸出進 `logs/<YYYY-MM>.log`；停機錯過了，啟動後補跑（同一天內；失敗的不重跑，要重跑用 `POST /run`）。
 手動的 `worker --once` 和它進同一個 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/worker/README.md](apps/worker/README.md)，所以混用是安全的。
 
-**規劃中**：認證的定時驗證從 web 搬到 worker 見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。
+每天 07:30（`NEWSLETTER_AUTH_CHECK_AT` 可改）worker 也會驗一次 Claude 認證，結果寫進 `state/auth_health.json`；失效的話網頁在晨報跑之前就會出現橫幅。
 
 ## 讓它跟著你的研究重心走
 

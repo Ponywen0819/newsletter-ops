@@ -47,7 +47,7 @@ Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`�
 ## 排程服務
 
 ```bash
-npx nx run worker:start                  # 0.0.0.0:8790（--port／NEWSLETTER_WORKER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00
+npx nx run worker:start                  # 0.0.0.0:8790（--port／NEWSLETTER_WORKER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00；認證驗證 NEWSLETTER_AUTH_CHECK_AT，預設 07:30
 npx nx run worker:start --port 9000      # 參數直接接在後面
 ```
 
@@ -60,6 +60,11 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 | 已過 | 跑完了（不論成敗） | — | 等明天；失敗要重跑用 `POST /run` |
 | 已過 | 開始了沒結束 | 空 | 上次被打斷，重跑 |
 | 已過 | 任何 | 被握著 | 別條正在跑，下次再看 |
+
+**認證驗證**：同一個時鐘，每天 `NEWSLETTER_AUTH_CHECK_AT`（預設 07:30）跑一次 `newsletter-llm --auth-check`（一次極小的 Claude 呼叫），
+結果 `{ok, kind, at}` 原子寫入 `state/auth_health.json`，web 的 `/api/auth-health` 讀它（[web-server/README.md](../web-server/README.md)）。
+要不要驗只看這個檔的 `at`：今天排定時間之後驗過就不再驗（web 的 `/auth` 測試、貼上 token 也會寫它，算數）；啟動時已過時間又還沒驗過就補一次。
+和 pipeline 同一輪到期時先驗再跑。寫報告以 exit 5（授權失敗）／6（額度用完）結束時也順手寫進這個檔，不另外驗。不握 pipeline 的鎖。
 
 | 介面 | 回應 |
 | --- | --- |

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """排程服務：每天 NEWSLETTER_RUN_AT 跑一次 run_pipeline，啟動時補跑今天錯過的；GET /status、POST /run 只給 compose 內網。
+另外每天 NEWSLETTER_AUTH_CHECK_AT 驗一次 Claude 認證，結果寫 state/auth_health.json 給 web 顯示。
 
 用法：uv run --project apps/worker worker [--host 0.0.0.0] [--port 8790]
       uv run --project apps/worker worker --once [newsletter-collect 的參數，如 --lookback 72]
@@ -7,6 +8,7 @@
 
 要不要跑只看 state/last_run.json（run_pipeline 寫的，手動跑的也算）和 pipeline 的鎖：
 今天跑完了（不論成敗）就等明天；失敗不自動重跑，要重跑用 POST /run。
+認證的驗證只看 auth_health.json 的時間：今天排定時間之後驗過（web 的 /auth 測試也算）就不再驗。
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT, lock
+from newsletter_shared import ROOT, auth_health, lock
 
 from . import daily
 
@@ -31,6 +33,7 @@ CATCHUP_AFTER = timedelta(minutes=5)  # 晚於排定時間這麼久才開始＝�
 TICK = 30  # 秒；每次醒來重讀牆上時鐘，不怕主機睡眠、校時
 TAIL = 20  # 失敗時印出本次 log 的最後幾行
 HHMM_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
+AUTH_EXIT = {5: "auth", 6: "quota"}  # newsletter-write 的授權失敗／額度用完（其他步驟不用 5、6）
 
 
 def parse_hhmm(value: str) -> time:
@@ -59,6 +62,13 @@ def due(now: datetime, record: dict | None, lock_held: bool, at: time, tz: ZoneI
     return "catchup" if local - scheduled > CATCHUP_AFTER else "schedule"
 
 
+def check_due(now: datetime, last: dict | None, at: time, tz: ZoneInfo) -> bool:
+    """今天排定時間到了、而且那之後還沒驗過。last 是 auth_health.read() 的結果。"""
+    local = now.astimezone(tz)
+    scheduled = datetime.combine(local.date(), at, tz)
+    return local >= scheduled and (last is None or last["at"] < scheduled)
+
+
 def lock_held() -> bool:
     try:
         with lock.locked(daily.LOCK, timeout=0):
@@ -72,8 +82,11 @@ def say(message: str) -> None:
 
 
 class Service:
-    def __init__(self, at: time, tz: ZoneInfo, log_dir: Path = ROOT / "logs"):
-        self.at, self.tz, self.log_dir = at, tz, log_dir
+    def __init__(self, at: time, tz: ZoneInfo, check_at: time, log_dir: Path = ROOT / "logs",
+                 health: Path | None = None):
+        self.at, self.tz, self.check_at, self.log_dir = at, tz, check_at, log_dir
+        self.health = health or auth_health.health_path()
+        self.checker = auth_health.run_check
         self.stop = threading.Event()
         self.current: dict | None = None  # {trigger, started_at}
         self._mu = threading.Lock()
@@ -100,6 +113,8 @@ class Service:
                 log.seek(start)
                 tail = log.read().splitlines()[-TAIL:]
             say(f"結束，exit {code}")
+            if code in AUTH_EXIT:
+                auth_health.write(False, AUTH_EXIT[code], self.health)
             if code not in (0, daily.EXIT_BUSY):
                 print("\n".join(tail), flush=True)
         finally:
@@ -112,7 +127,14 @@ class Service:
         return {"state": "running" if current else "idle", "next_run_at": nxt.isoformat(),
                 "current": current, "last": daily.read_record()}
 
+    def check_auth(self) -> None:
+        result = self.checker()
+        auth_health.write(bool(result.get("ok")), str(result.get("kind", "other")), self.health)
+        say(f"認證驗證：{result.get('kind')}")
+
     def tick(self, now: datetime) -> None:
+        if check_due(now, auth_health.read(self.health), self.check_at, self.tz):
+            self.check_auth()  # 同步跑：同一輪要開始的 pipeline 排在它後面
         if self.current is None and (action := due(now, daily.read_record(), lock_held(), self.at, self.tz)) not in (None, "busy"):
             self.start(action)
 
@@ -184,12 +206,14 @@ def main(argv: list[str] | None = None) -> int:
         return daily.run_pipeline(rest, sys.stderr)
     if rest:
         ap.error(f"不認得的參數：{' '.join(rest)}（只有 --once 會把參數轉給 newsletter-collect）")
-    try:
-        at = parse_hhmm(os.environ.get("NEWSLETTER_RUN_AT", "08:00"))
-    except ValueError as exc:
-        print(f"[worker] NEWSLETTER_RUN_AT {exc}", file=sys.stderr)
-        return 2
-    service = Service(at, daily.tz())
+    times = {}
+    for name, default in (("NEWSLETTER_RUN_AT", "08:00"), ("NEWSLETTER_AUTH_CHECK_AT", "07:30")):
+        try:
+            times[name] = parse_hhmm(os.environ.get(name, default))
+        except ValueError as exc:
+            print(f"[worker] {name} {exc}", file=sys.stderr)
+            return 2
+    service = Service(times["NEWSLETTER_RUN_AT"], daily.tz(), times["NEWSLETTER_AUTH_CHECK_AT"])
     server = make_server(service, args.host, args.port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     for sig in (signal.SIGTERM, signal.SIGINT):

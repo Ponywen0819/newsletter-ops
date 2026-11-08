@@ -11,6 +11,7 @@ src/newsletter_shared/
   feedback.py            回饋標記格式、從報告收集人工標記（newsletter-feedback）
   metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量（newsletter-metrics）
   auth_store.py          OAuth token 的儲存與來源解析，llm 與 web 共用
+  auth_health.py         最近一次認證驗證的結果（state/auth_health.json）與驗證子程序，worker 與 web 共用
 ```
 
 ## 檔案鎖（`lock.py`）
@@ -37,6 +38,7 @@ with lock.locked(path, timeout=0):    # 搶不到就丟 lock.LockBusy；給「�
   | --- | --- | --- |
   | `state/feedback.jsonl` | web、`newsletter-feedback` | `locked`（讀＋append） |
   | `state/oauth_token.json` | web（存／刪）、llm（讀） | `locked`（存／刪）；讀不鎖，靠原子替換 |
+  | `state/auth_health.json` | worker、web（寫）、web（讀） | 沒有（整檔原子替換，最後寫的算數） |
   | `state/seen.json` | `newsletter-collect` | 沒有（只有一個寫入者，原子寫入） |
 
 ```bash

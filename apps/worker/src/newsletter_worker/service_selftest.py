@@ -14,13 +14,22 @@ from datetime import datetime, time, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from newsletter_shared import lock
+from newsletter_shared import auth_health, lock
 
 from . import daily
-from .service import Service, due, make_server, next_run_at, parse_hhmm
+from .service import Service, check_due, due, make_server, next_run_at, parse_hhmm
 
 TPE = ZoneInfo("Asia/Taipei")
 AT = time(8, 0)
+CHECK_AT = time(7, 30)
+
+
+def service_for(tmp: Path, at: time, check_at: time = CHECK_AT) -> Service:
+    """假的認證驗證：記下呼叫次數，不跑子程序。"""
+    service = Service(at, TPE, check_at, tmp / "logs", tmp / "state" / "auth_health.json")
+    service.checks = []  # type: ignore[attr-defined]
+    service.checker = lambda: service.checks.append(1) or {"ok": True, "kind": "ok", "message": ""}  # type: ignore[attr-defined]
+    return service
 
 
 def tpe(s: str) -> datetime:
@@ -30,6 +39,7 @@ def tpe(s: str) -> datetime:
 def selftest() -> None:
     _selftest_clock()
     _selftest_due()
+    _selftest_check_due()
     with tempfile.TemporaryDirectory() as d, daily.fake_steps(Path(d)):
         _selftest_http(Path(d))
         _selftest_tick(Path(d))
@@ -82,6 +92,20 @@ def _selftest_due() -> None:
     assert due(datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc), None, False, AT, TPE) is None
 
 
+def _selftest_check_due() -> None:
+    def last(s: str) -> dict:
+        return {"ok": True, "kind": "ok", "at": tpe(s)}
+
+    assert not check_due(tpe("2026-11-03T07:29"), None, CHECK_AT, TPE)
+    assert check_due(tpe("2026-11-03T07:30"), None, CHECK_AT, TPE)
+    assert check_due(tpe("2026-11-03T09:00"), last("2026-11-02T07:30"), CHECK_AT, TPE)  # 昨天驗的：啟動晚了也補一次
+    assert check_due(tpe("2026-11-03T09:00"), last("2026-11-03T07:00"), CHECK_AT, TPE)  # 今天排定時間之前驗的不算
+    assert not check_due(tpe("2026-11-03T09:00"), last("2026-11-03T07:30"), CHECK_AT, TPE)
+    assert not check_due(tpe("2026-11-03T09:00"), last("2026-11-03T08:15"), CHECK_AT, TPE)  # web 的 /auth 測試也算
+    utc = datetime(2026, 11, 2, 23, 30, tzinfo=timezone.utc)  # 台北 11/3 07:30
+    assert check_due(utc, last("2026-11-02T07:30"), CHECK_AT, TPE)
+
+
 def _wait(cond, seconds: float = 15) -> None:
     deadline = clock.monotonic() + seconds
     while not cond():
@@ -90,7 +114,7 @@ def _wait(cond, seconds: float = 15) -> None:
 
 
 def _selftest_http(tmp: Path) -> None:
-    service = Service(AT, TPE, tmp / "logs")
+    service = service_for(tmp, AT)
     server = make_server(service, "127.0.0.1", 0, quiet=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -158,22 +182,35 @@ def _selftest_http(tmp: Path) -> None:
 
 def _selftest_tick(tmp: Path) -> None:
     # 今天的紀錄開始了沒結束、鎖空著（被打斷）：tick 重跑；跑完之後同一天不再跑
-    service = Service(time(0, 0), TPE, tmp / "logs")
+    # 認證的驗證排在同一輪的 pipeline 前面，結果寫進 auth_health.json；同一天不再驗
+    service = service_for(tmp, time(0, 0), time(0, 0))
     daily.RECORD.write_text(json.dumps({"date": f"{datetime.now(TPE):%Y-%m-%d}", "finished_at": None}))
     service.tick(datetime.now(timezone.utc))
     worker = service._worker
     assert service.current is not None and worker is not None
+    assert service.checks == [1] and auth_health.read(service.health)["kind"] == "ok"  # type: ignore[attr-defined]
     worker.join(15)
     rec = daily.read_record()
     assert rec["exit_code"] == 0 and rec["trigger"] in ("catchup", "schedule"), rec
     service.tick(datetime.now(timezone.utc))
-    assert service.current is None
+    assert service.current is None and service.checks == [1]  # type: ignore[attr-defined]
+
+    # 寫報告授權失敗（exit 5）／額度用完（6）：順手更新驗證結果；其他失敗不動它
+    for fail, want in (("write:5", "auth"), ("write:6", "quota"), ("collect:3", "quota")):
+        os.environ["FAKE_FAIL"] = fail
+        daily.RECORD.unlink()
+        service.tick(datetime.now(timezone.utc))
+        service._worker.join(15)
+        got = auth_health.read(service.health)
+        assert got["ok"] is False and got["kind"] == want, (fail, got)
+    os.environ["FAKE_FAIL"] = ""
 
 
 # 真的程序收 SIGTERM：子程序被終止、紀錄寫好、期限內離開
 SIGTERM_CHILD = """import sys
 from pathlib import Path
 from newsletter_worker import daily, service
+service.auth_health.run_check = lambda: {"ok": True, "kind": "ok", "message": ""}  # 不跑真的驗證
 with daily.fake_steps(Path(sys.argv[1])):
     import os
     os.environ.update(FAKE_FAIL="write:hang", NEWSLETTER_RUN_AT="00:00")
