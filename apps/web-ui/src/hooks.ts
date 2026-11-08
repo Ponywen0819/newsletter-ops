@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { getRecoveries, getStatus, subscribe, type Status } from './connectivity'
+import { sync } from './sync'
 
 export interface Fetched<T> {
   data?: T
@@ -41,4 +42,17 @@ export function useConnectivity(): Status {
 /** 從連不上／離線／登入逾時恢復的次數。放進 useFetch 的 deps，恢復後畫面會自己換成最新資料；一直正常時不會變。 */
 export function useRecovered(): number {
   return useSyncExternalStore(subscribe, getRecoveries, () => 0)
+}
+
+/** 離線副本的同步時機（sync.ts）：啟動、恢復連線時一定同步；回到前景時隔一段時間才同步。 */
+export function useOfflineSync(): void {
+  const recovered = useRecovered()
+  useEffect(() => {
+    void sync(true)
+  }, [recovered])
+  useEffect(() => {
+    const onVisible = () => document.visibilityState === 'visible' && void sync()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
 }
