@@ -58,6 +58,16 @@ class Reports:
         shown = set(report_data.uids_of(report))
         return {"date": date, "report": report, "marks": {u: m for u, m in self.marks().items() if u in shown}}
 
+    def run_record(self, date: str) -> dict | None:
+        """worker 寫的 state/last_run.json，只回當天的；沒有或壞掉是 None。"""
+        try:
+            rec = json.loads((self.root / "state" / "last_run.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(rec, dict) or rec.get("date") != date:
+            return None
+        return {k: rec.get(k) for k in ("trigger", "started_at", "finished_at", "exit_code", "step")}
+
     def today_payload(self) -> dict:
         date = self.today()
         latest = self.report_dates()
@@ -65,7 +75,7 @@ class Reports:
             payload = self.report_payload(date)
         except NotFound:
             payload = {"date": date, "report": None, "marks": {}}
-        return {**payload, "latest": latest[0] if latest else None}
+        return {**payload, "latest": latest[0] if latest else None, "run": self.run_record(date)}
 
     def list_payload(self) -> dict:
         rows = []

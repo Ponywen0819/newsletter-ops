@@ -54,7 +54,7 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | --- | --- | --- |
 | `GET /api/session` | `{local}` | 是否從本機來（決定要不要顯示「Claude 授權」） |
 | `GET /api/heartbeat` | `{ok}` | 連線偵測，不讀檔、不寫入（見 [ui/README.md](../web-ui/README.md)「PWA」） |
-| `GET /api/today` | `{date, latest, report, marks}` | 當日晨報；還沒產出時 `report` 是 null |
+| `GET /api/today` | `{date, latest, report, marks, run}` | 當日晨報；還沒產出時 `report` 是 null。`run` 是當天的 `state/last_run.json`（`trigger, started_at, finished_at, exit_code, step`），今天還沒跑是 null |
 | `GET /api/reports` | `{reports: [{date, headline}]}` | 歷史列表，新到舊 |
 | `GET /api/reports/<date>` | `{date, report, marks}` | `report` 是 `report_data.parse_report()` 的結構 |
 | `GET /api/feedback/<uid>` | `{uid, date, title, mark}` | email 確認頁用，只讀 |
