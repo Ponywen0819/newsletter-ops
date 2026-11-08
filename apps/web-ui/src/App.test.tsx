@@ -62,6 +62,18 @@ describe('路由', () => {
     expect(today.getAllByRole('link').map((a) => a.textContent)).toEqual(['← 前一份 2026-09-27'])
     cleanup()
 
+    // [ ／ ] 換到前一份／下一份
+    open('/reports/2026-09-28', {
+      'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {}, prev: '2026-09-27', next: null } }),
+      'GET /api/reports/2026-09-27': () => ({ json: { date: '2026-09-27', report, marks: {}, prev: null, next: '2026-09-28' } }),
+    })
+    await screen.findByRole('navigation', { name: '前後的晨報' })
+    await userEvent.keyboard(']') // 沒有下一份：不動
+    expect(document.title).toBe('每日晨間簡報 2026-09-28')
+    await userEvent.keyboard('[[') // user-event 裡 [ 要寫兩個
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-27'))
+    cleanup()
+
     open('/reports/2026-09-28', { 'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {} } }) }) // 舊副本沒有這兩欄
     await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })
     expect(screen.queryByRole('navigation', { name: '前後的晨報' })).toBeNull()
