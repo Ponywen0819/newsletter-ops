@@ -302,7 +302,7 @@ def _selftest_run_auth_check(secret: str) -> None:
     assert res == {"ok": False, "kind": "auth", "message": "bad ***"}, res
     cmd, kw = calls[0]
     assert secret not in " ".join(cmd) and "--auth-check" in cmd and "--token-from-env" in cmd
-    assert cmd[1:3] == ["-m", "newsletter_agent.agent_run"] and kw["cwd"] == ROOT, cmd
+    assert cmd[1:3] == ["-m", "newsletter_llm.runner"] and kw["cwd"] == ROOT, cmd
     assert kw["env"][auth_store.TOKEN_ENV] == secret and kw["timeout"] == CHECK_TIMEOUT and kw["stdin"] == sp.DEVNULL
     run, _ = fake_run('{"ok": true, "kind": "ok", "message": "驗證通過", "source": "env-token"}\n')
     with mock.patch.object(sp, "run", run):

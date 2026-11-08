@@ -1,0 +1,21 @@
+[project]
+name = "newsletter-collect"
+version = "0.1.0"
+description = "newsletter-ops 的蒐集：RSS／Atom／arXiv 抓取 → 整理評分 → LLM 補 RSS 弱的主題 → 補原文，產出 curated JSON"
+requires-python = ">=3.10"
+# 抓取與整理是純標準庫；只有 search 經由 llm 用到 Claude。這個套件不得依賴 writer、notify 或 apps/（deploy/check_boundaries.py 會檢查）。
+dependencies = [
+    "newsletter-llm",
+    "newsletter-shared",
+]
+
+[project.scripts]
+newsletter-collect = "newsletter_collect.run:main"
+
+[tool.uv.sources]
+newsletter-llm = { path = "../../packages/llm", editable = true }
+newsletter-shared = { path = "../../packages/shared", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12"]
+build-backend = "uv_build"

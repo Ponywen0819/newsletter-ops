@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""入口：uv run --project packages/agent newsletter-fetch [--dry-run] [--no-report] [--lookback 48] [--list-sources]"""
+"""入口：uv run --project packages/collect newsletter-collect [--dry-run] [--no-search] [--lookback 48] [--list-sources]
+
+抓取 → 整理 → 搜尋補 RSS 弱的主題 → 補原文，寫 data/curated/<date>.json。
+exit code：0 成功／2 來源設定有誤／3 一則都沒抓到。搜尋與補原文失敗只警告。
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,10 +14,11 @@ from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from newsletter_agent import curate as curate_mod
-from newsletter_agent import fetch as fetch_mod
-from newsletter_agent import report as report_mod
-from newsletter_agent import sources as sources_mod
+from newsletter_collect import curate as curate_mod
+from newsletter_collect import enrich as enrich_mod
+from newsletter_collect import fetch as fetch_mod
+from newsletter_collect import search as search_mod
+from newsletter_collect import sources as sources_mod
 from newsletter_shared import metrics
 from newsletter_shared import ROOT
 
@@ -71,7 +76,8 @@ def append_raw(raw: list[dict], stamp: str) -> None:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def write_curated(raw: list[dict], errors: list, config: dict, tz: ZoneInfo, stamp: str) -> tuple[list[dict], dict]:
+def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: bool) -> None:
+    """整理 → 搜尋 → 補原文，寫 data/curated/<stamp>.json。"""
     curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
     redo = prior_uids(curated_path)
     if redo:
@@ -80,10 +86,20 @@ def write_curated(raw: list[dict], errors: list, config: dict, tz: ZoneInfo, sta
         ranked, stats = curate_mod.curate(raw, config, redo)
         m.update({k: stats[k] for k in ("fetched", "in_window_new", "passed_relevance",
                                         "after_dedupe_and_quota")})
+
+    search = None
+    if not no_search:
+        found, search = search_mod.run(ranked, config, stamp, redo)
+        ranked += found
+        for item in found:
+            stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1
+    enrich_mod.enrich(ranked, config)
+
     payload = {
-        "generated_at": datetime.now(tz).isoformat(),
+        "generated_at": datetime.now(ZoneInfo(config.get("timezone", "Asia/Taipei"))).isoformat(),
         "stats": stats,
         "errors": errors,
+        "search": search,
         "config_digest": {k: config[k] for k in
                           ("lookback_hours", "min_relevance", "quota", "max_items_in_report")},
         "items": ranked,
@@ -91,13 +107,12 @@ def write_curated(raw: list[dict], errors: list, config: dict, tz: ZoneInfo, sta
     curated_path.parent.mkdir(parents=True, exist_ok=True)
     curated_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[curate] 收錄 {len(ranked)} 則 → {curated_path}", file=sys.stderr)
-    return ranked, stats
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只抓取並印統計，不寫 state / 報告")
-    ap.add_argument("--no-report", action="store_true", help="只產 curated JSON，報告交給 Claude 寫")
+    ap.add_argument("--no-search", action="store_true", help="不用 LLM 搜尋補 RSS 弱的主題")
     ap.add_argument("--list-sources", action="store_true", help="列出載入的來源後結束，不連網")
     ap.add_argument("--lookback", type=int, help="覆寫時間窗（小時）")
     ap.add_argument("--config", default=str(ROOT / "config" / "config.json"))
@@ -139,17 +154,13 @@ def main() -> int:
 
     if not raw:
         # 一則都沒抓到＝網路或來源全壞，不要留下空的 curated JSON：
-        # 那會讓 news-digest 誤判「今天已經抓過了」而寫出空報告。
+        # 那會讓 writer 誤判「今天已經抓過了」而寫出空報告。
         print("[fetch] 一則都沒抓到，不寫 curated JSON。先確認網路與來源設定。",
               file=sys.stderr)
         return 3
 
     append_raw(raw, stamp)
-    ranked, stats = write_curated(raw, errors, config, tz, stamp)
-
-    if not args.no_report:
-        path = report_mod.write(report_mod.render(ranked, stats, config, errors), config)
-        print(f"[report] {path}", file=sys.stderr)
+    collect(raw, errors, config, stamp, args.no_search)
     return 0
 
 

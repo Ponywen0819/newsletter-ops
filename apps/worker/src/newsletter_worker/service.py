@@ -2,7 +2,7 @@
 """排程服務：每天 NEWSLETTER_RUN_AT 跑一次 run_pipeline，啟動時補跑今天錯過的；GET /status、POST /run 只給 compose 內網。
 
 用法：uv run --project apps/worker worker [--host 0.0.0.0] [--port 8790]
-      uv run --project apps/worker worker --once [newsletter-fetch 的參數，如 --lookback 72]
+      uv run --project apps/worker worker --once [newsletter-collect 的參數，如 --lookback 72]
       uv run --project apps/worker worker --selftest
 
 要不要跑只看 state/last_run.json（run_pipeline 寫的，手動跑的也算）和 pipeline 的鎖：
@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="worker 常駐服務：每日排程與內網 API")
     ap.add_argument("--host", default="0.0.0.0", help="容器內綁全部介面；compose 不 publish 這個 port")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WORKER_PORT", DEFAULT_PORT)))
-    ap.add_argument("--once", action="store_true", help="跑一次每日流程就結束，輸出印在終端機；其餘參數轉給 newsletter-fetch")
+    ap.add_argument("--once", action="store_true", help="跑一次每日流程就結束，輸出印在終端機；其餘參數轉給 newsletter-collect")
     ap.add_argument("--selftest", action="store_true")
     args, rest = ap.parse_known_args(argv)
     if args.selftest:
@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         return daily.run_pipeline(rest, sys.stderr)
     if rest:
-        ap.error(f"不認得的參數：{' '.join(rest)}（只有 --once 會把參數轉給 newsletter-fetch）")
+        ap.error(f"不認得的參數：{' '.join(rest)}（只有 --once 會把參數轉給 newsletter-collect）")
     try:
         at = parse_hhmm(os.environ.get("NEWSLETTER_RUN_AT", "08:00"))
     except ValueError as exc:

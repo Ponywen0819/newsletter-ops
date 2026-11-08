@@ -3,7 +3,7 @@
 晨報網頁的後端（`newsletter-web`）：JSON API（`/api/*`）＋提供前端 [web-ui](../web-ui/README.md) 的建置結果 `apps/web-ui/dist`；有用／沒用寫進 `feedback.jsonl`；`/auth` 貼 OAuth token。標準庫，無登入。專案全貌見[根目錄 README](../../README.md)。
 
 頁面全由前端畫，兩邊的合約是 API（型別在 `apps/web-ui/src/types.ts`）與 `server.py` 的 `SPA_ROUTES`，改了要兩邊同步。
-依賴 [agent](../../packages/agent/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-agent --auth-check`，貼上時與背景定時驗證；程式本身不 import agent），用 `uv run --project apps/web-server newsletter-web` 啟動就有 SDK。
+依賴 [llm](../../packages/llm/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-llm --auth-check`，貼上時與背景定時驗證；程式本身不 import llm），用 `uv run --project apps/web-server newsletter-web` 啟動就有 SDK。
 
 ```
 src/newsletter_web_server/
@@ -41,7 +41,7 @@ uv run --project apps/web-server newsletter-web --selftest    # API、靜態檔�
 - **`/auth`（貼 OAuth token）只能從本機開**：要同時符合來源是 loopback、`Host` 是本機、沒有 `Cf-*`／`X-Forwarded-*` 等代理標頭、`Origin`（若有）是本機，否則 404。
   cloudflared 也是從 `127.0.0.1` 連進來，所以光看來源位址不夠。遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>`。
   Docker 部署改用 `--admin-port` 另開的管理 port（來源只要求私有位址，其他檢查照舊），見 [deploy/README.md](../../deploy/README.md)。
-  token 只存在這一頁存的檔，不讀 `CLAUDE_CODE_OAUTH_TOKEN`，政策見 [agent/README.md](../../packages/agent/README.md)「認證」。
+  token 只存在這一頁存的檔，不讀 `CLAUDE_CODE_OAUTH_TOKEN`，政策見 [llm/README.md](../../packages/llm/README.md)「認證」。
 - **定時驗證**：啟動時與之後每 `--auth-check-interval` 秒（`NEWSLETTER_AUTH_CHECK_INTERVAL`，預設 3600、0＝關閉）用儲存的 token 跑一次 `--auth-check`，
   每次都是真的呼叫、用掉極少額度，結果只放記憶體。`GET /api/auth-health` 的 `state`：
   `ok`、`expiring`（依一年效期推算快到期）、`missing`（沒有 token）、`invalid`（要重新授權）、`unknown`（額度用完、逾時等，**不代表失效**）。

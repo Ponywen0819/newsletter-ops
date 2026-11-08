@@ -262,7 +262,7 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
     return ranked, stats
 
 
-if __name__ == "__main__":  # 自我檢查：uv run --project packages/agent python -m newsletter_agent.curate
+if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect python -m newsletter_collect.curate
     assert STATE == ROOT / "state" / "seen.json" and (ROOT / "state").parent == ROOT, STATE  # 去重記憶寫在 repo 根的 state/，不是套件目錄
     V = {"conference": ["NeurIPS", "ICLR", "ACL", "EMNLP", "COLM"], "journal": ["Nature", "TMLR"],
          "minor_tracks": ["Workshop", "Findings", "Industry Track"]}

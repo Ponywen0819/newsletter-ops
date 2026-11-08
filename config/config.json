@@ -121,6 +121,14 @@
     "world": 5,
     "science": 4
   },
+  "search": {
+    "always": [
+      "world"
+    ],
+    "per_gap": 2,
+    "lookback_hours": 48,
+    "max_turns": 20
+  },
   "arxiv_venues": {
     "conference": [
       "NeurIPS",

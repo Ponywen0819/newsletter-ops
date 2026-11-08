@@ -1,6 +1,6 @@
 # notify
 
-外圍：報告 → email → 寄出，只用標準庫、只依賴 [shared](../shared/README.md)。[agent](../agent/README.md) 不認得它；之後加別的通知管道也放這裡。
+外圍：報告 → email → 寄出，只用標準庫、只依賴 [shared](../shared/README.md)。[writer](../writer/README.md) 不認得它；之後加別的通知管道也放這裡。
 專案全貌見[根目錄 README](../../README.md)。
 
 ```

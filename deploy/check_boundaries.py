@@ -25,10 +25,12 @@ ROOT = Path(__file__).resolve().parent.parent
 # 成員 id → (目錄, 允許依賴的成員 id)；發行名 newsletter-<id>，套件名把連字號換成底線
 MEMBERS = {
     "shared": (ROOT / "packages" / "shared", set()),
-    "agent": (ROOT / "packages" / "agent", {"shared"}),
+    "llm": (ROOT / "packages" / "llm", {"shared"}),
+    "collect": (ROOT / "packages" / "collect", {"shared", "llm"}),
+    "writer": (ROOT / "packages" / "writer", {"shared", "llm"}),
     "notify": (ROOT / "packages" / "notify", {"shared"}),
-    "web-server": (ROOT / "apps" / "web-server", {"shared", "agent"}),
-    "worker": (ROOT / "apps" / "worker", {"shared", "agent", "notify"}),
+    "web-server": (ROOT / "apps" / "web-server", {"shared", "llm"}),
+    "worker": (ROOT / "apps" / "worker", {"shared", "collect", "writer", "notify"}),
 }
 # 非 Python 模組：id → 目錄；不能被 Python import
 NODE_MODULES = {

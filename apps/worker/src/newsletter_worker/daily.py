@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""每日流程：抓取 → agent 寫報告 → render → 寄信，整條握一把防重疊的鎖。
+"""每日流程：蒐集 → 寫報告 → render → 寄信，整條握一把防重疊的鎖。
 
 入口在 service.py：worker --once 跑一次、worker 常駐排程，都進 run_pipeline()。
 
@@ -28,15 +28,15 @@ EXIT_STOPPED = 128 + signal.SIGTERM
 LOCK = ROOT / "state" / "pipeline"  # 實際鎖的是 state/pipeline.lock
 RECORD = ROOT / "state" / "last_run.json"
 MODULES = {
-    "fetch": "newsletter_agent.run",
-    "agent": "newsletter_agent.agent_run",
+    "collect": "newsletter_collect.run",
+    "write": "newsletter_writer.write",
     "render": "newsletter_notify.render_email",
     "send": "newsletter_notify.send_email",
 }
 
 
 def tz() -> ZoneInfo:
-    """報告日期的時區，和 newsletter-fetch 同一個來源。"""
+    """報告日期的時區，和 newsletter-collect 同一個來源。"""
     try:
         name = json.loads((ROOT / "config" / "config.json").read_text(encoding="utf-8")).get("timezone")
     except (OSError, ValueError):
@@ -80,7 +80,7 @@ def step(log: IO[str], module: str, *args: str, input: str | None = None, captur
     return code, out
 
 
-def run_pipeline(fetch_args: list[str], log: IO[str], trigger: str = "cli", stop: threading.Event | None = None) -> int:
+def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", stop: threading.Event | None = None) -> int:
     """trigger：schedule / catchup / manual / cli，只是寫進紀錄。"""
     try:
         with lock.locked(LOCK, timeout=0):
@@ -89,7 +89,7 @@ def run_pipeline(fetch_args: list[str], log: IO[str], trigger: str = "cli", stop
             atomic.write_text(RECORD, json.dumps(rec))
             code = 1  # _run 丟例外時記成失敗
             try:
-                code = _run(fetch_args, log, stop)
+                code = _run(collect_args, log, stop)
                 return code
             finally:
                 atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code}))
@@ -98,7 +98,7 @@ def run_pipeline(fetch_args: list[str], log: IO[str], trigger: str = "cli", stop
         return EXIT_BUSY
 
 
-def _run(fetch_args: list[str], log: IO[str], stop: threading.Event | None = None) -> int:
+def _run(collect_args: list[str], log: IO[str], stop: threading.Event | None = None) -> int:
     def go(label: str, key: str, *args: str, input: str | None = None, capture: bool = False) -> tuple[int, str]:
         if stop is not None and stop.is_set():
             say(log, f"收到停止，不執行：{label}")
@@ -109,10 +109,10 @@ def _run(fetch_args: list[str], log: IO[str], stop: threading.Event | None = Non
             say(log, f"失敗，exit {code}：{label}")
         return code, out
 
-    code, _ = go(" ".join(["newsletter-fetch", "--no-report", *fetch_args]), "fetch", "--no-report", *fetch_args)
+    code, _ = go(" ".join(["newsletter-collect", *collect_args]), "collect", *collect_args)
     if code:
         return code
-    code, _ = go("newsletter-agent", "agent")
+    code, _ = go("newsletter-write", "write")
     if code:
         return code
     code, meta = go("newsletter-render", "render", capture=True)  # stdout 是一行 JSON，下一步的輸入
@@ -180,36 +180,36 @@ def selftest() -> None:
         def ran(name: str) -> bool:
             return (tmp / name).exists()
 
-        # 全部成功：參數轉給 fetch、render 的 stdout 原封不動餵給 send、各步驟的 stderr 進 log
+        # 全部成功：參數轉給 collect、render 的 stdout 原封不動餵給 send、各步驟的 stderr 進 log
         code, text = run("--lookback", "72", trigger="schedule")
         assert code == 0, (code, text)
-        assert (tmp / "fetch").read_text() == "--no-report --lookback 72|"
+        assert (tmp / "collect").read_text() == "--lookback 72|"
         assert (tmp / "send").read_text() == '|{"subject": "s"}\n'
-        assert "agent stderr" in text and "render stderr" in text and text.rstrip().endswith("完成"), text
+        assert "write stderr" in text and "render stderr" in text and text.rstrip().endswith("完成"), text
         assert '"subject"' not in text
         rec = read_record()
         assert rec is not None and rec["trigger"] == "schedule" and rec["exit_code"] == 0 and rec["finished_at"], rec
         assert rec["date"] == f"{datetime.now(tz()):%Y-%m-%d}" and rec["started_at"] <= rec["finished_at"], rec
 
         # 任一步失敗：後面的不跑、exit code 是該步的、log 一行說明、紀錄記下 exit code；失敗也會放鎖
-        code, text = run(fail="agent:5")
-        assert code == 5 and ran("fetch") and ran("agent") and not ran("render") and not ran("send")
-        assert "失敗，exit 5：newsletter-agent" in text and "完成" not in text
+        code, text = run(fail="write:5")
+        assert code == 5 and ran("collect") and ran("write") and not ran("render") and not ran("send")
+        assert "失敗，exit 5：newsletter-write" in text and "完成" not in text
         assert read_record()["exit_code"] == 5 and read_record()["trigger"] == "cli"
-        code, text = run(fail="fetch:3")
-        assert code == 3 and ran("fetch") and not ran("agent")
+        code, text = run(fail="collect:3")
+        assert code == 3 and ran("collect") and not ran("write")
         code, text = run(fail="render:kill")
         assert code == 128 + 9 and ran("render") and not ran("send") and read_record()["exit_code"] == 128 + 9
 
         # stop：對執行中的子程序送 SIGTERM、後面的不跑；紀錄有 finished_at 與 143
         stop, t0 = threading.Event(), time.monotonic()
         threading.Timer(1, stop.set).start()
-        code, text = run(fail="agent:hang", stop=stop)
+        code, text = run(fail="write:hang", stop=stop)
         assert code == EXIT_STOPPED and time.monotonic() - t0 < 10 and not ran("render"), (code, text)
         rec = read_record()
         assert rec["exit_code"] == EXIT_STOPPED and rec["finished_at"], rec
         code, _ = run(stop=stop)  # 已經要停：一步都不跑
-        assert code == EXIT_STOPPED and not ran("fetch")
+        assert code == EXIT_STOPPED and not ran("collect")
 
         # 別的執行緒（等同別的程序）拿著鎖：這次不執行，一步都不跑、不寫紀錄；放掉之後恢復正常
         holding, release = threading.Event(), threading.Event()

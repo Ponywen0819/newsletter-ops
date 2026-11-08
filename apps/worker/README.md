@@ -1,9 +1,9 @@
 # worker
 
-網頁以外的常駐服務：每日排程與補跑，以及每日流程的編排（抓取 → agent 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡）。專案全貌見[根目錄 README](../../README.md)。
+網頁以外的常駐服務：每日排程與補跑，以及每日流程的編排（蒐集 → 寫報告 → render → 寄信，整條包在一把防重疊的鎖裡）。專案全貌見[根目錄 README](../../README.md)。
 
-站在依賴圖最上層：依賴 `shared`、`agent`、`notify`，**沒有任何成員可以依賴它**（放在 `apps/` 的模組都是這樣，`deploy/check_boundaries.py` 檢查）。
-`agent` 不認得 email、`notify` 不認得 agent；把兩邊串起來是這裡的事。純標準庫。
+站在依賴圖最上層：依賴 `shared`、`collect`、`writer`、`notify`，**沒有任何成員可以依賴它**（放在 `apps/` 的模組都是這樣，`deploy/check_boundaries.py` 檢查）。
+`collect`、`writer`、`notify` 彼此不認得，只透過檔案交接（curated JSON → 報告 → email）；把它們依序串起來是這裡的事。純標準庫。
 
 ```
 src/newsletter_worker/
@@ -16,7 +16,7 @@ src/newsletter_worker/
 
 ```bash
 npx nx run worker:once                   # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
-npx nx run worker:once --lookback 72     # 額外參數轉給 newsletter-fetch
+npx nx run worker:once --lookback 72     # 額外參數轉給 newsletter-collect
 npx nx run worker:start                  # 常駐排程服務，見下面「排程服務」
 npx nx run worker:selftest               # 用假步驟驗證，不連網、不寄信
 ```
@@ -25,7 +25,7 @@ Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`�
 
 ## 行為
 
-- 四步各自是獨立的程序（`python -m newsletter_agent.run` 等），由這裡依序啟動；任一步失敗就停下，exit code 是那一步的，被訊號殺掉的算 128+訊號。
+- 四步各自是獨立的程序（`python -m newsletter_collect.run` 等），由這裡依序啟動；任一步失敗就停下，exit code 是那一步的，被訊號殺掉的算 128+訊號。
 - render 的 stdout（一行 JSON）原封不動餵給 send 的 stdin；其餘 stdout／stderr 和這裡的進度行（`=== 時間 === 步驟`）一起進 log。
 - **鎖**：整條流程握著 `state/pipeline.lock`（`shared` 的 `lock.locked(timeout=0)`）。搶不到就**不排隊**、exit **75**（`EX_TEMPFAIL`），log 留一行說明。
   程序死掉鎖就放掉，不會留下過期的鎖。這把鎖只防「兩條 pipeline 同時跑」；各個檔案自己的讀寫排隊見 [shared/README.md](../../packages/shared/README.md)「檔案鎖」。
@@ -37,12 +37,12 @@ Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`�
 | exit code | 意義 |
 | --- | --- |
 | 0 | 全部完成 |
-| 1～6 | `newsletter-agent` 的（見 [agent/README.md](../../packages/agent/README.md)「exit code」） |
-| 2、3 | `newsletter-fetch` 的（來源設定有誤、一則都沒抓到） |
+| 2、3 | `newsletter-collect` 的（來源設定有誤、一則都沒抓到）；搜尋與補原文失敗不算失敗 |
+| 1～6 | `newsletter-write` 的（見 [writer/README.md](../../packages/writer/README.md)「exit code」） |
 | 75 | 另一條 pipeline 正在跑，這次沒執行 |
 | 143 | 被要求停止（`worker` 收到 SIGTERM，轉給執行中的那一步） |
 
-數字會重疊（agent 和 fetch 都用 2），要知道是哪一步，看 log 最後一行 `失敗，exit N：<步驟>`。
+數字會重疊（collect 和 write 都用 2、3），要知道是哪一步，看 log 最後一行 `失敗，exit N：<步驟>`。
 
 ## 排程服務
 
