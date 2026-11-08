@@ -141,6 +141,9 @@ uv run --project packages/shared newsletter-feedback --stats    # 依來源／�
 
 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT` 可改）worker 也會驗一次 Claude 認證，結果寫進 `state/auth_health.json`；失效的話網頁在晨報跑之前就會出現橫幅。
 
+失敗時：暫時性的失敗 30 分鐘後從失敗的那一步自動重跑一次（寄信失敗不會重寫報告）；每一步有時限，卡住的會被停掉。今天不會再重跑時（重跑也失敗、授權失效、額度用完）
+worker 寄一封純文字的失敗通知，網頁的今日頁也會顯示哪一步失敗。
+
 ## 讓它跟著你的研究重心走
 
 興趣會變，但系統不會自己察覺——報告每天照常產出，你只是慢慢覺得「最近好像沒什麼有趣的」。
@@ -155,7 +158,8 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-c
 或在網頁（[web-server/README.md](apps/web-server/README.md)）、email 連結（[notify/README.md](packages/notify/README.md)）按按鈕，都累積到 `state/feedback.jsonl`。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
-不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
+不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。`uv run --project packages/shared newsletter-feedback --stats`
+依來源、主題、關鍵字列出 +／- 的則數與比例。
 
 **建議由人確認，不自動套用。** 會自己調參數的系統，出錯時你查不出它為什麼開始推垃圾。
 
