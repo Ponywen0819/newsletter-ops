@@ -48,6 +48,25 @@ describe('路由', () => {
     expect(await screen.findByRole('heading', { name: '2026-10-03 的晨報還沒產出' })).toBeInTheDocument()
   })
 
+  it('/reports/<date>：內文最後有前一份／下一份；今日頁只有前一份', async () => {
+    open('/reports/2026-09-28', {
+      'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {}, prev: '2026-09-27', next: '2026-09-29' } }),
+    })
+    const adjacent = within(await screen.findByRole('navigation', { name: '前後的晨報' }))
+    expect(adjacent.getByRole('link', { name: '← 前一份 2026-09-27' })).toHaveAttribute('href', '/reports/2026-09-27')
+    expect(adjacent.getByRole('link', { name: '下一份 2026-09-29 →' })).toHaveAttribute('href', '/reports/2026-09-29')
+    cleanup()
+
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-09-28', latest: '2026-09-28', report, marks: {}, prev: '2026-09-27', next: null } }) })
+    const today = within(await screen.findByRole('navigation', { name: '前後的晨報' }))
+    expect(today.getAllByRole('link').map((a) => a.textContent)).toEqual(['← 前一份 2026-09-27'])
+    cleanup()
+
+    open('/reports/2026-09-28', { 'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {} } }) }) // 舊副本沒有這兩欄
+    await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })
+    expect(screen.queryByRole('navigation', { name: '前後的晨報' })).toBeNull()
+  })
+
   it('/ 一份晨報都沒有', async () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {} } }) })
     expect(await screen.findByText('目前還沒有任何晨報。')).toBeInTheDocument()

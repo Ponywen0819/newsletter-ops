@@ -111,6 +111,9 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     # 晨報：回結構，不是 HTML；巢狀子項目不帶 mark，mark 掛在最外層的項目上（與 email 版型一致）
     status, data = get("/api/reports/2026-09-28")
     assert status == 200 and data["date"] == "2026-09-28" and data["marks"] == {}, data
+    assert (data["prev"], data["next"]) == ("2026-09-27", None), data  # 前一份＝更舊的，下一份＝更新的
+    older = get("/api/reports/2026-09-27")[1]
+    assert (older["prev"], older["next"]) == (None, "2026-09-28"), older
     report = data["report"]
     assert report["headline"] == "某事發生，見 來源。" and report["subject"] == "測試頭條"
     assert [b["type"] for b in report["blocks"]] == ["title", "callout", "heading", "paragraph", "list",

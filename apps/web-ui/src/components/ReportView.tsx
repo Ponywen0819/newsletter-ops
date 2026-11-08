@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { groupReport, type Unit } from '../reportUnits'
-import type { Block, ListItem, Mark, Marks, Report } from '../types'
+import type { Adjacent, Block, ListItem, Mark, Marks, Report } from '../types'
 import { isWide, useSectionNav } from '../useSectionNav'
 import { FeedbackButtons } from './FeedbackButtons'
 import { Inline } from './Inline'
@@ -85,7 +86,26 @@ function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Repor
 }
 
 /** 晨報本體。≥1100px 左側多一份目錄（scroll-spy、j／k 切換），窄螢幕只是依序排下來。 */
-export function ReportView({ report, marks, onMark }: { report: Report; marks: Marks; onMark: OnMark }) {
+/** 內文最後的「前一份／下一份」。 */
+function AdjacentNav({ prev, next }: Adjacent) {
+  if (!prev && !next) return null
+  return (
+    <nav className="report-adjacent" aria-label="前後的晨報">
+      {prev && (
+        <Link to={`/reports/${prev}`} rel="prev">
+          ← 前一份 {prev}
+        </Link>
+      )}
+      {next && (
+        <Link to={`/reports/${next}`} rel="next">
+          下一份 {next} →
+        </Link>
+      )}
+    </nav>
+  )
+}
+
+export function ReportView({ report, marks, onMark, adjacent = {} }: { report: Report; marks: Marks; onMark: OnMark; adjacent?: Adjacent }) {
   const grouped = useMemo(() => groupReport(report), [report])
   const ids = useMemo(() => grouped.units.map((u) => u.id), [grouped])
   const articleRef = useRef<HTMLElement>(null)
@@ -155,14 +175,15 @@ export function ReportView({ report, marks, onMark }: { report: Report; marks: M
           </div>
         ))}
         {grouped.sources && <UnitView unit={grouped.sources} sources={report.sources} marks={marks} onMark={onMark} />}
+        <AdjacentNav {...adjacent} />
       </ReaderShell>
     </article>
   )
 }
 
 /** 晨報加上標記狀態，以伺服器回傳的結果更新。 */
-export function ReportPanel({ report, marks: initial }: { report: Report; marks: Marks }) {
+export function ReportPanel({ report, marks: initial, adjacent }: { report: Report; marks: Marks; adjacent?: Adjacent }) {
   const [marks, setMarks] = useState(initial)
   const onMark: OnMark = (uid, mark) => setMarks((current) => ({ ...current, [uid]: mark }))
-  return <ReportView report={report} marks={marks} onMark={onMark} />
+  return <ReportView report={report} marks={marks} onMark={onMark} adjacent={adjacent} />
 }
