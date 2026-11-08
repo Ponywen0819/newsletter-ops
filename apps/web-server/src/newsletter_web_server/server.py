@@ -120,6 +120,7 @@ class Site:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "newsletter-web"
+    head_only = False  # HEAD：同 GET，但不送 body（監控服務常用 HEAD）
 
     @property
     def site(self) -> Site:
@@ -143,7 +144,8 @@ class Handler(BaseHTTPRequestHandler):
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(data)
+        if not self.head_only:
+            self.wfile.write(data)
 
     def _send_json(self, status: int, payload: dict) -> None:
         self._send(status, json.dumps(payload, ensure_ascii=False), "application/json; charset=utf-8")
@@ -157,6 +159,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.SERVICE_UNAVAILABLE, hint, "text/html; charset=utf-8")
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
+
+    def do_HEAD(self) -> None:
+        self.head_only = True
+        self.do_GET()
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
