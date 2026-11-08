@@ -5,7 +5,7 @@
 
 ```
 src/newsletter_notify/
-  render_email.py        email 層：報告結構 → inline-CSS HTML（reports/<date>.html）（newsletter-render）
+  render_email.py        email 層：報告結構 → inline-CSS HTML（reports/<date>.html）與純文字版（reports/<date>.txt）（newsletter-render）
   send_email.py          寄信層：Gmail SMTP 寄出 email HTML，不依賴 Claude 的 Gmail connector（newsletter-send）
 ```
 
@@ -23,7 +23,8 @@ uv run --project packages/notify newsletter-render | uv run --project packages/n
 ## 版型
 
 email 與網頁吃 shared 的 `report_data.py` 解出的同一份結構，由 `render_email.py` 排成 inline-CSS HTML；
-兩邊版型各自維護（網頁在 [apps/web-ui](../../apps/web-ui/README.md)）。哪些條目可以投票由 `report_data.py` 的 `votable` 決定，兩邊一致。
+兩邊版型各自維護（網頁在 [apps/web-ui](../../apps/web-ui/README.md)）。
+信件的 text/plain 部分是同內容的純文字版（`reports/<date>.txt`：連結只留標題、網址集中在最後的資料來源、沒有回饋連結），給只顯示純文字的信箱與通知預覽。哪些條目可以投票由 `report_data.py` 的 `votable` 決定，兩邊一致。
 
 ## email 裡的「有用／沒用」連結
 

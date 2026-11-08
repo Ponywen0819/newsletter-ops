@@ -2,7 +2,8 @@
 """email 層：reports/<date>.md → reports/<date>.html（inline CSS，email client 會剝掉 <style>）。
 
 用法：uv run --project packages/notify newsletter-render [YYYY-MM-DD] [--selftest]
-stdout 印一行 JSON：{"subject", "headline", "html_path"}，給 send_email 用。
+stdout 印一行 JSON：{"subject", "headline", "html_path", "text_path"}，給 send_email 用。
+text_path 是同內容的純文字版（reports/<date>.txt），當信件的 text/plain 部分。
 
 有設 NEWSLETTER_BASE_URL 才在可投票的新聞底下放 👍／👎 連結（<base>/feedback/<uid>[,<uid>...]?v=…）；
 連結只開確認頁，因為信箱的安全掃描會自動開連結。
@@ -122,6 +123,39 @@ def render_report(report: dict, base_url: str = "") -> tuple[str, str, str]:
     return page, report["subject"], report["headline"]
 
 
+def inline_text(nodes: list[dict]) -> str:
+    return "".join(n["text"] if n["type"] in ("text", "code") else inline_text(n["children"]) for n in nodes)
+
+
+def list_text(items: list[dict], depth: int = 0) -> list[str]:
+    out = []
+    for item in items:
+        out.append(f"{'  ' * depth}- {inline_text(item['inline'])}")
+        out += list_text(item.get("children", []), depth + 1)
+    return out
+
+
+def render_text(report: dict) -> str:
+    """純文字版：連結只留標題，網址集中在最後的資料來源；沒有回饋按鈕。"""
+    lines: list[str] = []
+    for block in report["blocks"]:
+        kind = block["type"]
+        if kind == "title":
+            lines += [block["title"] + (f" {block['date'].replace('-', '/')}" if block["date"] else ""), ""]
+        elif kind == "heading":
+            lines += ["", f"【{inline_text(block['inline'])}】", ""]
+        elif kind == "callout":
+            lines += [inline_text(block["inline"]), ""]
+        elif kind == "paragraph":
+            lines.append(inline_text(block["inline"]))
+        elif kind == "list":
+            lines += [*list_text(block["items"]), ""]
+    if report["sources"]:
+        lines += ["", "【資料來源】", ""]
+        lines += [f"{n}. {src['title']}\n   {src['url']}" for n, src in enumerate(report["sources"], 1)]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip() + "\n"
+
+
 def render(markdown: str, base_url: str = "") -> tuple[str, str, str]:
     """Markdown → (完整 email html, subject 短語, 今日頭條)。格式不符時 raise ValueError（parse_report）。"""
     return render_report(parse_report(markdown), base_url)
@@ -157,6 +191,11 @@ def selftest() -> None:
     assert page.count("a=1&amp;b=2") == 2 and "&amp;amp;" not in page
     assert page.count("https://a.example/1") == 3
     assert "2026/09/28" in page
+    text = render_text(parse_report(md))
+    assert text.startswith("每日晨間簡報 2026/09/28\n") and "【科技與 AI】" in text, text
+    assert "某事發生，見 來源。" in text and "- 發生什麼：A\n  - 細節\n" in text, text
+    assert "1. 來源\n   https://a.example/x?a=1&b=2" in text and "mark:" not in text and "<" not in text.replace("<標題>", "")
+    assert "\n\n\n" not in text
     try:
         render("# x\n")
         raise AssertionError("缺頭條應該報錯")
@@ -220,15 +259,17 @@ def main(argv: list[str] | None = None) -> int:
         base_url = ""
     try:
         with metrics.timed("render") as m:
-            page, subject, headline = render(src.read_text(encoding="utf-8"), base_url)
+            report = parse_report(src.read_text(encoding="utf-8"))
+            page, subject, headline = render_report(report, base_url)
             m.update(html_bytes=len(page.encode()))
     except ValueError as exc:
         print(f"{src.name} 格式不符：{exc}", file=sys.stderr)
         return 1
-    out = src.with_suffix(".html")
+    out, text_out = src.with_suffix(".html"), src.with_suffix(".txt")
     out.write_text(page, encoding="utf-8")
+    text_out.write_text(render_text(report), encoding="utf-8")
     print(json.dumps({"subject": f"每日晨間簡報 {stamp.replace('-', '/')} — {subject}",
-                      "headline": headline, "html_path": str(out)}, ensure_ascii=False))
+                      "headline": headline, "html_path": str(out), "text_path": str(text_out)}, ensure_ascii=False))
     return 0
 
 

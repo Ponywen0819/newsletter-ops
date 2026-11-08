@@ -66,7 +66,7 @@ data/raw/<date>.jsonl          當日原始抓取（append，供回溯；只留 
 data/search/<date>.json        搜尋補充的稽核紀錄：缺口、query、LLM 原始回覆、收下與退回（含原因）
 data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入
 reports/<date>.md              最終報告
-reports/<date>.html            email 版（newsletter-render 產生）
+reports/<date>.html            email 版（newsletter-render 產生；.txt 是信件的純文字部分）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
