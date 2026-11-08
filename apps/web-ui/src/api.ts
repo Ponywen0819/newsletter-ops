@@ -1,6 +1,6 @@
 import { API_CACHE } from './cacheName'
 import { check } from './connectivity'
-import type { AuthHealth, AuthResult, AuthStatus, FeedbackTarget, Mark, ReportPayload, ReportSummary, SearchResult, Session, TodayPayload } from './types'
+import type { AuthHealth, AuthResult, AuthStatus, FeedbackTarget, FeedbackStats, Mark, ReportPayload, ReportSummary, SearchResult, Session, TodayPayload } from './types'
 
 /** 伺服器回了非 2xx。message 是伺服器給的 error 文字（沒有就是狀態碼）。 */
 export class ApiError extends Error {
@@ -64,6 +64,7 @@ export const api = {
   report: (date: string) => cachedRead<ReportPayload>(`/api/reports/${encodeURIComponent(date)}`),
   /** 不進離線副本：連不上就是失敗 */
   search: (q: string) => request<SearchResult>(`/api/search?q=${encodeURIComponent(q)}`),
+  feedbackStats: () => request<FeedbackStats>('/api/feedback-stats'),
   feedbackTarget: (uid: string) => request<FeedbackTarget>(`/api/feedback/${encodeURIComponent(uid)}`),
   /** mark '' ＝ 取消。回傳伺服器實際記下的 mark。 */
   feedback,

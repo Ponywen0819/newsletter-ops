@@ -192,14 +192,15 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
 
 def _selftest_static(req, shell: str) -> None:
     # 前端：路由一律回 index.html（含 CSP）；沒有行內腳本與樣式
-    for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth"):
+    for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth", "/stats",
+                 "/feedback/0123456789abcdef", "/feedback/0123456789abcdef,1111111111111111"):
         status, headers, body = req("GET", path)
         assert status == 200 and body == shell, (path, status)
         assert headers["content-type"] == "text/html; charset=utf-8" and headers["cache-control"] == "no-cache"
         assert "default-src 'self'" in headers["content-security-policy"] and "frame-ancestors 'none'" in headers["content-security-policy"]
     assert "<style" not in shell and "<script>" not in shell
     # 不認得的路徑：同一份 index.html，但狀態碼是 404（前端畫「找不到頁面」）
-    for path in ("/nope", "/reports/abc", "/api", "/reports/2026-09-28/x"):
+    for path in ("/nope", "/reports/abc", "/api", "/reports/2026-09-28/x", "/feedback/0123456789abcdef,"):
         status, _, body = req("GET", path)
         assert status == 404 and body == shell, (path, status)
     # 靜態檔：assets 帶 hash 長期快取，其他每次確認；類型照副檔名
@@ -273,6 +274,11 @@ def _selftest_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str,
         fh.write(json.dumps(feedback.build_row(uid_c, "++", "2026-09-28.md", {})) + "\n")
         fh.write(json.dumps(feedback.build_row("f" * 16, "+", "2026-08-01.md", {})) + "\n")
     assert marks() == {uid_b: "-", uid_c: "+"}
+
+    # 統計：每個 uid 只算最後一筆、取消的不算；uid_c 最後是 ++、f… 是 +、uid_b 是 -
+    stats = get("/api/feedback-stats")[1]
+    assert stats["total"] == 3, stats
+    assert stats["groups"]["topic"][0] == {"name": "未知", "pos": 2, "neg": 1}, stats
 
     # email 連結的確認頁：GET 只讀，絕不寫入；標題來自 curated，沒有就空字串；mark 是目前的標記
     before = site.reports.feedback_path.read_text(encoding="utf-8")

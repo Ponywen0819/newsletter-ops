@@ -42,6 +42,9 @@ function Side({ q, children }: { q: string; children?: ReactNode }) {
     <>
       <h1>歷史晨報</h1>
       <SearchBox q={q} />
+      <p className="report-stats-link">
+        <Link to="/stats">回饋統計 →</Link>
+      </p>
       {children}
     </>
   )
