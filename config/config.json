@@ -112,6 +112,7 @@
   },
   "min_relevance": 0.8,
   "same_story_topics": ["world"],
+  "max_per_source": 2,
   "default_quota": 5,
   "quota": {
     "ai-research": 8,

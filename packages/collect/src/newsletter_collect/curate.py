@@ -259,6 +259,21 @@ def _dedupe_urls(items: list[dict]) -> list[dict]:
     return list(by_key.values())
 
 
+def _pick(bucket: list[dict], limit: int, per_source: int | None) -> list[dict]:
+    """依 rank 取 limit 則；每個來源先最多 per_source 則，名額沒用完再照 rank 補回其他的（只有一個來源時不會少收）。"""
+    if not per_source:
+        return bucket[:limit]
+    count: dict[str, int] = {}
+    first, rest = [], []
+    for item in bucket:
+        n = count.get(item["source"], 0)
+        (first if n < per_source else rest).append(item)
+        count[item["source"]] = n + 1
+    chosen = first[:limit]
+    chosen += rest[:limit - len(chosen)]
+    return sorted(chosen, key=lambda i: i["rank"], reverse=True)
+
+
 def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
     """各主題分開取前 N 名，避免高產量來源佔滿整份報告。
 
@@ -273,9 +288,10 @@ def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
 
     kept: list[dict] = []
     dropped: dict[str, int] = {}
+    per_source = config.get("max_per_source")
     for topic, bucket in by_topic.items():
         limit = quota.get(topic, default_quota)
-        kept.extend(bucket[:limit])
+        kept.extend(_pick(bucket, limit, per_source))
         if len(bucket) > limit:
             dropped[topic] = len(bucket) - limit
 
@@ -419,6 +435,14 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert uids(first) == {"u3", "u2"}
     assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
     assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的：沒帶 redo 才會往下一梯隊走
+
+    # 每個來源的上限：有別的來源時讓位，沒有就補回來
+    def src_item(uid, source, rank):
+        return {"uid": uid, "source": source, "rank": rank, "topic": "sci"}
+    sci = [src_item("d1", "SD", 9), src_item("d2", "SD", 8), src_item("d3", "SD", 7), src_item("n1", "Nature", 1)]
+    assert [i["uid"] for i in _pick(sci, 3, 2)] == ["d1", "d2", "n1"]
+    assert [i["uid"] for i in _pick(sci[:3], 3, 2)] == ["d1", "d2", "d3"]  # 只有一個來源：照樣收滿
+    assert [i["uid"] for i in _pick(sci, 3, None)] == ["d1", "d2", "d3"]
 
     # 差一點過門檻：配額沒滿的主題才附；命中關鍵字的優先；0 分與 arXiv 不附
     def near(uid, topic, rel, rank, **kw):
