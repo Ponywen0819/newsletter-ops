@@ -26,12 +26,15 @@ npm run typecheck
   `public/theme-init.js` 在 `<head>` 同步套用儲存的主題，避免先閃一下錯的顏色；CSP 不許行內腳本，所以它必須是外部檔。
   放進 `public/` 的檔案要同時放行 `.gitignore`（白名單）、`.dockerignore`，並在 `Dockerfile` 的前端階段 COPY，否則不會進版控或映像。
 
-## PWA（可安裝，離線讀開過的晨報）
+## PWA（可安裝，離線讀最近的晨報）
 
 網頁可以裝成 App：Android／桌機 Chrome 選「安裝應用程式」（桌機在網址列右側），iOS Safari 用「分享 → 加入主畫面」。裝好後以獨立視窗開啟，圖示是藍底的「報」。
 需要 HTTPS 或 `localhost`（Tunnel 的網域本來就是 HTTPS）。**只有 `npm run build` 的產物有 service worker**，`npm run dev` 不註冊，免得開發時被舊快取干擾。
 
-- **離線**：開過的今日晨報、歷史列表、單日晨報，沒網路或連不上伺服器時仍能打開，標頭下方出現「離線中」或「連不上伺服器」；沒開過的日期顯示「讀取失敗」。有網路時永遠先拿最新的（標記狀態、新產出的晨報不會被舊快取蓋住）。離線時按「有用／沒用」會顯示「儲存失敗」，不會排隊補送。
+- **離線副本**（`src/sync.ts`）：線上時頁面把今日、歷史列表與**最近 30 份**晨報存進 `api` cache，不必先開過；沒網路或連不上伺服器時讀這份副本，標頭下方出現「離線中」或「連不上伺服器」。
+  更舊的日期離線時顯示「讀取失敗」（開過的也會在下次同步時清掉）。同步時機：App 啟動、恢復連線（一定同步）、回到前景（距上次成功超過 10 分鐘才同步）；同時只跑一次，每次全量重抓（約 1＋1＋30 個請求）。
+  只存沒被轉址的 200（`redirect: 'manual'`，Access 逾時的登入頁進不來）；列表失敗就整輪放棄、保留舊副本，單份失敗只保留那份的舊版；成功後清掉不在最近 30 份裡的。連不上或登入逾時時不同步。
+- **離線**：有網路時永遠先拿最新的（標記狀態、新產出的晨報不會被舊快取蓋住）。離線時按「有用／沒用」會顯示「儲存失敗」，不會排隊補送。
 - **連線偵測**（`GET /api/heartbeat`，`src/connectivity.ts`）：回 `200 {"ok": true}`、`Cache-Control: no-store`，不讀檔、不寫入。前端用它判斷四種狀態，橫幅與資料請求都看同一份結果：
 
   | 狀態 | 判定 | 畫面 |
@@ -58,7 +61,7 @@ npm run typecheck
 - PWA 的檔案（`manifest.webmanifest`、`sw.js`、圖示）也在 Access 後面，不要為了安裝方便而對它們開 bypass。
 
 **測試**：`npm test` 的 `pwa.test.ts` 會建置到暫存目錄（不動 `dist/`），檢查 manifest 欄位、`crossorigin`、沒有行內 script、service worker 的路由範圍與順序、cache 名稱與保險逾時；
-`connectivity.test.ts`（判定、逾時、重用、事件、恢復計數）、`api.test.ts`（連不上讀快取、登入逾時不讀、不相關的請求不受影響）、`Layout.test.tsx`（橫幅）鎖住連線偵測；
+`sync.test.ts`（離線副本：存哪些、清掉多的、失敗保留舊的、連不上與登入逾時不同步、間隔）、`connectivity.test.ts`（判定、逾時、重用、事件、恢復計數）、`api.test.ts`（連不上讀快取、登入逾時不讀、不相關的請求不受影響）、`Layout.test.tsx`（橫幅）鎖住連線偵測；
 後端 `uv run --project apps/web-server newsletter-web --selftest` 檢查 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`，以及 heartbeat 的回應、`no-store`、不寫入任何檔案。
 
 **正式站驗收**（Docker 與 systemd 兩種部署共用，部署步驟見 [deploy/README.md](../../deploy/README.md)；Access 的行為只有在真實網域上測得到）
@@ -69,7 +72,7 @@ npm run typecheck
 | Android Chrome 登入後開首頁 | 選單出現「安裝應用程式」；裝好後以獨立視窗開到今日晨報 |
 | iOS Safari 登入後「分享 → 加入主畫面」 | 圖示是藍底「報」（不是預設的字母）；以獨立視窗開啟 |
 | **未登入**：`curl -sI https://news.example.com/api/heartbeat` | `302` 到 `cloudflareaccess.com`（或 `403`），**絕不能是 200**；前端把 `opaqueredirect`、401、403 都當成登入逾時，若看到別的狀態碼要回頭檢查 `connectivity.ts` 的判定 |
-| 手機開飛航模式，開已安裝的 app | 看得到最近開過的晨報，標頭下方有「離線中」 |
+| 手機開飛航模式，開已安裝的 app | 看得到最近 30 份晨報（包括沒開過的），標頭下方有「離線中」 |
 | 停掉 origin（`docker compose stop` 或 `systemctl stop`，Tunnel 還在）後開已安裝的 app | 約 2 秒內看到快取的晨報，標頭下方是「連不上伺服器」（不是「離線中」）；把 origin 開回來、回到前景，橫幅消失、資料變最新 |
 | 清掉 Access 登入（或等逾時）後開 app | 被帶到 Access 登入頁，登入後回到晨報（不是白畫面，也不是舊的畫面停住） |
 | 開著 app 時讓 Access 登入逾時，再點「歷史晨報」 | **不顯示快取**：標頭下方是「登入已逾時」與「重新登入」，頁面是「讀取失敗」；按「重新登入」被帶到登入頁，登入後回到晨報 |
