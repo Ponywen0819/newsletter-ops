@@ -56,7 +56,8 @@ def _http_get(url: str, cfg: dict) -> bytes:
         },
     )
     last = None
-    for attempt in range(cfg.get("retries", 2) + 1):
+    attempts = cfg.get("retries", 2) + 1
+    for attempt in range(attempts):
         try:
             with urllib.request.urlopen(req, timeout=cfg.get("timeout", 25)) as resp:
                 raw = resp.read()
@@ -65,8 +66,15 @@ def _http_get(url: str, cfg: dict) -> bytes:
                 return raw
         except Exception as exc:
             last = exc
+            if not retryable(exc) or attempt == attempts - 1:
+                break
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"GET failed: {url}: {last}")
+
+
+def retryable(exc: Exception) -> bool:
+    """4xx（429 除外）重試也一樣，直接放棄；連線、逾時、5xx 才重試。"""
+    return not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
 
 
 def _clean(text: str | None, limit: int = 1200) -> str:
@@ -249,6 +257,21 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert wait_seconds("a.com", {"a.com": 99.5}, cfg, 100.0) == 0.5            # 同網域補足 1 秒
     assert wait_seconds("a.com", {"a.com": 90.0}, cfg, 100.0) == 0.0            # 早就超過間隔
     assert wait_seconds("export.arxiv.org", {"export.arxiv.org": 99.0}, cfg, 100.0) == 2.0  # arXiv 3 秒
+    def http_error(code: int) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("https://x", code, "x", {}, None)  # type: ignore[arg-type]
+    assert not retryable(http_error(404)) and not retryable(http_error(403))
+    assert retryable(http_error(429)) and retryable(http_error(503)) and retryable(TimeoutError())
+    calls = []
+    real_urlopen, real_sleep = urllib.request.urlopen, time.sleep
+    urllib.request.urlopen = lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(http_error(404))
+    time.sleep = calls.append
+    try:
+        _http_get("https://x/feed", {"retries": 2})
+    except RuntimeError as exc:
+        assert "404" in str(exc)
+    finally:
+        urllib.request.urlopen, time.sleep = real_urlopen, real_sleep
+    assert calls == [1], calls  # 404 只請求一次、不等
     order = [s["url"] for s in interleave([{"url": u} for u in
              ["https://a/1", "https://a/2", "https://a/3", "https://b/1", "https://c/1"]])]
     assert order == ["https://a/1", "https://b/1", "https://c/1", "https://a/2", "https://a/3"], order
