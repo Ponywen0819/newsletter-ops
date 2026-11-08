@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from newsletter_shared import auth_health, lock
 
 from . import daily
-from .service import Service, check_due, due, failure_notice, make_server, next_run_at, parse_hhmm
+from .service import Service, check_due, due, expiry_notice, failure_notice, make_server, next_run_at, parse_hhmm
 
 TPE = ZoneInfo("Asia/Taipei")
 AT = time(8, 0)
@@ -31,6 +31,7 @@ def service_for(tmp: Path, at: time, check_at: time = CHECK_AT) -> Service:
     service.checker = lambda: service.checks.append(1) or {"ok": True, "kind": "ok", "message": ""}  # type: ignore[attr-defined]
     service.notices = []  # type: ignore[attr-defined]
     service.notifier = service.notices.append  # type: ignore[attr-defined]
+    service.token_status = lambda: {"state": "ok", "days_left": 200}
     return service
 
 
@@ -43,6 +44,7 @@ def selftest() -> None:
     _selftest_due()
     _selftest_check_due()
     _selftest_notice()
+    _selftest_expiry()
     with tempfile.TemporaryDirectory() as d, daily.fake_steps(Path(d)):
         _selftest_http(Path(d))
         _selftest_tick(Path(d))
@@ -125,6 +127,28 @@ def _selftest_notice() -> None:
     n = failure_notice(3, {"date": "2026-11-03", "step": "collect"}, [], retried=True)
     assert "蒐集新聞" in n["subject"] and "已經自動重跑過一次" in n["text"], n
     assert "?" in failure_notice(1, None, [], retried=True)["subject"]
+
+
+def _selftest_expiry() -> None:
+    st = {"state": "expiring", "days_left": 7, "expires_at": "2027-01-01"}
+    n = expiry_notice(st)
+    assert n is not None and "剩 7 天" in n["subject"] and "2027-01-01" in n["text"] and "/auth" in n["text"], n
+    assert expiry_notice({**st, "days_left": 6}) is None  # 只在固定幾天提醒，不要天天寄
+    assert expiry_notice({"state": "ok", "days_left": 30}) is None and expiry_notice({"state": "missing"}) is None
+    assert "已經過期" in expiry_notice({"state": "expired", "days_left": -1, "expires_at": "x"})["subject"]
+    assert expiry_notice({"state": "expired", "days_left": -5, "expires_at": "x"}) is None
+
+    # 驗證時間之後每天檢查一次：同一天不重寄，還沒到時間不檢查
+    with tempfile.TemporaryDirectory() as d:
+        service = service_for(Path(d), AT)
+        service.token_status = lambda: st
+        service.remind(tpe("2026-11-08T07:00"))
+        assert service.notices == []  # type: ignore[attr-defined]
+        service.remind(tpe("2026-11-08T07:31"))
+        service.remind(tpe("2026-11-08T12:00"))
+        assert len(service.notices) == 1  # type: ignore[attr-defined]
+        service.remind(tpe("2026-11-09T07:31"))
+        assert len(service.notices) == 2  # type: ignore[attr-defined]
 
 
 def _wait(cond, seconds: float = 15) -> None:

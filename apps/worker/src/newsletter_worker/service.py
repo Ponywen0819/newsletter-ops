@@ -9,6 +9,7 @@
 要不要跑只看 state/last_run.json（run_pipeline 寫的，手動跑的也算）和 pipeline 的鎖：
 今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 從失敗的那步自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
 認證的驗證只看 auth_health.json 的時間：今天排定時間之後驗過（web 的 /auth 測試也算）就不再驗。
+token 剩 REMIND_DAYS 裡的天數時（推算的到期日），在驗證時間寄一封提醒。
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT, auth_health, lock, tz
+from newsletter_shared import ROOT, auth_health, auth_store, lock, tz
 
 from . import daily
 
@@ -37,6 +38,7 @@ HHMM_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
 AUTH_EXIT = {5: "auth", 6: "quota"}  # newsletter-write 的授權失敗／額度用完（其他步驟不用 5、6）
 RETRY_AFTER = timedelta(minutes=30)  # 暫時性失敗（網路、來源掛掉）等這麼久重跑一次
 NO_RETRY = {0, daily.EXIT_STOPPED, *AUTH_EXIT}  # 重跑也沒用、或是人要它停的
+REMIND_DAYS = {30, 14, 7, 3, 1, 0, -1}  # token 剩這幾天時寄提醒；-1＝過期後第一天
 
 
 def parse_hhmm(value: str) -> time:
@@ -107,6 +109,17 @@ def failure_notice(code: int, record: dict | None, tail: list[str], retried: boo
     return {"subject": f"晨報失敗 {rec.get('date', '')}：{step}（exit {code}）", "text": "\n".join(lines) + "\n"}
 
 
+def expiry_notice(st: dict) -> dict | None:
+    """auth_store.status() → token 到期提醒的 {subject, text}；今天不用提醒就是 None。"""
+    if st.get("state") not in ("expiring", "expired") or st.get("days_left") not in REMIND_DAYS:
+        return None
+    left = "已經過期" if st["state"] == "expired" else f"剩 {st['days_left']} 天"
+    text = (f"Claude 的 OAuth token 預計 {st['expires_at']} 到期（{left}；依儲存時間推算）。\n"
+            "到期後每天的晨報會在「撰寫報告」失敗。請在自己的電腦跑 `claude setup-token`，"
+            "把新的 token 貼到 newsletter-web 的 /auth 頁面（只能從本機開）。\n")
+    return {"subject": f"晨報：Claude token {left}", "text": text}
+
+
 def send_notice(notice: dict) -> None:
     """另開程序寄（worker 不 import notify）；寄不出去只記 log。"""
     try:
@@ -127,6 +140,8 @@ class Service:
         self.health = health or auth_health.health_path()
         self.checker = auth_health.run_check
         self.notifier = send_notice
+        self.token_status = lambda: auth_store.status(auth_store.token_path())
+        self.reminded: str | None = None  # 今天檢查過到期提醒了沒（日期）；重啟後同一天可能再寄一次
         self.stop = threading.Event()
         self.current: dict | None = None  # {trigger, started_at}
         self._mu = threading.Lock()
@@ -176,7 +191,17 @@ class Service:
         auth_health.write(bool(result.get("ok")), str(result.get("kind", "other")), self.health)
         say(f"認證驗證：{result.get('kind')}")
 
+    def remind(self, now: datetime) -> None:
+        local = now.astimezone(self.tz)
+        if self.reminded == f"{local:%Y-%m-%d}" or local.time() < self.check_at:
+            return
+        self.reminded = f"{local:%Y-%m-%d}"
+        if (notice := expiry_notice(self.token_status())) is not None:
+            say(notice["subject"])
+            self.notifier(notice)
+
     def tick(self, now: datetime) -> None:
+        self.remind(now)
         if check_due(now, auth_health.read(self.health), self.check_at, self.tz):
             self.check_auth()  # 同步跑：同一輪要開始的 pipeline 排在它後面
         if self.current is None and (action := due(now, daily.read_record(), lock_held(), self.at, self.tz)) not in (None, "busy"):
