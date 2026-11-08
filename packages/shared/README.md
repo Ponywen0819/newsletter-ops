@@ -4,7 +4,7 @@
 
 ```
 src/newsletter_shared/
-  __init__.py            資料根目錄 ROOT：環境變數 NEWSLETTER_ROOT，沒設就是工作目錄；其他模組一律從這裡取
+  __init__.py            資料根目錄 ROOT（環境變數 NEWSLETTER_ROOT，沒設就是工作目錄）與報告日期 tz()／today()（config.json 的 timezone）；其他模組一律從這裡取
   report_data.py         報告 Markdown → 結構化資料：報告格式（SKILL.md 規定的子集）唯一的解析與驗證者，網頁與 email 共用
                          （newsletter-report-check 用它驗證 reports/<date>.md）
   lock.py                跨程序檔案鎖 locked(path, timeout)：多個服務讀寫同一個檔案時一律從這裡排隊

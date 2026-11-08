@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
 from typing import Callable
-from zoneinfo import ZoneInfo
 
 from newsletter_shared import feedback, lock, report_data
+from newsletter_shared import today as shared_today
 
 from .errors import ApiError, NotFound
 
@@ -26,7 +25,7 @@ def level(mark: str) -> str:
 class Reports:
     def __init__(self, root: Path, today: Callable[[], str] | None = None):
         self.root = root
-        self.today = today or (lambda: f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}")
+        self.today = today or (lambda: shared_today(root))
         self.feedback_path = root / "state" / "feedback.jsonl"
 
 
