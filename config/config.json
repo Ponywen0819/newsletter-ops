@@ -111,6 +111,7 @@
     ]
   },
   "min_relevance": 0.8,
+  "same_story_topics": ["world"],
   "default_quota": 5,
   "quota": {
     "ai-research": 8,

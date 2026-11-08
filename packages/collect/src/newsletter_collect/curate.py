@@ -194,8 +194,54 @@ def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float
     return round(relevance, 2), round(rank, 2), sorted(set(hits))
 
 
-def dedupe(items: list[dict], threshold: float = 0.88) -> list[dict]:
-    """先以 uid/url 去重，再用標題相似度合併跨來源重複報導。"""
+_NAME = re.compile(r"[A-Z][\w'’.-]*[A-Za-z0-9]")
+# 句首常見的大寫字，不是專有名詞
+_NOT_NAMES = {"the", "a", "an", "how", "why", "what", "who", "when", "where", "watch", "new", "after", "before",
+              "as", "in", "on", "at", "for", "with", "from", "is", "are", "was", "will", "can", "this", "that",
+              "live", "breaking", "exclusive", "analysis", "opinion", "video", "says", "said"}
+SAME_STORY_SHARED, SAME_STORY_JACCARD = 3, 0.4  # 用 2026-11-08 的國際新聞調的：同一則的各家報導都在 0.4 以上
+
+
+def _names(title: str) -> set[str]:
+    """標題裡的專有名詞（大寫開頭的字，去掉所有格與句首常見字），小寫。"""
+    words = (re.sub(r"['’]s$", "", w).lower() for w in _NAME.findall(title))
+    return {w for w in words if len(w) >= 3 and w not in _NOT_NAMES}
+
+
+def same_story(a: set[str], b: set[str]) -> bool:
+    """標題＋摘要裡的專有名詞夠重疊才算同一則：只共有 Trump、Iran 這種一兩個名字的不算。
+    ponytail: 只看名字重疊；同一個人物的兩件不同事件、名字又多半相同時會誤併，遇到再調門檻。"""
+    shared = a & b
+    return len(shared) >= SAME_STORY_SHARED and len(shared) / len(a | b) >= SAME_STORY_JACCARD
+
+
+def dedupe(items: list[dict], threshold: float = 0.88, name_topics: frozenset[str] = frozenset()) -> list[dict]:
+    """先以 uid/url 去重，再用標題相似度合併跨來源重複報導。
+    name_topics 裡的主題（國際新聞）另外用專有名詞比對：各家標題寫法不同，相似度幾乎合併不了。"""
+    unique = _dedupe_urls(items)
+    names = {id(i): _names(f"{i['title']}. {i.get('summary', '')}") for i in unique if i["topic"] in name_topics}
+
+    def matches(item: dict, k: dict, norm: str) -> bool:
+        if SequenceMatcher(None, norm, _norm_title(k["title"])).ratio() >= threshold:
+            return True
+        return (item["topic"] in name_topics and item["topic"] == k["topic"] and item["source"] != k["source"]
+                and same_story(names[id(item)], names[id(k)]))
+
+    kept: list[dict] = []
+    for item in sorted(unique, key=lambda i: i.get("rank", 0), reverse=True):
+        norm = _norm_title(item["title"])
+        match = next((k for k in kept if matches(item, k, norm)), None)
+        if match:
+            match.setdefault("also_in", []).append(item["source"])
+        else:
+            kept.append(item)
+    for item in kept:
+        item["also_in"] = sorted({s for s in item.get("also_in", []) if s != item["source"]})
+    return kept
+
+
+def _dedupe_urls(items: list[dict]) -> list[dict]:
+    """同一個網址（或 uid）只留 rank 最高的，其他來源記進 also_in。"""
     by_key: dict[str, dict] = {}
     for item in items:
         key = item["url"] or item["uid"]
@@ -207,21 +253,7 @@ def dedupe(items: list[dict], threshold: float = 0.88) -> list[dict]:
             by_key[key] = item
         else:
             existing.setdefault("also_in", []).append(item["source"])
-
-    kept: list[dict] = []
-    for item in sorted(by_key.values(), key=lambda i: i.get("rank", 0), reverse=True):
-        norm = _norm_title(item["title"])
-        match = next(
-            (k for k in kept if SequenceMatcher(None, norm, _norm_title(k["title"])).ratio() >= threshold),
-            None,
-        )
-        if match:
-            match.setdefault("also_in", []).append(item["source"])
-        else:
-            kept.append(item)
-    for item in kept:
-        item["also_in"] = sorted({s for s in item.get("also_in", []) if s != item["source"]})
-    return kept
+    return list(by_key.values())
 
 
 def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
@@ -265,7 +297,7 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
 
     min_relevance = config.get("min_relevance", 1.0)
     relevant = [i for i in fresh if i["relevance"] >= min_relevance]
-    ranked, dropped_by_quota = apply_quota(dedupe(relevant), config)
+    ranked, dropped_by_quota = apply_quota(dedupe(relevant, name_topics=frozenset(config.get("same_story_topics", []))), config)
 
     now = datetime.now(timezone.utc).isoformat()
     for item in ranked:
@@ -325,6 +357,22 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert score({**base, "order_boost": 1.0, "position": 5}, {})[1] == 2.0
     assert score({**base, "order_boost": 1.0, "position": 12}, {})[1] == 1.5
     assert score({**base, "position": 0}, {})[1] == 1.5                        # 沒設 order_boost 不加
+
+    # 同一則新聞、標題寫法不同：標題＋摘要的名字夠重疊才合併；只共有 Trump、Iran 不合併；不在 name_topics 不合併
+    assert _names("Israel's president tasks opposition leader Eisenkot with forming government") == {"israel", "eisenkot"}
+    def w(uid, source, title, summary, rank):
+        return {"uid": uid, "url": f"https://{uid}", "source": source, "topic": "world", "title": title,
+                "summary": summary, "rank": rank}
+    batch = [w("b1", "BBC", "Israel's president tasks opposition leader Eisenkot with forming government",
+               "Isaac Herzog asked Gadi Eisenkot to form a government after Netanyahu failed.", 3),
+             w("a1", "AJ", "Eisenkot chosen over Netanyahu to form Israel’s next government",
+               "President Isaac Herzog picked Gadi Eisenkot, sidelining Benjamin Netanyahu.", 2),
+             w("b2", "BBC", "Trump to visit Iran border region", "Donald Trump will tour Iraq's Kurdistan.", 2.5),
+             w("a2", "AJ", "Iran oil exports fall as Trump tariffs bite", "Tehran's sales to China dropped in October.", 1.5)]
+    got = dedupe([dict(i) for i in batch], name_topics=frozenset({"world"}))
+    assert [i["uid"] for i in got] == ["b1", "b2", "a2"], [i["uid"] for i in got]
+    assert got[0]["also_in"] == ["AJ"]
+    assert len(dedupe([dict(i) for i in batch])) == 4  # 沒開就照舊
 
     # 同日重跑：沒有 redo 時第二次拿到第二梯隊；帶上次的 uid 就拿回同一批
     import tempfile
