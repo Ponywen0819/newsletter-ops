@@ -22,7 +22,7 @@
 - 已做（2026-09-28）：修了複數比對；Ars Technica、IEEE Spectrum 保底 0.5，命中任一關鍵字就過門檻。IEEE 試過 0.8（無條件收錄），五則裡三則是無關雜項，所以沒採用。
 - 已做（2026-11-08）：配額沒滿的主題，把差一點過門檻（0 < relevance < min_relevance）的前 3 則附進 curated 的 `near_misses`，命中關鍵字的優先；writer 依興趣決定要不要寫進報告。2026-11-08 附了 The Verge〈US let Nvidia sell chips to an empty office in China〉這類只命中低權重關鍵字的新聞。
 - 觀察：跑幾天看 writer 撈回多少、tech-industry 的則數。
-- 另外：`vision` 命中了〈Poetry for Engineers: The UI Designer's Dream〉，這個 boost_low 關鍵字太泛，可考慮改成 `computer vision`。
+- 已做（2026-11-08）：boost_low 的 `vision` 太泛（命中〈Poetry for Engineers: The UI Designer's Dream〉），改成 `computer vision`、`vision-language`、`vision model`。
 
 **6. 「其餘收錄」塞了不相關的新聞**
 - 現象：VMAs 紅毯、沉船影片也出現在 email 裡。

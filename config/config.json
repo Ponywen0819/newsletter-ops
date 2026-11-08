@@ -71,7 +71,9 @@
       "literature mining"
     ],
     "boost_low": [
-      "vision",
+      "computer vision",
+      "vision-language",
+      "vision model",
       "gpu",
       "open source",
       "open-source",
