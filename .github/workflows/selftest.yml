@@ -1,9 +1,11 @@
 name: selftest
 
-# 各模組的 lint、自我檢查（不連網）、前端測試都交給 Nx；只在 main 跑，release.yml 接在後面
+# 各模組的 lint、自我檢查（不連網）、前端測試都交給 Nx；PR 到 develop／main 時檢查，main 的 push 之後 release.yml 接著建映像
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [develop, main]
 
 permissions:
   contents: read
