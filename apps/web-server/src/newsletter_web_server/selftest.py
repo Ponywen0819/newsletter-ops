@@ -3,15 +3,13 @@ from __future__ import annotations
 
 import json
 import os
-import threading
-import traceback
 from datetime import datetime
 from pathlib import Path
 
-from newsletter_shared import ROOT, auth_store, feedback
+from newsletter_shared import auth_health, auth_store, feedback
 
 from . import server
-from .auth import CHECK_TIMEOUT, run_auth_check
+from .auth import STALE_AFTER
 from .server import IMMUTABLE, MAX_BODY, Site, is_local_request, served
 
 
@@ -246,7 +244,6 @@ def _selftest_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str,
 def selftest_auth() -> None:
     secret = "sk-ant-oat01-" + "Kp4" * 14
     _selftest_is_local()
-    _selftest_run_auth_check(secret)
     _selftest_auth_http(secret)
 
 
@@ -278,47 +275,6 @@ def _selftest_is_local() -> None:
                   ("172.18.0.1", {**ok_host, "Origin": "https://evil.example"})):
         assert not is_local_request(ip, h, admin=True), (ip, h)
     assert not is_local_request("172.18.0.1", ok_host)
-
-
-def _selftest_run_auth_check(secret: str) -> None:
-    import subprocess as sp
-    from unittest import mock
-
-    # --- run_auth_check：子程序的呼叫方式與輸出解析（假的 subprocess.run）---
-
-    def fake_run(stdout="", code=0, raises=None):
-        calls = []
-
-        def run(cmd, **kw):
-            calls.append((cmd, kw))
-            if raises:
-                raise raises
-            return sp.CompletedProcess(cmd, code, stdout, "")
-        return run, calls
-
-    run, calls = fake_run('[agent] 雜訊\n{"ok": false, "kind": "auth", "message": "bad ' + secret + '", "source": "env-token"}\n', 5)
-    with mock.patch.object(sp, "run", run):
-        res = run_auth_check(secret)
-    assert res == {"ok": False, "kind": "auth", "message": "bad ***"}, res
-    cmd, kw = calls[0]
-    assert secret not in " ".join(cmd) and "--auth-check" in cmd and "--token-from-env" in cmd
-    assert cmd[1:3] == ["-m", "newsletter_llm.runner"] and kw["cwd"] == ROOT, cmd
-    assert kw["env"][auth_store.TOKEN_ENV] == secret and kw["timeout"] == CHECK_TIMEOUT and kw["stdin"] == sp.DEVNULL
-    run, _ = fake_run('{"ok": true, "kind": "ok", "message": "驗證通過", "source": "env-token"}\n')
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["ok"] is True
-    run, _ = fake_run("", 2)
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["kind"] == "env"
-    run, _ = fake_run("garbage", 1)
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret) == {"ok": False, "kind": "other", "message": "驗證程序異常結束（exit 1）"}
-    run, _ = fake_run(raises=sp.TimeoutExpired("x", CHECK_TIMEOUT))
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["kind"] == "timeout"
-    run, _ = fake_run(raises=FileNotFoundError(2, "No such file"))
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["kind"] == "env"
 
 
 def _selftest_auth_http(secret: str) -> None:
@@ -503,7 +459,7 @@ def _selftest_auth_lifecycle(t) -> None:
     from datetime import timedelta, timezone
     from unittest import mock
 
-    site, get, post, secret, checked, missing = t.site, t.get, t.post, t.secret, t.checked, t.missing
+    site, get, post, secret, missing = t.site, t.get, t.post, t.secret, t.missing
 
     # 即將到期的提醒（以儲存時間推算）
     auth_store.save(secret, site.auth.token_path, datetime.now(timezone.utc) - timedelta(days=345))
@@ -523,40 +479,22 @@ def _selftest_auth_lifecycle(t) -> None:
     assert post("/api/auth/test", {})[0] == 404
     assert get("/api/auth-health")[1] == missing
 
-    # 定時驗證：用儲存的 token 驗一次；沒有就不呼叫。環境變數裡的 OAuth token 不算來源
-    n = len(checked)
-    env_token = "env-" + "e" * 20
-    with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}):
-        site.auth.check_now()
-        assert len(checked) == n and site.auth.last_check is None
-        assert get("/api/auth-health")[1] == missing and get("/api/auth") == (200, {"state": "missing"})
+    # 最近的驗證結果來自 state/auth_health.json（worker 定時寫）：web 重啟不會丟，太久沒更新就不能再說正常
     auth_store.save(secret, site.auth.token_path)
-    assert get("/api/auth-health")[1]["kind"] == "unchecked"
-    site.auth.check_now()
-    assert checked[-1] == secret and get("/api/auth-health")[1]["state"] == "ok"
-    n = len(checked)
-    assert site.auth._check_lock.acquire(blocking=False)
-    try:
-        site.auth.check_now()
-    finally:
-        site.auth._check_lock.release()
-    assert len(checked) == n
-
-    # 迴圈：先驗一次、之後每隔一段時間；某一輪丟例外也不會停
-    stop, calls = threading.Event(), []
-
-    def flaky(token: str) -> dict:
-        calls.append(token)
-        if len(calls) == 1:
-            raise RuntimeError("boom")
-        if len(calls) >= 3:
-            stop.set()
-        return {"ok": True, "kind": "ok", "message": ""}
-
-    site.auth.checker = flaky
-    with mock.patch.object(traceback, "print_exc"):
-        t = threading.Thread(target=site.auth.monitor, args=(0.01, stop))
-        t.start()
-        t.join(10)
-    assert not t.is_alive() and calls == [secret] * 3
+    assert get("/api/auth-health")[1] == {"state": "unknown", "kind": "unchecked", "checked_at": None}
+    at = datetime.now(timezone.utc).replace(microsecond=0)
+    auth_health.write(True, "ok", site.auth.health_path, at)
+    assert get("/api/auth-health")[1] == {"state": "ok", "kind": "ok", "checked_at": at.isoformat()}
+    assert Site(site.auth.health_path.parent.parent, checker=lambda _: {}).auth.health()["state"] == "ok"  # 新的 web 程序讀得到
+    auth_health.write(False, "auth", site.auth.health_path, at)
+    assert get("/api/auth-health")[1]["state"] == "invalid"
+    late = at + STALE_AFTER + timedelta(seconds=1)
+    assert site.auth.health(late) == {"state": "unknown", "kind": "stale", "checked_at": at.isoformat()}
+    assert site.auth.health(at + STALE_AFTER)["state"] == "invalid"
+    with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: "env-" + "e" * 20}):  # 環境變數裡的 token 不算來源
+        auth_store.delete(site.auth.token_path)
+        assert get("/api/auth-health")[1] == missing
+        auth_store.save(secret, site.auth.token_path)
+    assert post("/api/auth/revoke", {})[0] == 200 and not site.auth.health_path.exists()  # 刪 token 連結果一起清
+    assert not hasattr(site.auth, "monitor") and not hasattr(site.auth, "check_now")  # 定時驗證在 worker
     auth_store.delete(site.auth.token_path)

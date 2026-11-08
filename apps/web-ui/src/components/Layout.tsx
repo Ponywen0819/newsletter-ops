@@ -25,6 +25,7 @@ function authMessage(h: AuthHealth): string | null {
         : 'Claude 授權已失效，下次晨報會失敗'
     case 'unknown':
       if (h.kind === 'unchecked') return null
+      if (h.kind === 'stale') return '超過一天沒有驗證 Claude 授權，worker 可能停了'
       return h.kind === 'quota' ? '訂閱額度用完，晨報可能失敗' : '暫時無法確認 Claude 授權狀態，稍後會再檢查'
     default:
       return null

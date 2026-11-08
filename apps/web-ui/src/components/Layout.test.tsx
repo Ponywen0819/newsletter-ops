@@ -102,6 +102,7 @@ describe('授權橫幅', () => {
     ['invalid', 'api_key', /API key/, 'auth-bar-bad'],
     ['unknown', 'quota', /額度用完/, 'auth-bar-warn'],
     ['unknown', 'timeout', /暫時無法確認/, 'auth-bar-warn'],
+    ['unknown', 'stale', /worker 可能停了/, 'auth-bar-warn'],
   ] as const)('%s／%s：顯示提醒', async (state, kind, text, cls) => {
     const { bar } = openHealth(health(state, kind))
     expect(await screen.findByText(text)).toBeInTheDocument()
@@ -117,7 +118,7 @@ describe('授權橫幅', () => {
 
   it.each([
     ['正常', health('ok', 'ok')],
-    ['伺服器剛啟動、還沒驗證過', { state: 'unknown', kind: 'unchecked', checked_at: null } as AuthHealth],
+    ['worker 還沒驗證過', { state: 'unknown', kind: 'unchecked', checked_at: null } as AuthHealth],
     ['問不到狀態', null],
   ])('%s：沒有橫幅', async (_name, reply) => {
     const { bar, settled } = openHealth(reply)
