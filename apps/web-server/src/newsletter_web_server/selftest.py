@@ -154,6 +154,9 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     assert status == 200 and data["results"] and all("mark:" not in r["text"] and "**" not in r["text"]
                                                       for r in data["results"]), data
     assert get("/api/search?q=")[1] == {"q": "", "results": [], "truncated": False}
+    both = get("/api/search?q=%E7%B4%B0+%E7%AF%80")[1]["results"]  # 細 節：兩個詞都要有
+    assert both and all("細" in r["text"] and "節" in r["text"] for r in both), both
+    assert get("/api/search?q=%E7%B4%B0%E7%AF%80+zzzz")[1]["results"] == []
     assert get("/api/search")[1]["results"] == []
     assert get("/api/search?q=" + "x" * 101)[0] == 400
     import newsletter_web_server.reports as reports_mod

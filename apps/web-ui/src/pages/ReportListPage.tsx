@@ -47,19 +47,14 @@ function Side({ q, children }: { q: string; children?: ReactNode }) {
   )
 }
 
-/** 把 text 裡的 q（不分大小寫）包成 <mark>。 */
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** 把 text 裡 q 的每個詞（空白分開、不分大小寫）包成 <mark>。 */
 function highlight(text: string, q: string): ReactNode[] {
-  const lower = text.toLowerCase()
-  const needle = q.toLowerCase()
-  if (!needle) return [text]
-  const out: ReactNode[] = []
-  let at = 0
-  for (let i = lower.indexOf(needle); i >= 0; i = lower.indexOf(needle, at)) {
-    out.push(text.slice(at, i), <mark key={i}>{text.slice(i, i + q.length)}</mark>)
-    at = i + q.length
-  }
-  out.push(text.slice(at))
-  return out
+  const terms = q.split(/\s+/).filter(Boolean).toSorted((a, b) => b.length - a.length) // 長的先比，免得被短的切開
+  if (!terms.length) return [text]
+  const parts = text.split(new RegExp(`(${terms.map(escapeRe).join('|')})`, 'gi'))
+  return parts.map((part, i) => (i % 2 ? <mark key={i}>{part}</mark> : part))
 }
 
 function SearchResults({ q }: { q: string }) {
