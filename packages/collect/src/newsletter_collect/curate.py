@@ -95,6 +95,17 @@ def _find(names: list[str], note: str, flags: int = 0) -> tuple[int, str, str] |
     return best
 
 
+def _find_lower(names: list[str], note: str) -> tuple[int, str, str] | None:
+    """大小寫寫錯的會議名（neurips 2026）：一定要接年份才算，否則 www.example.com 會命中 WWW。
+    名稱換回清單的寫法。"""
+    best = None
+    for name in names:
+        m = re.search(r"(?<![A-Za-z])" + re.escape(name) + r"\s*('?\d{2,4})(?![A-Za-z0-9])", note, re.I)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), f"{name} {m.group(1)}", name)
+    return best
+
+
 def venue_of(note: str, venues: dict) -> dict | None:
     """用固定清單判斷 arXiv Comments 裡的會議/期刊，回傳
     {"status": main|minor|submitted, "kind": conference|journal, "name", "track", "label"} 或 None。
@@ -107,6 +118,8 @@ def venue_of(note: str, venues: dict) -> dict | None:
         return None
     hits = [(h, kind) for kind in ("conference", "journal")
             if (h := _find(venues.get(kind, []), note))]
+    if not hits and (h := _find_lower(venues.get("conference", []), note)):
+        hits = [(h, "conference")]  # 期刊不放寬：Nature 不該命中 the nature of
     if not hits:
         return None
     (pos, name, _), kind = min(hits, key=lambda x: x[0][0])
@@ -282,6 +295,10 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert venue_of("Published in TMLR", V)["label"] == "已被 TMLR 接受（期刊）"
     assert st("Accepted at COLM 2026. Project website: https://x") == ("main", "COLM 2026", "")
     assert st("12 pages; on the nature of attention") is None
+    assert st("accepted at neurips 2026") == ("main", "NeurIPS 2026", ""), st("accepted at neurips 2026")
+    assert venue_of("to appear in iclr 2027", V)["label"] == "已被 ICLR 2027 接受（主會議）"
+    assert st("Project page: https://www.example.com/acl") is None  # 小寫沒有年份不算
+    assert st("12 pages, nature 2026 style") is None  # 期刊不放寬
     assert st("ACLU report analysis") is None
     assert st("") is None
     assert _hits("openai agents tried to bruteforce", "agent") and _hits("new gpus", "gpu")
