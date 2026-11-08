@@ -5,14 +5,21 @@ import { mockFetch } from './test/fetchMock'
 /** 假的 Cache Storage：一個 cache，path → 內容。 */
 function stubCaches(initial: Record<string, unknown> = {}) {
   const store = new Map(Object.entries(initial).map(([p, v]) => [p, JSON.stringify(v)]))
+  const etags = new Map<string, string>()
   const cache = {
-    put: vi.fn(async (path: string, res: Response) => void store.set(path, await res.text())),
+    put: vi.fn(async (path: string, res: Response) => {
+      store.set(path, await res.text())
+      const etag = res.headers.get('ETag')
+      if (etag) etags.set(path, etag)
+    }),
+    match: async (path: string) =>
+      store.has(path) ? new Response(store.get(path), { headers: etags.has(path) ? { ETag: etags.get(path) as string } : {} }) : undefined,
     keys: async () => [...store.keys()].map((p) => new Request(`http://localhost${p}`)),
     delete: async (req: Request) => store.delete(new URL(req.url).pathname),
   }
   const open = vi.fn(async () => cache)
   vi.stubGlobal('caches', { open })
-  return { store, open, cache }
+  return { store, open, cache, etags }
 }
 
 const dates = (n: number) => Array.from({ length: n }, (_, i) => `2026-09-${String(30 - i).padStart(2, '0')}`)
@@ -115,6 +122,23 @@ describe('sync（離線副本）', () => {
     })
     expect(await sync(true)).toBe(true)
     expect(lastSync()).toBeNull()
+  })
+
+  it('條件請求：帶副本的 ETag，304 就沿用舊副本、不覆寫', async () => {
+    const all = dates(2)
+    const { store, etags, cache } = stubCaches({ [`/api/reports/${all[0]}`]: { date: 'cached' } })
+    etags.set(`/api/reports/${all[0]}`, '"v1"')
+    const net = mockFetch({
+      ...routesFor(all),
+      [`GET /api/reports/${all[0]}`]: () => ({ status: 304, json: null }),
+    })
+    expect(await sync(true)).toBe(true)
+    const sent = net.calls.find((c) => c.path === `/api/reports/${all[0]}`)
+    expect(sent?.headers).toEqual({ 'If-None-Match': '"v1"' })
+    expect(net.calls.find((c) => c.path === `/api/reports/${all[1]}`)?.headers).toEqual({}) // 沒存過就不帶
+    expect(store.get(`/api/reports/${all[0]}`)).toBe(JSON.stringify({ date: 'cached' }))
+    expect(cache.put.mock.calls.map(([p]) => p)).not.toContain(`/api/reports/${all[0]}`)
+    expect(lastSync()).toMatchObject({ count: 2, failed: 0 }) // 304 算更新到了
   })
 
   it('沒有 Cache API：什麼都不做', async () => {

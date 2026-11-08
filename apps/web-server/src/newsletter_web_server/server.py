@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import ipaddress
 import json
 import re
@@ -24,6 +25,14 @@ DEFAULT_PORT = 8787
 MAX_BODY = 4096
 # 與 apps/web-ui/src/App.tsx 的路由同步
 SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
+# 離線副本同步的對象：回 ETag，If-None-Match 相符回 304（前端自己帶，所以照舊 no-store）
+ETAG_PATHS = re.compile(r"/api/today|/api/reports|/api/reports/\d{4}-\d{2}-\d{2}")
+
+
+def etag_matches(header: str, etag: str) -> bool:
+    """If-None-Match 可能是逗號分隔的清單、*、或被代理（Cloudflare）改成弱 ETag 的 W/"..."。"""
+    tags = {t.strip().removeprefix("W/") for t in header.split(",")}
+    return "*" in tags or etag in tags
 BUILD_COMMAND = "cd apps/web-ui && npm install && npm run build"
 STATIC_TYPES = {  # 副檔名白名單
     ".html": "text/html; charset=utf-8",
@@ -183,7 +192,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get_api(self, path: str) -> None:
         try:
-            self._send_json(200, self._api_payload(path))
+            payload = self._api_payload(path)
+            if not ETAG_PATHS.fullmatch(path):
+                self._send_json(200, payload)
+                return
+            # 晨報內容＋標記都在 payload 裡，對最後的 JSON 取雜湊才不會漏掉標記變動
+            body = json.dumps(payload, ensure_ascii=False)
+            etag = '"' + hashlib.sha256(body.encode("utf-8")).hexdigest()[:32] + '"'
+            if etag_matches(self.headers.get("If-None-Match", ""), etag):
+                self.send_response(HTTPStatus.NOT_MODIFIED)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
+            self._send(200, body, "application/json; charset=utf-8", headers={"ETag": etag})
         except NotFound:
             self._send_json(404, {"error": "not found"})
         except ApiError as exc:
