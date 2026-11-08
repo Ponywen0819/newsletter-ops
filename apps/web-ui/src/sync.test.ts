@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { KEEP, lastSync, resetSync, sync } from './sync'
+import { askPersist, KEEP, lastSync, resetSync, sync } from './sync'
 import { mockFetch } from './test/fetchMock'
 
 /** 假的 Cache Storage：一個 cache，path → 內容。 */
@@ -25,6 +25,7 @@ const routesFor = (all: string[]) => ({
 beforeEach(() => {
   resetSync()
   localStorage.removeItem('offline-sync')
+  localStorage.removeItem('storage-persist-asked')
 })
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -132,5 +133,52 @@ describe('sync（離線副本）', () => {
     expect(await sync()).toBe(false)
     expect(net.calls.length).toBe(n)
     expect(await sync(true)).toBe(true)
+  })
+})
+
+describe('askPersist（storage.persist）', () => {
+  function stubStorage(persisted: boolean, granted = true) {
+    const storage = { persisted: vi.fn(async () => persisted), persist: vi.fn(async () => granted) }
+    setStorage(storage)
+    return storage
+  }
+  // jsdom 沒有 navigator.storage，直接掛上去、測完拿掉
+  const setStorage = (value: unknown) => Object.defineProperty(navigator, 'storage', { value, configurable: true })
+  afterEach(() => void Reflect.deleteProperty(navigator, 'storage'))
+
+  it('第一次同步成功後問一次；之後不再問', async () => {
+    const storage = stubStorage(false)
+    stubCaches()
+    mockFetch(routesFor(dates(1)))
+    await sync(true)
+    await vi.waitFor(() => expect(storage.persist).toHaveBeenCalledTimes(1))
+    await askPersist()
+    expect(storage.persist).toHaveBeenCalledTimes(1)
+  })
+
+  it('已經是持久的：不問', async () => {
+    const storage = stubStorage(true)
+    await askPersist()
+    expect(storage.persist).not.toHaveBeenCalled()
+  })
+
+  it('被拒絕：不報錯，也不再問', async () => {
+    const storage = stubStorage(false, false)
+    await askPersist()
+    await askPersist()
+    expect(storage.persist).toHaveBeenCalledTimes(1)
+  })
+
+  it('不支援：什麼都不做', async () => {
+    setStorage(undefined)
+    await expect(askPersist()).resolves.toBeUndefined()
+  })
+
+  it('同步失敗：不問', async () => {
+    const storage = stubStorage(false)
+    stubCaches()
+    mockFetch({ 'GET /api/reports': () => ({ status: 502, json: {} }) })
+    await sync(true)
+    expect(storage.persisted).not.toHaveBeenCalled()
   })
 })

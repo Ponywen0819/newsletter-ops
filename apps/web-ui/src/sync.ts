@@ -25,6 +25,21 @@ export function lastSync(): SyncRecord | null {
   }
 }
 
+const PERSIST_KEY = 'storage-persist-asked'
+
+/** 請瀏覽器別在空間吃緊時清掉副本。每台裝置只問一次（Firefox 會跳詢問），已經是持久的就不問；不支援或被拒絕都照舊。 */
+export async function askPersist(): Promise<void> {
+  const storage = typeof navigator === 'undefined' ? undefined : navigator.storage
+  if (!storage?.persist || !storage.persisted) return
+  try {
+    if (localStorage.getItem(PERSIST_KEY) || (await storage.persisted())) return
+    localStorage.setItem(PERSIST_KEY, '1')
+    await storage.persist()
+  } catch {
+    // localStorage 被封鎖或 API 失敗：不重要，下次再說
+  }
+}
+
 function saveRecord(rec: SyncRecord): void {
   try {
     localStorage.setItem(RECORD_KEY, JSON.stringify(rec))
@@ -75,6 +90,7 @@ async function run(): Promise<boolean> {
     // 「同步過」＝列表成功、而且至少寫入一份（一份都沒有晨報時也算）
     const cached = new Set((await cache.keys()).map((req) => new URL(req.url).pathname))
     saveRecord({ at: syncedAt, count: [...keep].filter((p) => cached.has(p)).length, failed: missed.length })
+    void askPersist() // 有東西值得保留了才問
   }
   return true
 }
