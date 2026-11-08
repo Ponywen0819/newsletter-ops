@@ -32,7 +32,8 @@
 **7. 科學段被 ScienceDaily 佔滿**
 - 現象：2026-09-28 收錄的 4 則科學新聞全部來自 ScienceDaily。
 - 原因：Nature 的 RSS 日期只到「日」（時間是 00:00），新鮮度分數吃虧；Nature 的 feed 也混了論文和 Briefing。
-- 建議：調高 Nature、Science 的 `weight`，或降低 ScienceDaily 的權重（目前 0.8）。
+- 已做（2026-11-08）：`max_per_source: 2`，同一來源在一個主題裡先最多 2 則，有別的來源就讓位。
+- 建議：仍不夠的話再調 Nature、Science 的 `weight`，或降低 ScienceDaily 的權重（目前 0.8）。
 
 **8. 24 小時時間窗和仍在發展中的事件衝突**
 - 現象：荷莫茲海峽的事件發生在 9/26，超過 24 小時窗，但 9/28 仍是最重要的國際新聞。
