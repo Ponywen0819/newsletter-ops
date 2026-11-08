@@ -68,6 +68,9 @@ uv run --project packages/shared python -m newsletter_shared.report_data --selft
 跑 `uv run --project packages/shared newsletter-feedback` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
 報告裡的標記只匯入 `feedback.jsonl` 還沒有紀錄的那一則；已有紀錄的（含網頁標的）以 jsonl 為準，不會被覆蓋。
 
+`newsletter-feedback --stats` 依來源、主題、命中的關鍵字列出正面（`+`／`++`）與負面（`-`／`--`）的則數與正面比例，
+每則只算最後一次標記、取消的不算。只是給調 `config/` 與 `interests.md` 時參考，不改任何設定。
+
 網頁（[web-server/README.md](../../apps/web-server/README.md)）與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊（見[檔案鎖](#檔案鎖lockpy)）。
 `uv run --project packages/shared newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
 
