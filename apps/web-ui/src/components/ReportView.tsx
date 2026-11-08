@@ -101,7 +101,6 @@ function AdjacentNav({ prev, next }: Adjacent) {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [prev, next, navigate])
-  if (!prev && !next) return null
   return (
     <nav className="report-adjacent" aria-label="前後的晨報">
       {prev && (
@@ -188,7 +187,7 @@ export function ReportView({ report, marks, onMark, adjacent = {} }: { report: R
           </div>
         ))}
         {grouped.sources && <UnitView unit={grouped.sources} sources={report.sources} marks={marks} onMark={onMark} />}
-        <AdjacentNav {...adjacent} />
+        {(adjacent.prev || adjacent.next) && <AdjacentNav {...adjacent} />}
       </ReaderShell>
     </article>
   )

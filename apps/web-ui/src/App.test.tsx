@@ -20,7 +20,7 @@ describe('路由', () => {
   it('/ 有當日晨報：畫出來，標題帶日期，標記來自伺服器', async () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-09-28', latest: '2026-09-28', report, marks: { [UID_A]: '+' } } }) })
     expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
-    expect(document.title).toBe('每日晨間簡報 2026-09-28')
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-28')) // 標題在 effect 裡設
     expect(document.querySelectorAll('[aria-pressed="true"]')).toHaveLength(1)
   })
 
@@ -68,6 +68,7 @@ describe('路由', () => {
       'GET /api/reports/2026-09-27': () => ({ json: { date: '2026-09-27', report, marks: {}, prev: null, next: '2026-09-28' } }),
     })
     await screen.findByRole('navigation', { name: '前後的晨報' })
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-28'))
     await userEvent.keyboard(']') // 沒有下一份：不動
     expect(document.title).toBe('每日晨間簡報 2026-09-28')
     await userEvent.keyboard('[[') // user-event 裡 [ 要寫兩個
@@ -215,7 +216,7 @@ describe('版面由路由決定', () => {
     expect(screen.getByRole('link', { name: '2026-09-28' })).toHaveAttribute('href', '/reports/2026-09-28')
     expect([...document.querySelectorAll('.reports mark')].map((m) => m.textContent)).toEqual(['NVIDIA', 'Nvidia'])
     expect(screen.getByRole('searchbox')).toHaveValue('nvidia')
-    expect(document.title).toBe('搜尋「nvidia」— 歷史晨報')
+    await waitFor(() => expect(document.title).toBe('搜尋「nvidia」— 歷史晨報'))
   })
 
   it('/reports 搜尋：送出就查；沒有結果、太多結果、失敗各有說明；清空回列表', async () => {
