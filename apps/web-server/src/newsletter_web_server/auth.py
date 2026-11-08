@@ -21,8 +21,8 @@ CHECK_INTERVAL = 3600  # 秒
 
 
 def run_auth_check(token: str) -> dict:
-    """用 `newsletter-agent --auth-check` 驗證 token，回傳 {ok, kind, message}。token 走環境變數，不上命令列。"""
-    cmd = [sys.executable, "-m", "newsletter_agent.agent_run", "--auth-check", "--token-from-env"]
+    """用 `newsletter-llm --auth-check` 驗證 token，回傳 {ok, kind, message}。token 走環境變數，不上命令列。"""
+    cmd = [sys.executable, "-m", "newsletter_llm.runner", "--auth-check", "--token-from-env"]
     env = {**os.environ, auth_store.TOKEN_ENV: token}
     try:
         p = subprocess.run(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
@@ -39,7 +39,7 @@ def run_auth_check(token: str) -> dict:
         if isinstance(result, dict) and isinstance(result.get("ok"), bool):
             return {"ok": result["ok"], "kind": str(result.get("kind", "other")),
                     "message": str(result.get("message", "")).replace(token, "***")}
-    if p.returncode == 2:  # agent_run 在沒有 SDK 時、還沒走到驗證就以 2 結束
+    if p.returncode == 2:  # newsletter-llm 在沒有 SDK 時、還沒走到驗證就以 2 結束
         return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk，請改用 `uv run --project apps/web-server newsletter-web` 啟動"}
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
 

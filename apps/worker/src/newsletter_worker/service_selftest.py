@@ -1,4 +1,4 @@
-"""newsletter-worker --selftest：假的四步、暫存目錄，不連網、不呼叫 Claude。"""
+"""worker --selftest 的服務部分：假的四步、暫存目錄，不連網、不呼叫 Claude。"""
 from __future__ import annotations
 
 import http.client
@@ -118,11 +118,11 @@ def _selftest_http(tmp: Path) -> None:
         assert "完成" in (tmp / "logs" / f"{datetime.now():%Y-%m}.log").read_text(encoding="utf-8")
 
         # 執行中：再送是 409；/status 看得到 current；停止後紀錄是被打斷（143）
-        os.environ["FAKE_FAIL"] = "agent:hang"
+        os.environ["FAKE_FAIL"] = "write:hang"
         for name in daily.MODULES:
             (tmp / name).unlink(missing_ok=True)
         assert req("POST", "/run")[0] == 202
-        _wait((tmp / "agent").exists)
+        _wait((tmp / "write").exists)
         assert req("POST", "/run")[0] == 409
         st = req("GET", "/status")[1]
         assert st["state"] == "running" and st["current"]["trigger"] == "manual", st
@@ -176,7 +176,7 @@ from pathlib import Path
 from newsletter_worker import daily, service
 with daily.fake_steps(Path(sys.argv[1])):
     import os
-    os.environ.update(FAKE_FAIL="agent:hang", NEWSLETTER_RUN_AT="00:00")
+    os.environ.update(FAKE_FAIL="write:hang", NEWSLETTER_RUN_AT="00:00")
     sys.exit(service.main(["--host", "127.0.0.1", "--port", "0"]))
 """
 
@@ -187,7 +187,7 @@ def _selftest_sigterm() -> None:
         proc = subprocess.Popen([sys.executable, "-c", SIGTERM_CHILD, d], stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, env={**os.environ, "NEWSLETTER_ROOT": d})
         try:
-            _wait((tmp / "agent").exists)  # 啟動就補跑（00:00 早就過了），卡在 agent
+            _wait((tmp / "write").exists)  # 啟動就補跑（00:00 早就過了），卡在 write
             proc.send_signal(signal.SIGTERM)
             out = proc.communicate(timeout=15)[0]
         finally:

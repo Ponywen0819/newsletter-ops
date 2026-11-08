@@ -384,9 +384,24 @@ wheels = [
 ]
 
 [[package]]
-name = "newsletter-agent"
+name = "newsletter-collect"
 version = "0.1.0"
-source = { editable = "../../packages/agent" }
+source = { editable = "../../packages/collect" }
+dependencies = [
+    { name = "newsletter-llm" },
+    { name = "newsletter-shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "newsletter-llm", editable = "../../packages/llm" },
+    { name = "newsletter-shared", editable = "../../packages/shared" },
+]
+
+[[package]]
+name = "newsletter-llm"
+version = "0.1.0"
+source = { editable = "../../packages/llm" }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "newsletter-shared" },
@@ -419,15 +434,32 @@ name = "newsletter-worker"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "newsletter-agent" },
+    { name = "newsletter-collect" },
     { name = "newsletter-notify" },
+    { name = "newsletter-shared" },
+    { name = "newsletter-writer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "newsletter-collect", editable = "../../packages/collect" },
+    { name = "newsletter-notify", editable = "../../packages/notify" },
+    { name = "newsletter-shared", editable = "../../packages/shared" },
+    { name = "newsletter-writer", editable = "../../packages/writer" },
+]
+
+[[package]]
+name = "newsletter-writer"
+version = "0.1.0"
+source = { editable = "../../packages/writer" }
+dependencies = [
+    { name = "newsletter-llm" },
     { name = "newsletter-shared" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "newsletter-agent", editable = "../../packages/agent" },
-    { name = "newsletter-notify", editable = "../../packages/notify" },
+    { name = "newsletter-llm", editable = "../../packages/llm" },
     { name = "newsletter-shared", editable = "../../packages/shared" },
 ]
 

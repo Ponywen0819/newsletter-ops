@@ -11,7 +11,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
 
 - `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，要執行的模組各自一個 `.venv`，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`apps/web-ui/`），
   只把 `apps/web-ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
-- `docker-compose.yml`：`web`、`worker`、`cloudflared` 三個服務與 volume。`worker` 跑 `newsletter-worker`（見 [apps/worker/README.md](../apps/worker/README.md)），
+- `docker-compose.yml`：`web`、`worker`、`cloudflared` 三個服務與 volume。`worker` 跑 `worker`（見 [apps/worker/README.md](../apps/worker/README.md)），
   它的 `/status`、`/run` 不 publish，而且只在 `be` 網路：`/run` 會燒額度、寄信，沒有登入的 `web` 與對外的 `cloudflared` 都碰不到。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - `newsletter-web` 沒有登入、而且能寫入 `state/feedback.jsonl`，**唯一的防線是 Access**。主 port（8787）不 publish，host 不會對外開它；
@@ -31,7 +31,7 @@ cp .env.example .env && chmod 600 .env
 $EDITOR .env      # GMAIL_USER、GMAIL_APP_PASSWORD；TUNNEL_TOKEN 在下一步取得
 ```
 
-Claude 的 OAuth token（`claude setup-token` 取得，效期一年，只走訂閱額度，見 [agent/README.md](../packages/agent/README.md)「認證」）**不放 `.env`、也不讀環境變數**：
+Claude 的 OAuth token（`claude setup-token` 取得，效期一年，只走訂閱額度，見 [llm/README.md](../packages/llm/README.md)「認證」）**不放 `.env`、也不讀環境變數**：
 放環境變數的話，一年後換新就得改檔並重新部署。它存在 volume 的 `state/oauth_token.json`，換新立刻生效，做法在步驟 3 之後的「貼上 OAuth token」。
 
 **2. Cloudflare：建立 Tunnel 與 Access（Access 一定要做）**
@@ -53,7 +53,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 
 `.env` 缺 `GMAIL_USER`、`GMAIL_APP_PASSWORD`、`TUNNEL_TOKEN` 任何一個，`docker compose` 會直接報錯並指出缺哪個。
 
-**貼上 OAuth token**（第一次、以及一年後 `agent_run.py` exit 5 或網頁頂端出現「Claude 授權已失效」時）：在**自己的電腦**執行 `claude setup-token`、
+**貼上 OAuth token**（第一次、以及一年後 `newsletter-write` exit 5 或網頁頂端出現「Claude 授權已失效」時）：在**自己的電腦**執行 `claude setup-token`、
 在瀏覽器完成授權，複製它印出的 token（只會印一次；需要 Pro／Max／Team／Enterprise），再用 **host 本機的瀏覽器**開 <http://127.0.0.1:8788/auth>，
 貼上、按「驗證並儲存」。host 在遠端的話：`ssh -L 8788:127.0.0.1:8788 <host>`，再用自己電腦的瀏覽器開 <http://localhost:8788/auth>。
 `/auth` 只在管理 port 開，從 Tunnel 網域（主 port）開不了；那裡頁面頂端的橫幅只會寫「請在主機上重新授權」。
@@ -76,7 +76,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 | 裝成 PWA、離線、Access 逾時 | 照 [apps/web-ui/README.md](../apps/web-ui/README.md)「PWA」一節的「正式站驗收」表 |
 | `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的「👍 有用」連結 | 先經 Access 登入，再看到「確認標為 有用」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
 | `docker network inspect newsletter-ops_be --format '{{range .Containers}}{{.Name}} {{end}}'` | 只有 worker 的容器 |
-| `docker compose run --rm worker uv run --project packages/agent newsletter-agent --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
+| `docker compose run --rm worker uv run --project apps/worker newsletter-llm --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、用掉訂閱額度）。
 Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理頁面重新登入即可。
@@ -88,7 +88,7 @@ docker compose logs -f worker                  # 排程輸出：下次執行時�
 docker compose exec worker python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8790/status').read().decode())"   # 是否在跑、下次幾點、上次結果
 docker compose exec worker python -c "import urllib.request as u; print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())"   # 立刻跑一次（記成 manual；執行中回 409）
 docker compose exec web ls reports                # volume 裡的報告
-docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test worker uv run --project packages/agent newsletter-agent   # 只產報告、不寄信
+docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test worker uv run --project apps/worker newsletter-write   # 只產報告、不寄信（要先有當日 curated JSON）
 git pull && docker compose up -d --build          # 手動更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
 
@@ -138,7 +138,7 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 git clone https://github.com/Ponywen0819/newsletter-ops.git ~/newsletter-ops
 cd ~/newsletter-ops && for p in apps/worker apps/web-server; do uv sync --locked --project $p; done   # 建各自的 .venv、裝 claude-agent-sdk；沒有 Python 3.11 時 uv 會自己下載
 (cd apps/web-ui && npm ci && npm run build)          # 建置網頁前端到 apps/web-ui/dist；沒做的話 web service 的頁面都回 503
-uv run --project packages/agent newsletter-fetch --list-sources             # 不連網，確認設定可用
+uv run --project apps/worker newsletter-collect --list-sources                 # 不連網，確認設定可用
 ```
 
 **2. 機密**
@@ -162,7 +162,7 @@ systemctl --user enable --now newsletter-web.service newsletter-worker.service
 sudo loginctl enable-linger "$USER"   # 沒登入也持續執行，開機自動啟動
 ```
 
-- 貼 Claude 的 OAuth token：systemd 部署沒有管理 port，`/auth` 就在主 port，在 host 上開 `http://127.0.0.1:8787/auth`（遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>` 後開 `http://localhost:8787/auth`），做法見 [agent/README.md](../packages/agent/README.md)「認證」。沒貼的話排程會以 exit 2 結束。
+- 貼 Claude 的 OAuth token：systemd 部署沒有管理 port，`/auth` 就在主 port，在 host 上開 `http://127.0.0.1:8787/auth`（遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>` 後開 `http://localhost:8787/auth`），做法見 [llm/README.md](../packages/llm/README.md)「認證」。沒貼的話排程會以 exit 2 結束。
 - worker 和 Docker 版是同一個程式，排程、補跑、`/status`、`/run` 的行為見上面步驟 5；`/status`、`/run` 只綁 `127.0.0.1:8790`。
 - 看 web：`journalctl --user -u newsletter-web -f`；看排程：`journalctl --user -u newsletter-worker -f`（下次執行時間、開始、結束），細節在 `logs/<YYYY-MM>.log`。
 - 手動跑一次：`curl -X POST http://127.0.0.1:8790/run`（會真的呼叫 Claude 並寄信，約數分鐘、用掉訂閱額度）；結果看 `curl -s http://127.0.0.1:8790/status` 的 `last`。
@@ -202,6 +202,6 @@ Application domain 填 `news.example.com`；Policy 一條就好：Action = Allow
 | 登入後按一則的「有用」 | host 上 `tail -n1 ~/newsletter-ops/state/feedback.jsonl` 多一行 |
 | 裝成 PWA、離線、Access 逾時 | 照 [apps/web-ui/README.md](../apps/web-ui/README.md)「PWA」一節的「正式站驗收」表 |
 
-頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上 `uv run --project packages/agent newsletter-agent`
-（或上面的手動排程）先產一份。
+頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，在 host 上依序跑 `uv run --project apps/worker newsletter-collect`、
+`uv run --project apps/worker newsletter-write`（或上面的手動排程）先產一份。
 Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理頁面重新登入即可。

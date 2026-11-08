@@ -1,23 +1,24 @@
 [project]
 name = "newsletter-worker"
 version = "0.1.0"
-description = "newsletter-ops 網頁以外的常駐服務：每日流程（抓取 → agent → render → 寄信）的編排與排程"
+description = "newsletter-ops 網頁以外的常駐服務：每日流程（蒐集 → 寫報告 → render → 寄信）的編排與排程"
 requires-python = ">=3.10"
-# 純標準庫。四個步驟都用 `python -m` 另開程序跑，所以不 import agent／notify，但執行時它們都得裝著（所以宣告依賴）。
+# 純標準庫。四個步驟都用 `python -m` 另開程序跑，所以不 import collect／writer／notify，但執行時它們都得裝著（所以宣告依賴）。
 # 站在依賴圖最上層：沒有任何成員可以依賴它（deploy/check_boundaries.py 會檢查）。
 dependencies = [
     "newsletter-shared",
-    "newsletter-agent",
+    "newsletter-collect",
+    "newsletter-writer",
     "newsletter-notify",
 ]
 
 [project.scripts]
-newsletter-run = "newsletter_worker.daily:main"
-newsletter-worker = "newsletter_worker.service:main"
+worker = "newsletter_worker.service:main"
 
 [tool.uv.sources]
 newsletter-shared = { path = "../../packages/shared", editable = true }
-newsletter-agent = { path = "../../packages/agent", editable = true }
+newsletter-collect = { path = "../../packages/collect", editable = true }
+newsletter-writer = { path = "../../packages/writer", editable = true }
 newsletter-notify = { path = "../../packages/notify", editable = true }
 
 [build-system]

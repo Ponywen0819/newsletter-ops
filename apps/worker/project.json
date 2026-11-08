@@ -7,7 +7,13 @@
   ],
   "targets": {
     "selftest": {
-      "command": "uv run --locked --project {projectRoot} newsletter-run --selftest && uv run --locked --project {projectRoot} newsletter-worker --selftest"
+      "command": "uv run --locked --project {projectRoot} worker --selftest"
+    },
+    "start": {
+      "command": "uv run --locked --project {projectRoot} worker"
+    },
+    "once": {
+      "command": "uv run --locked --project {projectRoot} worker --once"
     },
     "lint": {
       "command": "uvx ruff@0.17.3 check {projectRoot}"

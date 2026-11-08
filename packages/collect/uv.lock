@@ -384,9 +384,24 @@ wheels = [
 ]
 
 [[package]]
-name = "newsletter-agent"
+name = "newsletter-collect"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "newsletter-llm" },
+    { name = "newsletter-shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "newsletter-llm", editable = "../llm" },
+    { name = "newsletter-shared", editable = "../shared" },
+]
+
+[[package]]
+name = "newsletter-llm"
+version = "0.1.0"
+source = { editable = "../llm" }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "newsletter-shared" },

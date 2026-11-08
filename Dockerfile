@@ -28,20 +28,22 @@ ENV TZ=Asia/Taipei \
 USER app
 WORKDIR /app
 
-# 要執行的模組各裝一個 .venv：web、worker，以及 skill 直接呼叫的 agent、shared
+# 要執行的模組各裝一個 .venv：web、worker，以及 skill 直接呼叫的 shared
 # 先只裝第三方依賴，讓只動程式碼時這層走快取
 COPY --chown=app:app .python-version ./
 COPY --chown=app:app packages/shared/pyproject.toml packages/shared/uv.lock ./packages/shared/
-COPY --chown=app:app packages/agent/pyproject.toml packages/agent/uv.lock ./packages/agent/
+COPY --chown=app:app packages/llm/pyproject.toml packages/llm/uv.lock ./packages/llm/
+COPY --chown=app:app packages/collect/pyproject.toml packages/collect/uv.lock ./packages/collect/
+COPY --chown=app:app packages/writer/pyproject.toml packages/writer/uv.lock ./packages/writer/
 COPY --chown=app:app packages/notify/pyproject.toml packages/notify/uv.lock ./packages/notify/
 COPY --chown=app:app apps/worker/pyproject.toml apps/worker/uv.lock ./apps/worker/
 COPY --chown=app:app apps/web-server/pyproject.toml apps/web-server/uv.lock ./apps/web-server/
-RUN for p in packages/shared packages/agent apps/worker apps/web-server; do \
+RUN for p in packages/shared apps/worker apps/web-server; do \
       uv sync --locked --no-install-project --no-install-local --project "$p" || exit 1; done
 COPY --chown=app:app packages ./packages
 COPY --chown=app:app apps ./apps
 COPY --chown=app:app apps/web-server ./apps/web-server
-RUN for p in packages/shared packages/agent apps/worker apps/web-server; do \
+RUN for p in packages/shared apps/worker apps/web-server; do \
       uv sync --locked --project "$p" || exit 1; done
 
 COPY --from=web --chown=app:app /web/dist ./apps/web-ui/dist

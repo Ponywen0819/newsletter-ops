@@ -101,7 +101,7 @@ function AuthPanel() {
     <>
       <h1>Claude 授權</h1>
       <p>
-        無人值守執行（<code>agent_run.py</code>）只用 OAuth 的訂閱額度，<strong>不使用 API key</strong>
+        無人值守執行（<code>newsletter-llm</code>）只用 OAuth 的訂閱額度，<strong>不使用 API key</strong>
         ，也不會因為額度用完而自動改用別的認證方式。這個頁面只能從本機開啟。
       </p>
       <div aria-live="polite">

@@ -1,4 +1,4 @@
-# agent 已知問題
+# collect 已知問題
 
 最後更新：2026-09-28。每則格式：現象 → 原因 → 建議。解決後移到文末「已解決」並寫日期。編號沿用原本根目錄 `ISSUES.md` 的，不重排。
 
@@ -7,7 +7,7 @@
 ### 中：影響報告品質
 
 **4. 國際新聞排序幾乎沒有訊號**
-- 現象：world 的候選是 BBC 的 VMAs 紅毯、沉船影片這類新聞，當天真正的頭條（荷莫茲海峽）靠 skill 裡的 WebSearch 才補上。
+- 現象：world 的候選是 BBC 的 VMAs 紅毯、沉船影片這類新聞，當天真正的頭條（荷莫茲海峽）靠 skill 裡的 WebSearch 才補上（現在改由 collect 的搜尋每天補 world）。
 - 原因：
   - 國際新聞沒有關鍵字可評分，每則都只有保底分 1.5，排序只剩來源權重加新鮮度。
   - BBC 的 feed 混了影片（URL 含 `/videos/`、標題以 `Watch:` 開頭）。
@@ -18,7 +18,7 @@
   - 或改用關鍵名詞重疊做跨來源比對。
 
 **5. Tech-industry 常常 0 則，科技段偏單薄**（處理中）
-- 現象：tech-industry 只收有命中關鍵字的新聞，週末或關鍵字沒對上的日子會整段空掉。這個主題沒有後手：沒過門檻的新聞不會進 curated JSON，Claude 看不到；WebSearch 補充只在整個段落 0 則時才觸發。
+- 現象：tech-industry 只收有命中關鍵字的新聞，週末或關鍵字沒對上的日子會整段空掉。這個主題沒有後手：沒過門檻的新聞不會進 curated JSON，Claude 看不到；搜尋補充只在整個主題 0 則時才觸發。
 - 已做（2026-09-28）：修了複數比對；Ars Technica、IEEE Spectrum 保底 0.5，命中任一關鍵字就過門檻。IEEE 試過 0.8（無條件收錄），五則裡三則是無關雜項，所以沒採用。
 - 觀察：跑幾天看 tech-industry 的則數。仍然太少的話，下一步是把每個主題「差一點過門檻」的前幾則附進 curated JSON，讓 Claude 決定要不要撈回來。
 - 另外：`vision` 命中了〈Poetry for Engineers: The UI Designer's Dream〉，這個 boost_low 關鍵字太泛，可考慮改成 `computer vision`。
@@ -35,7 +35,7 @@
 
 **8. 24 小時時間窗和仍在發展中的事件衝突**
 - 現象：荷莫茲海峽的事件發生在 9/26，超過 24 小時窗，但 9/28 仍是最重要的國際新聞。
-- 建議：暫時維持靠 skill 的「搜尋補充」處理；如果常發生，world 的 `lookback_hours` 可以放寬到 36 小時。
+- 建議：暫時靠 collect 的搜尋補充處理（搜尋窗是 `search.lookback_hours`，目前 48 小時）；如果常發生，world 的 `lookback_hours` 可以放寬到 36 小時。
 
 ### 低：已知限制，先記錄
 
@@ -43,7 +43,7 @@
 - 「rejected from ICLR」會被判成主會議。
 - 「以前在某 workshop 發表過，現被主會議接受」會被降成非主會議。
 - 會議名稱是大小寫敏感比對，「neurips 2026」這種全小寫寫法抓不到。
-- arXiv API 不提供作者機構，需要時由 Claude 用 WebFetch 查。
+- arXiv API 不提供作者機構，由 enrich 抓 arXiv HTML 版存進 `fulltext`，writer 從裡面判斷。
 - 遇到新的寫法就加進 `config.json` 的 `arxiv_venues`，並補一條自我檢查。
 
 **10. Anthropic News 依賴第三方 feed**
