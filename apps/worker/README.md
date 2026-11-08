@@ -40,6 +40,7 @@ Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`�
 | 2、3 | `newsletter-collect` 的（來源設定有誤、一則都沒抓到）；搜尋與補原文失敗不算失敗 |
 | 1～6 | `newsletter-write` 的（見 [writer/README.md](../../packages/writer/README.md)「exit code」） |
 | 75 | 另一條 pipeline 正在跑，這次沒執行 |
+| 124 | 某一步超過時限（collect 30 分、write 60 分、render／send 5 分，`daily.TIMEOUTS`）被停掉；會自動重跑一次 |
 | 143 | 被要求停止（`worker` 收到 SIGTERM，轉給執行中的那一步） |
 
 數字會重疊（collect 和 write 都用 2、3），要知道是哪一步，看 log 最後一行 `失敗，exit N：<步驟>`。
