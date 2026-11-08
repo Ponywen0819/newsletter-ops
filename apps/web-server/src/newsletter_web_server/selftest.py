@@ -94,6 +94,9 @@ def _selftest_etag(req, uid_a: str) -> None:
         status, headers, again = req("GET", path, {"If-None-Match": sent})
         assert status == 304 and again == "" and headers["etag"] == etag, (sent, status)
     assert req("GET", path, {"If-None-Match": '"nope"'})[0] == 200
+    for p in (path, "/", "/api/nope"):  # HEAD：狀態與標頭同 GET，沒有 body
+        got, head = req("GET", p), req("HEAD", p)
+        assert head[0] == got[0] and head[2] == "" and head[1]["content-length"] == got[1]["content-length"], (p, head)
     assert req("GET", "/api/reports")[1].get("etag") and req("GET", "/api/today")[1].get("etag")
     assert "etag" not in req("GET", "/api/session")[1]  # 只有同步的對象有
     req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": "+"})
