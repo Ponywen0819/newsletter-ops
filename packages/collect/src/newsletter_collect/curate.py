@@ -160,6 +160,14 @@ def _freshness(published: str) -> float:
     return 1.5 * math.exp(-max(age_h, 0) / 12)
 
 
+ORDER_TOP = 10  # feed 前幾則拿 order_boost：第一則全拿，往後線性遞減，第 ORDER_TOP 則起沒有
+
+
+def _order_bonus(item: dict) -> float:
+    """編輯排過的 feed（BBC 的頭條在最前面）：國際新聞沒有關鍵字可評分，順序是少數的訊號。"""
+    return float(item.get("order_boost", 0.0)) * max(0.0, 1 - item.get("position", 0) / ORDER_TOP)
+
+
 def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float, float, list[str]]:
     """回傳 (relevance, rank, 命中的關鍵字)。"""
     text = f"{item['title']} {item['summary']}".lower()
@@ -180,7 +188,7 @@ def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float
         item["venue"] = venue
         relevance += VENUE_BOOST[venue["status"]]
 
-    rank = relevance * float(item.get("weight", 1.0))
+    rank = relevance * float(item.get("weight", 1.0)) + _order_bonus(item)
     if item.get("published"):
         rank += _freshness(item["published"])
     return round(relevance, 2), round(rank, 2), sorted(set(hits))
@@ -311,6 +319,12 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert not _hits("agentic workflows", "agent") and not _hits("agentsx", "agent")
     item = {"title": "x", "summary": "", "venue_note": "ICLR 2026 camera-ready"}
     assert score(item, {}, V)[0] == 2.0 and item["venue"]["status"] == "main"
+    base = {"title": "x", "summary": "", "baseline_relevance": 1.5}
+    assert score({**base, "order_boost": 1.0, "position": 0}, {})[1] == 2.5    # 只加 rank，不加 relevance
+    assert score({**base, "order_boost": 1.0, "position": 0}, {})[0] == 1.5
+    assert score({**base, "order_boost": 1.0, "position": 5}, {})[1] == 2.0
+    assert score({**base, "order_boost": 1.0, "position": 12}, {})[1] == 1.5
+    assert score({**base, "position": 0}, {})[1] == 1.5                        # 沒設 order_boost 不加
 
     # 同日重跑：沒有 redo 時第二次拿到第二梯隊；帶上次的 uid 就拿回同一批
     import tempfile
