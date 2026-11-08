@@ -4,7 +4,7 @@ import { api } from '../api'
 import { Loading, Notice } from '../components/Notice'
 import { ReaderShell } from '../components/ReaderShell'
 import { useDocumentTitle, useFetch, useRecovered } from '../hooks'
-import { groupByMonth, type MonthGroup } from '../reportMonths'
+import { groupByMonth } from '../reportMonths'
 import type { ReportSummary } from '../types'
 import { useSectionNav } from '../useSectionNav'
 
@@ -93,67 +93,52 @@ export function ReportListPage() {
   return q ? <SearchResults q={q} /> : <AllReports />
 }
 
+/**
+ * 全部晨報。載入中、出錯、一個月、兩個月以上都是同一個 ReaderShell（左欄的搜尋框不會被換掉，載入中打的字還在）；
+ * 兩個月以上依月份分組，左欄多一份月份目錄。
+ */
 function AllReports() {
   const { data, error } = useFetch(api.reports, [useRecovered()])
-
-  if (error)
-    return (
-      <ReaderShell side={<Side q="" />}>
-        <Notice title="讀取失敗">{error.message}</Notice>
-      </ReaderShell>
-    )
-  if (!data)
-    return (
-      <ReaderShell side={<Side q="" />}>
-        <Loading />
-      </ReaderShell>
-    )
-  return <ReportList reports={data} />
-}
-
-function ReportList({ reports }: { reports: ReportSummary[] }) {
-  const months = useMemo(() => groupByMonth(reports), [reports])
-  // 只有一個月份（或沒有晨報）：分組與目錄都沒有意義，維持一張列表
-  if (months.length < 2)
-    return (
-      <ReaderShell side={<Side q="" />}>
-        <Rows items={reports} />
-      </ReaderShell>
-    )
-  return <MonthList months={months} />
-}
-
-/** 兩個月以上：依月份分組，左欄多一份月份目錄。 */
-function MonthList({ months }: { months: MonthGroup[] }) {
-  const ids = useMemo(() => months.map((m) => m.id), [months])
+  const months = useMemo(() => (data ? groupByMonth(data) : []), [data])
+  const grouped = months.length >= 2 // 只有一個月份（或沒有晨報）：分組與目錄都沒有意義，維持一張列表
+  const ids = useMemo(() => (grouped ? months.map((m) => m.id) : []), [grouped, months])
   const rootRef = useRef<HTMLDivElement>(null)
   const navRef = useRef<HTMLElement>(null)
   const { activeId, onLinkClick } = useSectionNav(ids, rootRef, navRef)
+
+  let body: ReactNode
+  if (error) body = <Notice title="讀取失敗">{error.message}</Notice>
+  else if (!data) body = <Loading />
+  else if (!grouped) body = <Rows items={data} />
+  else
+    body = months.map((month) => (
+      <section key={month.id} className="unit" data-unit={month.id}>
+        <h2>{month.label}</h2>
+        <Rows items={month.items} />
+      </section>
+    ))
   return (
     <ReaderShell
       ref={rootRef}
       side={
         <Side q="">
-          <nav ref={navRef} className="reader-nav reader-nav-months" aria-label="月份目錄">
-            <ul>
-              {months.map((month) => (
-                <li key={month.id}>
-                  <a href={`#${month.id}`} aria-current={month.id === activeId ? 'true' : undefined} onClick={onLinkClick(month.id)}>
-                    <span>{month.label}</span> <small className="reader-nav-count">{month.items.length} 份</small>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </nav>
+          {grouped && (
+            <nav ref={navRef} className="reader-nav reader-nav-months" aria-label="月份目錄">
+              <ul>
+                {months.map((month) => (
+                  <li key={month.id}>
+                    <a href={`#${month.id}`} aria-current={month.id === activeId ? 'true' : undefined} onClick={onLinkClick(month.id)}>
+                      <span>{month.label}</span> <small className="reader-nav-count">{month.items.length} 份</small>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
         </Side>
       }
     >
-      {months.map((month) => (
-        <section key={month.id} className="unit" data-unit={month.id}>
-          <h2>{month.label}</h2>
-          <Rows items={month.items} />
-        </section>
-      ))}
+      {body}
     </ReaderShell>
   )
 }
