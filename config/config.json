@@ -4,6 +4,7 @@
   "lookback_hours": 24,
   "max_items_per_source": 40,
   "max_items_in_report": 40,
+  "raw_retention_days": 30,
   "request": {
     "timeout": 25,
     "user_agent": "newsletter-ops/1.0 (+personal research digest)",
