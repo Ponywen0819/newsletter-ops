@@ -124,6 +124,7 @@ def _selftest_notice() -> None:
     n = failure_notice(5, rec, ["line a", "line b"], retried=False)
     assert n["subject"] == "晨報失敗 2026-11-03：撰寫報告（exit 5）", n
     assert "/auth" in n["text"] and "重跑也沒用" in n["text"] and n["text"].endswith("line a\nline b\n"), n
+    assert "8790/run" in n["text"] and n["text"].index("8790/run") < n["text"].index("line a"), n  # 補跑指令在 log 前面
     n = failure_notice(3, {"date": "2026-11-03", "step": "collect"}, [], retried=True)
     assert "蒐集新聞" in n["subject"] and "已經自動重跑過一次" in n["text"], n
     assert "?" in failure_notice(1, None, [], retried=True)["subject"]
