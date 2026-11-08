@@ -27,6 +27,7 @@ EXIT_BUSY = 75
 EXIT_STOPPED = 128 + signal.SIGTERM
 LOCK = ROOT / "state" / "pipeline"  # 實際鎖的是 state/pipeline.lock
 RECORD = ROOT / "state" / "last_run.json"
+STEPS = ("collect", "write", "render", "send")
 MODULES = {
     "collect": "newsletter_collect.run",
     "write": "newsletter_writer.write",
@@ -71,7 +72,15 @@ def step(log: IO[str], module: str, *args: str, input: str | None = None, captur
     return code, out
 
 
-def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", stop: threading.Event | None = None) -> int:
+def resume_from(failed: str | None) -> str:
+    """重跑時從哪一步開始：失敗的那步（前面的產出今天已經有了）；send 要 render 的 stdout，所以從 render。"""
+    if failed == "send":
+        return "render"
+    return failed if failed in STEPS else "collect"
+
+
+def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", stop: threading.Event | None = None,
+                 start: str = "collect") -> int:
     """trigger：schedule / catchup / retry / manual / cli，寫進紀錄；排程服務靠 retry 判斷重跑過沒。"""
     try:
         with lock.locked(LOCK, timeout=0):
@@ -80,7 +89,7 @@ def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", st
             atomic.write_text(RECORD, json.dumps(rec))
             code, failed = 1, []  # _run 丟例外時記成失敗
             try:
-                code = _run(collect_args, log, stop, failed)
+                code = _run(collect_args, log, stop, failed, start)
                 return code
             finally:
                 atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code,
@@ -91,11 +100,15 @@ def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", st
 
 
 def _run(collect_args: list[str], log: IO[str], stop: threading.Event | None = None,
-         failed: list[str] | None = None) -> int:
-    """failed：失敗（或被停止）的那一步會 append 進去。"""
+         failed: list[str] | None = None, start: str = "collect") -> int:
+    """failed：失敗（或被停止）的那一步會 append 進去。start 之前的步驟不跑（重跑時沿用今天的產出）。"""
     failed = [] if failed is None else failed
+    skip = set(STEPS[:STEPS.index(start)])
 
     def go(label: str, key: str, *args: str, input: str | None = None, capture: bool = False) -> tuple[int, str]:
+        if key in skip:
+            say(log, f"沿用今天的產出，不重跑：{label}")
+            return 0, ""
         if stop is not None and stop.is_set():
             say(log, f"收到停止，不執行：{label}")
             failed.append(key)
@@ -210,6 +223,14 @@ def selftest() -> None:
         assert rec["exit_code"] == EXIT_STOPPED and rec["finished_at"], rec
         code, _ = run(stop=stop)  # 已經要停：一步都不跑
         assert code == EXIT_STOPPED and not ran("collect")
+
+        # 從中間開始：前面的不跑；send 失敗要從 render 重來（send 吃 render 的 stdout）
+        code, text = run(start=resume_from("send"))
+        assert code == 0 and not ran("collect") and not ran("write") and ran("render"), text
+        assert (tmp / "send").read_text() == '|{"subject": "s"}\n' and "沿用今天的產出，不重跑：newsletter-write" in text
+        code, _ = run(start=resume_from("write"))
+        assert code == 0 and not ran("collect") and ran("write")
+        assert resume_from(None) == resume_from("bogus") == "collect"
 
         # 別的執行緒（等同別的程序）拿著鎖：這次不執行，一步都不跑、不寫紀錄；放掉之後恢復正常
         holding, release = threading.Event(), threading.Event()
