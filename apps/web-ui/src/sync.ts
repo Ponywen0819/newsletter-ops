@@ -6,6 +6,32 @@ import type { ReportSummary } from './types'
 export const KEEP = 30
 const PARALLEL = 4
 const MIN_GAP_MS = 10 * 60_000 // 回到前景時，距上次成功同步不到這麼久就不再同步
+const RECORD_KEY = 'offline-sync' // localStorage：關掉 App 再離線開啟時，橫幅還說得出副本的新舊
+
+/** 最近一次同步：at 是時間（ms），count 是副本裡的晨報份數，failed 是這次沒更新到（留著舊版或沒有）的份數。 */
+export interface SyncRecord {
+  at: number
+  count: number
+  failed: number
+}
+
+export function lastSync(): SyncRecord | null {
+  try {
+    const rec = JSON.parse(localStorage.getItem(RECORD_KEY) ?? 'null') as Partial<SyncRecord> | null
+    const ok = rec && [rec.at, rec.count, rec.failed].every((v) => typeof v === 'number' && Number.isFinite(v))
+    return ok ? (rec as SyncRecord) : null
+  } catch {
+    return null
+  }
+}
+
+function saveRecord(rec: SyncRecord): void {
+  try {
+    localStorage.setItem(RECORD_KEY, JSON.stringify(rec))
+  } catch {
+    // 私密視窗、被封鎖的儲存空間：橫幅退回不帶時間的文字
+  }
+}
 
 let syncedAt = -Infinity
 let running: Promise<boolean> | null = null
@@ -31,9 +57,12 @@ async function run(): Promise<boolean> {
       .map((r) => `/api/reports/${encodeURIComponent(r.date)}`),
   )
   const queue = ['/api/today', ...keep]
+  const failed = new Set<string>()
   await Promise.all(
     Array.from({ length: PARALLEL }, async () => {
-      for (let path = queue.shift(); path; path = queue.shift()) await store(cache, path).catch(() => null)
+      for (let path = queue.shift(); path; path = queue.shift()) {
+        if (!(await store(cache, path).catch(() => null))) failed.add(path)
+      }
     }),
   )
   for (const req of await cache.keys()) {
@@ -41,6 +70,12 @@ async function run(): Promise<boolean> {
     if (/^\/api\/reports\/./.test(path) && !keep.has(path)) await cache.delete(req) // 只留最近 KEEP 份
   }
   syncedAt = Date.now()
+  const missed = [...keep].filter((p) => failed.has(p))
+  if (missed.length < keep.size || keep.size === 0) {
+    // 「同步過」＝列表成功、而且至少寫入一份（一份都沒有晨報時也算）
+    const cached = new Set((await cache.keys()).map((req) => new URL(req.url).pathname))
+    saveRecord({ at: syncedAt, count: [...keep].filter((p) => cached.has(p)).length, failed: missed.length })
+  }
   return true
 }
 

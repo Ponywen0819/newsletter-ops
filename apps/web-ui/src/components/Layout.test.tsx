@@ -39,6 +39,27 @@ describe('離線橫幅', () => {
     vi.restoreAllMocks()
   })
 
+  it.each([
+    ['有同步紀錄', { at: new Date(2026, 9, 5, 8, 12).getTime(), count: 30, failed: 0 }, '離線中，顯示的是 10/05 08:12 同步的副本（共 30 份）'],
+    ['部分沒更新到', { at: new Date(2026, 9, 5, 8, 12).getTime(), count: 28, failed: 2 }, '離線中，顯示的是 10/05 08:12 同步的副本（共 28 份，2 份沒更新到）'],
+    ['紀錄壞掉', { at: 'x' }, '離線中，顯示的是上次載入的內容'],
+  ])('離線時說明副本的新舊：%s', async (_name, rec, text) => {
+    localStorage.setItem('offline-sync', JSON.stringify(rec))
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    open(() => 200)
+    expect(await screen.findByText(text)).toBeInTheDocument()
+    vi.restoreAllMocks()
+    localStorage.removeItem('offline-sync')
+  })
+
+  it('登入逾時：不提副本（不會顯示快取）', async () => {
+    localStorage.setItem('offline-sync', JSON.stringify({ at: 0, count: 1, failed: 0 }))
+    open(() => 403)
+    await screen.findByText('登入已逾時')
+    expect(screen.queryByText(/同步的副本/)).not.toBeInTheDocument()
+    localStorage.removeItem('offline-sync')
+  })
+
   it('Access 登入逾時：提示並給「重新登入」按鈕', async () => {
     open(() => 403)
     expect(await screen.findByText('登入已逾時')).toBeInTheDocument()

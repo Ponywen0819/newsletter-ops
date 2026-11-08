@@ -3,13 +3,25 @@ import type { Status } from '../connectivity'
 import { useAuthHealth } from '../authHealth'
 import { useConnectivity } from '../hooks'
 import { useSession } from '../session'
+import { lastSync, type SyncRecord } from '../sync'
 import type { AuthHealth } from '../types'
 import { ThemeSelect } from './ThemeSelect'
 
 const BANNER: Record<Exclude<Status, 'ok'>, string> = {
-  offline: '離線中，顯示的是上次載入的內容',
-  unreachable: '連不上伺服器，顯示的是上次載入的內容',
+  offline: '離線中',
+  unreachable: '連不上伺服器',
   login: '登入已逾時', // 按鈕整頁重載，讓瀏覽器走 Access 登入
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+
+/** 離線／連不上時，說明顯示的是哪一次同步的副本；從沒同步過就退回籠統的說法。 */
+function copyNote(rec: SyncRecord | null): string {
+  if (!rec) return '，顯示的是上次載入的內容'
+  const d = new Date(rec.at)
+  const when = `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const missed = rec.failed ? `，${rec.failed} 份沒更新到` : ''
+  return `，顯示的是 ${when} 同步的副本（共 ${rec.count} 份${missed}）`
 }
 
 /** 認證橫幅的文字；null ＝ 不用提醒。 */
@@ -68,6 +80,7 @@ export function Layout({ variant }: { variant: 'reader' | 'single' }) {
       {/* 常駐的 status 區：內容從無到有，輔助科技才會唸出來；沒內容時 CSS 把它藏起來 */}
       <div className="offline-bar" role="status">
         {connectivity !== 'ok' && BANNER[connectivity]}
+        {(connectivity === 'offline' || connectivity === 'unreachable') && copyNote(lastSync())}
         {connectivity === 'login' && (
           <button type="button" onClick={() => location.reload()}>
             重新登入
