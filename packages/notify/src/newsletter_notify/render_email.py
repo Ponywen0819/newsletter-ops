@@ -117,9 +117,13 @@ def render_report(report: dict, base_url: str = "") -> tuple[str, str, str]:
         body += [f'<li style="{S["src_li"]}"><a href="{html.escape(src["url"])}" style="{S["a"]}">'
                  f'{html.escape(src["title"])}</a></li>' for src in report["sources"]]
         body.append("</ol>")
+    # 預覽文字（preheader）：收件匣列表在主旨後面顯示的那一行，放今日頭條；本身不顯示
+    preheader = (f'<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">'
+                 f'{html.escape(report["headline"])}</div>')
     page = (f'<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">'
-            f'<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
-            f'<body style="{S["body"]}"><div style="{S["card"]}">{"".join(body)}</div></body></html>')
+            f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{html.escape(report["subject"])}</title></head>'
+            f'<body style="{S["body"]}">{preheader}<div style="{S["card"]}">{"".join(body)}</div></body></html>')
     return page, report["subject"], report["headline"]
 
 
@@ -191,6 +195,8 @@ def selftest() -> None:
     assert page.count("a=1&amp;b=2") == 2 and "&amp;amp;" not in page
     assert page.count("https://a.example/1") == 3
     assert "2026/09/28" in page
+    assert "<title>測試頭條</title>" in page
+    assert page.index("display:none") < page.index(S["card"]) and "某事發生，見 來源。</div>" in page  # 預覽文字在最前面
     text = render_text(parse_report(md))
     assert text.startswith("每日晨間簡報 2026/09/28\n") and "【科技與 AI】" in text, text
     assert "某事發生，見 來源。" in text and "- 發生什麼：A\n  - 細節\n" in text, text
