@@ -43,6 +43,10 @@ def _validate(feed: dict, origin: str) -> None:
     except (TypeError, ValueError):
         raise SourceConfigError(f"{origin}: {name} 的 weight 不是數字") from None
     try:
+        int(feed.get("stale_days", 0))
+    except (TypeError, ValueError):
+        raise SourceConfigError(f"{origin}: {name} 的 stale_days 不是整數") from None
+    try:
         float(feed.get("order_boost", 0.0))
     except (TypeError, ValueError):
         raise SourceConfigError(f"{origin}: {name} 的 order_boost 不是數字") from None

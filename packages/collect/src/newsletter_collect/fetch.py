@@ -20,6 +20,7 @@ from newsletter_shared import metrics
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 PARALLEL_HOSTS = 8  # 同時抓幾個網域；同一網域永遠依序
+STALE_DAYS = 21  # 抓得到、但最新一則比這還舊：feed 可能停更（第三方 feed 不會報錯，只會不再更新）
 NS = {
     "atom": "http://www.w3.org/2005/Atom",
     "dc": "http://purl.org/dc/elements/1.1/",
@@ -219,6 +220,17 @@ def wait_seconds(host: str, last_hit: dict[str, float], cfg: dict, now: float) -
     return max(0.0, last_hit[host] + delay - now)
 
 
+def stale_warning(src: dict, items: list[Item], now: datetime | None = None) -> str | None:
+    """最新一則超過來源的 stale_days（預設 STALE_DAYS）天就回一句提醒；沒有日期或沒有項目不判斷。"""
+    dates = [i.published for i in items if i.published]
+    if not dates:
+        return None
+    age = ((now or datetime.now(timezone.utc)) - datetime.fromisoformat(max(dates))).days
+    if age <= src.get("stale_days", STALE_DAYS):
+        return None
+    return f"{src['name']}: 最新一則是 {age} 天前（{max(dates)[:10]}），feed 可能停更"
+
+
 def by_host(sources: list[dict]) -> dict[str, list[dict]]:
     groups: dict[str, list[dict]] = {}
     for src in sources:
@@ -253,7 +265,7 @@ def fetch_all(config: dict, fetch: Callable[[dict, dict, int], tuple[list[Item],
     for src in config["sources"]:
         got, err = results[id(src)]
         items.extend(got)
-        if err:
+        if err or (err := stale_warning(src, got)):
             errors.append(err)
     return items, errors
 
@@ -282,6 +294,16 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     finally:
         urllib.request.urlopen, time.sleep = real_urlopen, real_sleep
     assert calls == [1], calls  # 404 只請求一次、不等
+    def dated(day: str) -> Item:
+        return Item(uid=day, title="t", url="u", source="s", topic="t", weight=1.0, published=f"{day}T00:00:00+00:00",
+                    summary="", authors=[])
+    ref = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    assert stale_warning({"name": "A"}, [dated("2026-10-01"), dated("2026-10-10")], ref) == \
+        "A: 最新一則是 29 天前（2026-10-10），feed 可能停更"
+    assert stale_warning({"name": "A"}, [dated("2026-10-20")], ref) is None
+    assert stale_warning({"name": "A", "stale_days": 7}, [dated("2026-10-20")], ref) is not None
+    assert stale_warning({"name": "A"}, [], ref) is None
+
     # 並行：同網域依序且守間隔、不同網域同時；結果照設定順序
     srcs = [{"name": n, "type": "rss", "url": f"https://{h}/{n}"} for n, h in
             (("a1", "a.x"), ("b1", "b.x"), ("a2", "a.x"), ("c1", "c.x"))]

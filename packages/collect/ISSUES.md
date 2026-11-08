@@ -50,6 +50,7 @@
 **10. Anthropic News 依賴第三方 feed**
 - 目前用社群專案 [Olshansk/rss-feeds](https://github.com/Olshansk/rss-feeds) 的 feed，因為官網沒有 RSS。
 - 它停止更新時，改抓 `https://www.anthropic.com/sitemap.xml`（裡面有 260 篇以上的 `/news/` 網址），但需要另外寫解析。
+- 偵測（2026-11-08）：最新一則超過 21 天，curated 的 `errors` 會出現「feed 可能停更」，報告的本期備註看得到。
 
 ## 已解決（2026-11-08）
 
