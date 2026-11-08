@@ -16,8 +16,9 @@ services:
     command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787", "--admin-port", "8788"]
     ports:
       - "127.0.0.1:8788:8788"
+    # 用 CMD-SHELL：podman 會把 CMD 陣列裡含空格的參數拆開
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)\""]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -30,7 +31,7 @@ services:
     # 停止時要等執行中的步驟收尾、寫好紀錄
     stop_grace_period: 2m
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8790/status', timeout=3)"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8790/status', timeout=3)\""]
       interval: 30s
       timeout: 5s
       retries: 3
