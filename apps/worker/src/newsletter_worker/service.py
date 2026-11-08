@@ -95,6 +95,10 @@ EXIT_HINT = {5: "Claude 授權失效：到 /auth 重新貼上 `claude setup-toke
              daily.EXIT_TIMEOUT: "超過時限被停掉"}
 
 
+RUN_COMMAND = ("docker compose exec worker python -c \"import urllib.request as u; "
+               "print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())\"")
+
+
 def failure_notice(code: int, record: dict | None, tail: list[str], retried: bool) -> dict:
     """失敗通知信的 {subject, text}：今天不會再自動重跑時才寄。"""
     rec = record or {}
@@ -105,6 +109,7 @@ def failure_notice(code: int, record: dict | None, tail: list[str], retried: boo
         lines.append(why + "。")
     lines.append("已經自動重跑過一次，今天不會再試；修好後用 worker 的 POST /run 補跑。" if retried else
                  "這種失敗重跑也沒用，今天不會自動重跑；修好後用 worker 的 POST /run 補跑。")
+    lines += ["", "Docker 部署的補跑（在專案目錄執行；systemd 版見 deploy/README.md）：", RUN_COMMAND]
     lines += ["", f"log 最後 {len(tail)} 行：", *tail]
     return {"subject": f"晨報失敗 {rec.get('date', '')}：{step}（exit {code}）", "text": "\n".join(lines) + "\n"}
 
