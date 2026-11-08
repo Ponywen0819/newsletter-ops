@@ -59,7 +59,10 @@ class Reports:
         except ValueError as exc:
             raise ApiError(HTTPStatus.INTERNAL_SERVER_ERROR, f"報告格式不符：{exc}") from None
         shown = set(report_data.uids_of(report))
-        return {"date": date, "report": report, "marks": {u: m for u, m in self.marks().items() if u in shown}}
+        dates = self.report_dates()  # 新到舊
+        i = dates.index(date)
+        return {"date": date, "report": report, "marks": {u: m for u, m in self.marks().items() if u in shown},
+                "prev": dates[i + 1] if i + 1 < len(dates) else None, "next": dates[i - 1] if i else None}
 
     def run_record(self, date: str) -> dict | None:
         """worker 寫的 state/last_run.json，只回當天的；沒有或壞掉是 None。"""

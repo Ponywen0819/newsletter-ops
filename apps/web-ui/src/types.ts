@@ -45,13 +45,19 @@ export interface FeedbackTarget {
 /** uid → 目前的標記；沒標或已取消的不在裡面 */
 export type Marks = Record<string, Mark>
 
-export interface ReportPayload {
+/** 前一份（更舊）／下一份（更新）的日期；沒有是 null。舊的離線副本沒有這兩欄 */
+export interface Adjacent {
+  prev?: string | null
+  next?: string | null
+}
+
+export interface ReportPayload extends Adjacent {
   date: string
   report: Report
   marks: Marks
 }
 
-export interface TodayPayload {
+export interface TodayPayload extends Adjacent {
   date: string
   /** 當日晨報還沒產出時是 null */
   report: Report | null
