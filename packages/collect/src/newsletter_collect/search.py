@@ -8,6 +8,7 @@ LLM 只開 WebSearch，結果以固定格式的 JSON 回覆；每則由程式自
 from __future__ import annotations
 
 import html
+import ipaddress
 import json
 import re
 import sys
@@ -84,14 +85,30 @@ def title_matches(claimed: str, page: str) -> bool:
     return False
 
 
+def public_host(host: str) -> bool:
+    """LLM 給的網址只抓公開網站：擋 localhost、內網 IP、沒有點的主機名（compose 裡的 web、worker）。
+    ponytail: 只看字面，不解析 DNS；指向內網的公開網域擋不到，但這裡只做 GET、只比對標題。"""
+    host = host.lower().rstrip(".").strip("[]")
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return "." in host and not host.endswith(".localhost")
+
+
+def url_problem(url: str) -> str | None:
+    if not url.startswith(("https://", "http://")):
+        return "網址不是 http(s)"
+    return None if public_host(urllib.parse.urlsplit(url).hostname or "") else "網址不是公開網站"
+
+
 def check(item, topics: list[str], hours: int, now: datetime) -> str | None:
     """不連網的檢查，回傳退回原因；None 表示通過。"""
     if not isinstance(item, dict) or any(not isinstance(item.get(k), str) or not item[k].strip() for k in REQUIRED):
         return "欄位不齊"
     if item["topic"] not in topics:
         return "主題不在這次要補的清單"
-    if not item["url"].startswith(("https://", "http://")):
-        return "網址不是 http(s)"
+    if problem := url_problem(item["url"]):
+        return problem
     published = fetch._parse_date(item["published"])
     if published is None:
         return "發佈時間無法解析"
@@ -215,6 +232,12 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
         except ValueError:
             pass
 
+    for host in ("localhost", "web", "worker", "127.0.0.1", "10.0.0.5", "192.168.1.1", "169.254.169.254", "::1",
+                 "fd00::1", "a.localhost", ""):
+        assert not public_host(host), host
+    for host in ("bbc.co.uk", "WWW.Reuters.com", "8.8.8.8", "2001:4860:4860::8888"):
+        assert public_host(host), host
+
     page = '<html><head><title>Ceasefire agreed in talks | Reuters</title></head></html>'
     assert title_matches("Ceasefire agreed in talks", page)
     assert title_matches("Ceasefire agreed in talks", '<meta property="og:title" content="Ceasefire agreed in talks &amp; more">')
@@ -235,7 +258,7 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
              item(published="昨天"), item(published=(now - timedelta(hours=49)).isoformat()), item(topic="science", url="https://r.example/404"),
              item(topic="science", title="Wrong title here", url="https://r.example/ok2"), item(url="https://bbc.example/a"),
              {"topic": "world"}, "not a dict",
-             item(topic="science", url="https://r.example/seen")]
+             item(topic="science", url="https://r.example/seen"), item(url="http://worker:8790/status")]
     seen = {fetch.make_uid("https://r.example/seen", "Ceasefire agreed in talks"): "x"}
     pages["https://r.example/seen"] = page
     kept, rejected = accept(found, ranked, seen, config, get)
@@ -246,5 +269,5 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     reasons = [r["reason"] for r in rejected]
     assert reasons == ["超過每個主題 1 則", "主題不在這次要補的清單", "網址不是 http(s)", "發佈時間無法解析",
                        "發佈時間不在 48 小時內", "網址抓不到：404", "頁面標題對不上", "和已收錄的項目重複",
-                       "欄位不齊", "欄位不齊", "前幾天已收錄過"], reasons
+                       "欄位不齊", "欄位不齊", "前幾天已收錄過", "網址不是公開網站"], reasons
     print("ok")
