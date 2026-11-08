@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { groupReport, type Unit } from '../reportUnits'
 import type { Adjacent, Block, ListItem, Mark, Marks, Report } from '../types'
 import { isWide, useSectionNav } from '../useSectionNav'
@@ -86,9 +86,21 @@ function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Repor
 }
 
 /** 晨報本體。≥1100px 左側多一份目錄（scroll-spy、j／k 切換），窄螢幕只是依序排下來。 */
-/** 內文最後的「前一份／下一份」。 */
+/** 內文最後的「前一份／下一份」；[ ／ ] 鍵也能換（輸入框裡、帶修飾鍵時不攔截）。 */
 function AdjacentNav({ prev, next }: Adjacent) {
-  if (!prev && !next) return null
+  const navigate = useNavigate()
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return
+      if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable]')) return
+      const target = e.key === '[' ? prev : e.key === ']' ? next : null
+      if (!target) return
+      e.preventDefault()
+      navigate(`/reports/${target}`)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [prev, next, navigate])
   return (
     <nav className="report-adjacent" aria-label="前後的晨報">
       {prev && (
@@ -175,7 +187,7 @@ export function ReportView({ report, marks, onMark, adjacent = {} }: { report: R
           </div>
         ))}
         {grouped.sources && <UnitView unit={grouped.sources} sources={report.sources} marks={marks} onMark={onMark} />}
-        <AdjacentNav {...adjacent} />
+        {(adjacent.prev || adjacent.next) && <AdjacentNav {...adjacent} />}
       </ReaderShell>
     </article>
   )
