@@ -226,8 +226,10 @@ describe('版面由路由決定', () => {
       'GET /api/search?q=a': () => ({ json: { q: 'a', results: [{ date: '2026-09-28', text: 'a' }], truncated: true } }),
       'GET /api/search?q=x': () => ({ status: 500, json: { error: '壞了' } }),
     })
-    await screen.findByRole('link', { name: '2026-09-28' }) // 等列表載入完，搜尋框才不會被換掉
-    await userEvent.type(screen.getByRole('searchbox'), '沒有{Enter}')
+    await userEvent.type(await screen.findByRole('searchbox'), '沒有') // 列表還在載入時就開始打字
+    await screen.findByRole('link', { name: '2026-09-28' })
+    expect(screen.getByRole('searchbox')).toHaveValue('沒有') // 資料到了，搜尋框沒被換掉
+    await userEvent.type(screen.getByRole('searchbox'), '{Enter}')
     expect(await screen.findByText('沒有找到「沒有」')).toBeInTheDocument()
     await userEvent.clear(screen.getByRole('searchbox'))
     await userEvent.type(screen.getByRole('searchbox'), 'a{Enter}')
