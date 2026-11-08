@@ -9,14 +9,17 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from typing import Callable
 from xml.etree import ElementTree as ET
 
 from newsletter_shared import metrics
 
 ARXIV_API = "https://export.arxiv.org/api/query"
+PARALLEL_HOSTS = 8  # 同時抓幾個網域；同一網域永遠依序
 NS = {
     "atom": "http://www.w3.org/2005/Atom",
     "dc": "http://purl.org/dc/elements/1.1/",
@@ -214,34 +217,39 @@ def wait_seconds(host: str, last_hit: dict[str, float], cfg: dict, now: float) -
     return max(0.0, last_hit[host] + delay - now)
 
 
-def interleave(sources: list[dict]) -> list[dict]:
-    """同網域的來源輪流排開（a1 b1 c1 a2 a3 ...），同網域的等待就被其他請求的時間吸收。
-    順序不影響結果，curate 會重新排序。"""
-    queues: dict[str, list[dict]] = {}
+def by_host(sources: list[dict]) -> dict[str, list[dict]]:
+    groups: dict[str, list[dict]] = {}
     for src in sources:
-        queues.setdefault(source_host(src), []).append(src)
-    ordered: list[dict] = []
-    while queues:
-        for host in list(queues):
-            ordered.append(queues[host].pop(0))
-            if not queues[host]:
-                del queues[host]
-    return ordered
+        groups.setdefault(source_host(src), []).append(src)
+    return groups
 
 
-def fetch_all(config: dict) -> tuple[list[Item], list[str]]:
+def fetch_all(config: dict, fetch: Callable[[dict, dict, int], tuple[list[Item], str | None]] | None = None,
+              ) -> tuple[list[Item], list[str]]:
+    """不同網域並行、同一網域依序並守 wait_seconds 的間隔。結果照設定裡的來源順序排，和並行的先後無關。"""
     cfg = config.get("request", {})
     limit = config.get("max_items_per_source", 40)
+    fetch = fetch or fetch_source
+    results: dict[int, tuple[list[Item], str | None]] = {}
+
+    def run_host(srcs: list[dict]) -> None:
+        last_hit: dict[str, float] = {}
+        for src in srcs:
+            host = source_host(src)
+            time.sleep(wait_seconds(host, last_hit, cfg, time.monotonic()))
+            with metrics.timed("fetch_source", source=src["name"], topic=src.get("topic")) as m:
+                got, err = fetch(src, cfg, limit)
+                m.update(items=len(got), error=err)
+            last_hit[host] = time.monotonic()  # 以請求結束時間起算，失敗重試也算在內
+            results[id(src)] = (got, err)
+
+    groups = by_host(config["sources"])
+    with ThreadPoolExecutor(max_workers=max(1, min(PARALLEL_HOSTS, len(groups)))) as pool:
+        list(pool.map(run_host, groups.values()))
     items: list[Item] = []
     errors: list[str] = []
-    last_hit: dict[str, float] = {}
-    for src in interleave(config["sources"]):
-        host = source_host(src)
-        time.sleep(wait_seconds(host, last_hit, cfg, time.monotonic()))
-        with metrics.timed("fetch_source", source=src["name"], topic=src.get("topic")) as m:
-            got, err = fetch_source(src, cfg, limit)
-            m.update(items=len(got), error=err)
-        last_hit[host] = time.monotonic()  # 以請求結束時間起算，失敗重試也算在內
+    for src in config["sources"]:
+        got, err = results[id(src)]
         items.extend(got)
         if err:
             errors.append(err)
@@ -272,9 +280,25 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     finally:
         urllib.request.urlopen, time.sleep = real_urlopen, real_sleep
     assert calls == [1], calls  # 404 只請求一次、不等
-    order = [s["url"] for s in interleave([{"url": u} for u in
-             ["https://a/1", "https://a/2", "https://a/3", "https://b/1", "https://c/1"]])]
-    assert order == ["https://a/1", "https://b/1", "https://c/1", "https://a/2", "https://a/3"], order
+    # 並行：同網域依序且守間隔、不同網域同時；結果照設定順序
+    srcs = [{"name": n, "type": "rss", "url": f"https://{h}/{n}"} for n, h in
+            (("a1", "a.x"), ("b1", "b.x"), ("a2", "a.x"), ("c1", "c.x"))]
+    hits: list[tuple[str, float]] = []
+
+    def fake(src: dict, _cfg: dict, _limit: int):
+        hits.append((src["name"], time.monotonic()))
+        time.sleep(0.2)
+        return [Item(uid=src["name"], title=src["name"], url=src["url"], source=src["name"], topic="t",
+                     weight=1.0, published=None, summary="", authors=[])], \
+            (f"{src['name']}: boom" if src["name"] == "b1" else None)
+
+    t0 = time.monotonic()
+    got, errs = fetch_all({"sources": srcs, "request": {"delay_seconds": 0.3}}, fake)
+    assert [i.uid for i in got] == ["a1", "b1", "a2", "c1"] and errs == ["b1: boom"], (got, errs)
+    at = dict(hits)
+    assert at["a2"] - at["a1"] >= 0.2 + 0.3 - 0.01, at  # a.x 第二個要等第一個做完再隔 0.3 秒
+    assert abs(at["b1"] - at["a1"]) < 0.15 and abs(at["c1"] - at["a1"]) < 0.15, at  # 不同網域同時開始
+    assert time.monotonic() - t0 < 1.0
     rss = (b"<rss><channel>"
            b"<item><title>Real news</title><link>https://x/news/1</link></item>"
            b"<item><title>Watch: a ship sinks</title><link>https://x/news/2</link></item>"
