@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT, auth_health, lock
+from newsletter_shared import ROOT, auth_health, lock, tz
 
 from . import daily
 
@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"[worker] {name} {exc}", file=sys.stderr)
             return 2
-    service = Service(times["NEWSLETTER_RUN_AT"], daily.tz(), times["NEWSLETTER_AUTH_CHECK_AT"])
+    service = Service(times["NEWSLETTER_RUN_AT"], tz(), times["NEWSLETTER_AUTH_CHECK_AT"])
     server = make_server(service, args.host, args.port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     for sig in (signal.SIGTERM, signal.SIGINT):

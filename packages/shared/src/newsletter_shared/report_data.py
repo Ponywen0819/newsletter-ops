@@ -18,12 +18,10 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from newsletter_shared.feedback import MARK_RE
-from newsletter_shared import ROOT
+from newsletter_shared import ROOT, today
 
 LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 COMMENT = re.compile(r"^\s*<!--(.*?)-->\s*$")
@@ -210,7 +208,7 @@ def iter_items(report: dict):
 def check(argv: list[str] | None = None, root: Path = ROOT) -> int:
     """newsletter-report-check：報告格式正確 exit 0；找不到檔或格式不符 exit 1，原因印到 stderr。"""
     args = sys.argv[1:] if argv is None else argv
-    stamp = args[0] if args else f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}"
+    stamp = args[0] if args else today(root)
     src = root / "reports" / f"{stamp}.md"
     if not src.exists():
         print(f"找不到 {src}", file=sys.stderr)
@@ -225,6 +223,22 @@ def check(argv: list[str] | None = None, root: Path = ROOT) -> int:
 
 
 def selftest() -> None:
+    # 時區：config.json 的 timezone，沒有檔、沒寫、壞掉都退回預設
+    import tempfile
+    from zoneinfo import ZoneInfo
+
+    from newsletter_shared import DEFAULT_TZ, tz
+
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        assert tz(root) == ZoneInfo(DEFAULT_TZ)
+        (root / "config").mkdir()
+        (root / "config" / "config.json").write_text('{"timezone": "UTC"}', encoding="utf-8")
+        assert tz(root) == ZoneInfo("UTC")
+        for broken in ("{", "[]", "{}"):
+            (root / "config" / "config.json").write_text(broken, encoding="utf-8")
+            assert tz(root) == ZoneInfo(DEFAULT_TZ), broken
+
     # inline：連結、粗體、行內碼、跳脫；網址的 & 保持原樣（跳脫交給前端框架）
     def flat(nodes: list[dict]) -> str:
         out = []

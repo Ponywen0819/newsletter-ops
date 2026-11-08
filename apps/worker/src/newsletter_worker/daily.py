@@ -20,9 +20,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Iterator
-from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT, atomic, lock
+from newsletter_shared import ROOT, atomic, lock, today
 
 EXIT_BUSY = 75
 EXIT_STOPPED = 128 + signal.SIGTERM
@@ -34,15 +33,6 @@ MODULES = {
     "render": "newsletter_notify.render_email",
     "send": "newsletter_notify.send_email",
 }
-
-
-def tz() -> ZoneInfo:
-    """報告日期的時區，和 newsletter-collect 同一個來源。"""
-    try:
-        name = json.loads((ROOT / "config" / "config.json").read_text(encoding="utf-8")).get("timezone")
-    except (OSError, ValueError):
-        name = None
-    return ZoneInfo(name or "Asia/Taipei")
 
 
 def now_iso() -> str:
@@ -85,7 +75,7 @@ def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", st
     """trigger：schedule / catchup / retry / manual / cli，寫進紀錄；排程服務靠 retry 判斷重跑過沒。"""
     try:
         with lock.locked(LOCK, timeout=0):
-            rec = {"date": f"{datetime.now(tz()):%Y-%m-%d}", "trigger": trigger, "started_at": now_iso(),
+            rec = {"date": today(), "trigger": trigger, "started_at": now_iso(),
                    "finished_at": None, "exit_code": None, "step": None}
             atomic.write_text(RECORD, json.dumps(rec))
             code, failed = 1, []  # _run 丟例外時記成失敗
@@ -197,7 +187,7 @@ def selftest() -> None:
         assert '"subject"' not in text
         rec = read_record()
         assert rec is not None and rec["trigger"] == "schedule" and rec["exit_code"] == 0 and rec["finished_at"], rec
-        assert rec["date"] == f"{datetime.now(tz()):%Y-%m-%d}" and rec["started_at"] <= rec["finished_at"], rec
+        assert rec["date"] == today() and rec["started_at"] <= rec["finished_at"], rec
         assert rec["step"] is None, rec
 
         # 任一步失敗：後面的不跑、exit code 是該步的、log 一行說明、紀錄記下 exit code；失敗也會放鎖

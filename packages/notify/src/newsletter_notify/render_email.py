@@ -14,12 +14,10 @@ import json
 import os
 import re
 import sys
-from datetime import datetime
 from urllib.parse import quote
-from zoneinfo import ZoneInfo
 
 from newsletter_shared import metrics
-from newsletter_shared import ROOT
+from newsletter_shared import ROOT, today
 from newsletter_shared.report_data import parse_report
 
 BASE_URL_ENV = "NEWSLETTER_BASE_URL"
@@ -211,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     if "--selftest" in argv:
         selftest()
         return 0
-    stamp = argv[0] if argv else f"{datetime.now(ZoneInfo('Asia/Taipei')):%Y-%m-%d}"
+    stamp = argv[0] if argv else today()
     src = ROOT / "reports" / f"{stamp}.md"
     if not src.exists():
         print(f"找不到 {src}，先跑 news-digest 寫報告", file=sys.stderr)

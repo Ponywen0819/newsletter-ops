@@ -22,7 +22,7 @@ from newsletter_collect import fetch as fetch_mod
 from newsletter_collect import search as search_mod
 from newsletter_collect import sources as sources_mod
 from newsletter_shared import metrics
-from newsletter_shared import ROOT
+from newsletter_shared import DEFAULT_TZ, ROOT
 
 
 INTERESTS = ROOT / "config" / "interests.md"
@@ -126,7 +126,7 @@ def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: 
     enrich_mod.enrich(ranked, config)
 
     payload = {
-        "generated_at": datetime.now(ZoneInfo(config.get("timezone", "Asia/Taipei"))).isoformat(),
+        "generated_at": datetime.now(ZoneInfo(config.get("timezone") or DEFAULT_TZ)).isoformat(),
         "stats": stats,
         "errors": errors,
         "search": search,
@@ -171,7 +171,7 @@ def main() -> int:
 
     if args.lookback:
         config["lookback_hours"] = args.lookback
-    tz = ZoneInfo(config.get("timezone", "Asia/Taipei"))
+    tz = ZoneInfo(config.get("timezone") or DEFAULT_TZ)
     stamp = f"{datetime.now(tz):%Y-%m-%d}"
 
     with metrics.timed("fetch", sources=len(config["sources"])) as m:

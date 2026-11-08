@@ -17,12 +17,11 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT
+from newsletter_shared import ROOT, tz
 
 METRICS_DIR = ROOT / "logs" / "metrics"
-TZ = ZoneInfo("Asia/Taipei")
+TZ = tz()
 TRANSCRIPTS = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ROOT))
 
 
