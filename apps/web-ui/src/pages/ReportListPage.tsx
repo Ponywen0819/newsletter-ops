@@ -51,9 +51,10 @@ function Side({ q, children }: { q: string; children?: ReactNode }) {
 function highlight(text: string, q: string): ReactNode[] {
   const lower = text.toLowerCase()
   const needle = q.toLowerCase()
+  if (!needle) return [text]
   const out: ReactNode[] = []
   let at = 0
-  for (let i = lower.indexOf(needle); needle && i >= 0; i = lower.indexOf(needle, at)) {
+  for (let i = lower.indexOf(needle); i >= 0; i = lower.indexOf(needle, at)) {
     out.push(text.slice(at, i), <mark key={i}>{text.slice(i, i + q.length)}</mark>)
     at = i + q.length
   }
