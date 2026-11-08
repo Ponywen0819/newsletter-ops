@@ -24,6 +24,7 @@ import threading
 from datetime import datetime, time, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
 from newsletter_shared import ROOT, auth_health, auth_store, lock, tz
@@ -96,7 +97,7 @@ EXIT_HINT = {5: "Claude 授權失效：到 /auth 重新貼上 `claude setup-toke
 
 
 RUN_COMMAND = ("docker compose exec worker python -c \"import urllib.request as u; "
-               "print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())\"")
+               "print(u.urlopen(u.Request('http://127.0.0.1:8790/run{query}', method='POST')).read().decode())\"")
 
 
 def failure_notice(code: int, record: dict | None, tail: list[str], retried: bool) -> dict:
@@ -109,7 +110,10 @@ def failure_notice(code: int, record: dict | None, tail: list[str], retried: boo
         lines.append(why + "。")
     lines.append("已經自動重跑過一次，今天不會再試；修好後用 worker 的 POST /run 補跑。" if retried else
                  "這種失敗重跑也沒用，今天不會自動重跑；修好後用 worker 的 POST /run 補跑。")
-    lines += ["", "Docker 部署的補跑（在專案目錄執行；systemd 版見 deploy/README.md）：", RUN_COMMAND]
+    first = daily.resume_from(rec.get("step"))
+    query = "" if first == "collect" else f"?from={first}"  # 前面的步驟今天已經有產出，不用重來
+    lines += ["", f"Docker 部署的補跑（從「{STEP_LABEL[first]}」開始；在專案目錄執行，systemd 版見 deploy/README.md）：",
+              RUN_COMMAND.format(query=query)]
     lines += ["", f"log 最後 {len(tail)} 行：", *tail]
     return {"subject": f"晨報失敗 {rec.get('date', '')}：{step}（exit {code}）", "text": "\n".join(lines) + "\n"}
 
@@ -152,14 +156,15 @@ class Service:
         self._mu = threading.Lock()
         self._worker: threading.Thread | None = None
 
-    def start(self, trigger: str) -> dict | None:
-        """背景跑一次；已經在跑（這個服務或別的程序）就回 None。"""
+    def start(self, trigger: str, first: str | None = None) -> dict | None:
+        """背景跑一次；已經在跑（這個服務或別的程序）就回 None。first：從哪一步開始（沒給就依 trigger 決定）。"""
         with self._mu:
             if self.current is not None or lock_held():
                 return None
             self.current = {"trigger": trigger, "started_at": daily.now_iso()}
             # 自動重跑從失敗的那步開始：send 沒寄出不必再花 token 重寫報告
-            first = daily.resume_from((daily.read_record() or {}).get("step")) if trigger == "retry" else "collect"
+            if first is None:
+                first = daily.resume_from((daily.read_record() or {}).get("step")) if trigger == "retry" else "collect"
             self._worker = threading.Thread(target=self._work, args=(trigger, first))
             self._worker.start()
             return self.current
@@ -248,9 +253,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:
-        if self.path != "/run":
+        url = urlsplit(self.path)
+        step = parse_qs(url.query).get("from", ["collect"])[0]
+        if url.path != "/run":
             self._send(404, {"error": "not found"})
-        elif (started := self.server.service.start("manual")) is None:  # type: ignore[attr-defined]
+        elif step not in daily.STEPS:
+            self._send(400, {"error": f"from 只能是 {'、'.join(daily.STEPS)}"})
+        elif (started := self.server.service.start("manual", daily.resume_from(step))) is None:  # type: ignore[attr-defined]
             self._send(409, {"error": "pipeline 正在跑"})
         else:
             self._send(202, {"started_at": started["started_at"]})

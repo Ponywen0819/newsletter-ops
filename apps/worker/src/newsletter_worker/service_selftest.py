@@ -124,7 +124,9 @@ def _selftest_notice() -> None:
     n = failure_notice(5, rec, ["line a", "line b"], retried=False)
     assert n["subject"] == "晨報失敗 2026-11-03：撰寫報告（exit 5）", n
     assert "/auth" in n["text"] and "重跑也沒用" in n["text"] and n["text"].endswith("line a\nline b\n"), n
-    assert "8790/run" in n["text"] and n["text"].index("8790/run") < n["text"].index("line a"), n  # 補跑指令在 log 前面
+    assert "8790/run?from=write'" in n["text"] and n["text"].index("8790/run") < n["text"].index("line a"), n  # 補跑指令在 log 前面
+    assert "8790/run'" in failure_notice(1, {"step": "collect"}, [], retried=True)["text"]
+    assert "8790/run?from=render'" in failure_notice(1, {"step": "send"}, [], retried=True)["text"]
     n = failure_notice(3, {"date": "2026-11-03", "step": "collect"}, [], retried=True)
     assert "蒐集新聞" in n["subject"] and "已經自動重跑過一次" in n["text"], n
     assert "?" in failure_notice(1, None, [], retried=True)["subject"]
@@ -186,6 +188,15 @@ def _selftest_http(tmp: Path) -> None:
         last = req("GET", "/status")[1]["last"]
         assert last["trigger"] == "manual" and last["exit_code"] == 0, last
         assert "完成" in (tmp / "logs" / f"{datetime.now():%Y-%m}.log").read_text(encoding="utf-8")
+
+        # ?from=：從指定的步驟開始（send 要 render 的輸出，從 render 起）；不認得的步驟 400
+        for name in daily.MODULES:
+            (tmp / name).unlink(missing_ok=True)
+        assert req("POST", "/run?from=send")[0] == 202
+        _wait(lambda: req("GET", "/status")[1]["state"] == "idle")
+        assert not (tmp / "write").exists() and (tmp / "render").exists() and (tmp / "send").exists()
+        assert req("GET", "/status")[1]["last"]["exit_code"] == 0
+        assert req("POST", "/run?from=nope")[0] == 400
 
         # 執行中：再送是 409；/status 看得到 current；停止後紀錄是被打斷（143）
         os.environ["FAKE_FAIL"] = "write:hang"
