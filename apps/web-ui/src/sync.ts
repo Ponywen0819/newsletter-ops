@@ -1,31 +1,36 @@
-import { API_CACHE } from './cacheName'
 import { check } from './connectivity'
-import type { ReportSummary } from './types'
+import { cachedRecord, isRecord, PERIODIC_TAG, refresh, type SyncRecord } from './offlineCopy'
 
-/** 離線副本：線上時把今日、歷史列表與最近 KEEP 份晨報存進 API_CACHE（離線時 api.ts 讀同一個）。 */
-export const KEEP = 30
-const PARALLEL = 4
+/** 頁面端的離線副本同步：先問連線（connectivity.ts），再交給 offlineCopy.ts；紀錄另存 localStorage 讓橫幅同步讀到。 */
+export { KEEP, type SyncRecord } from './offlineCopy'
+
 const MIN_GAP_MS = 10 * 60_000 // 回到前景時，距上次成功同步不到這麼久就不再同步
 const RECORD_KEY = 'offline-sync' // localStorage：關掉 App 再離線開啟時，橫幅還說得出副本的新舊
-
-/** 最近一次同步：at 是時間（ms），count 是副本裡的晨報份數，failed 是這次沒更新到（留著舊版或沒有）的份數。 */
-export interface SyncRecord {
-  at: number
-  count: number
-  failed: number
-}
+const PERSIST_KEY = 'storage-persist-asked'
+const PERIODIC_MS = 12 * 60 * 60_000 // 背景同步的最短間隔；實際頻率由瀏覽器依使用情況決定
 
 export function lastSync(): SyncRecord | null {
   try {
-    const rec = JSON.parse(localStorage.getItem(RECORD_KEY) ?? 'null') as Partial<SyncRecord> | null
-    const ok = rec && [rec.at, rec.count, rec.failed].every((v) => typeof v === 'number' && Number.isFinite(v))
-    return ok ? (rec as SyncRecord) : null
+    const rec: unknown = JSON.parse(localStorage.getItem(RECORD_KEY) ?? 'null')
+    return isRecord(rec) ? rec : null
   } catch {
     return null
   }
 }
 
-const PERSIST_KEY = 'storage-persist-asked'
+function saveRecord(rec: SyncRecord): void {
+  try {
+    localStorage.setItem(RECORD_KEY, JSON.stringify(rec))
+  } catch {
+    // 私密視窗、被封鎖的儲存空間：橫幅退回不帶時間的文字
+  }
+}
+
+/** service worker 在背景同步過的話，紀錄只在 cache 裡：比 localStorage 的新就搬過來。 */
+export async function adoptBackgroundRecord(): Promise<void> {
+  const rec = await cachedRecord()
+  if (rec && rec.at > (lastSync()?.at ?? -Infinity)) saveRecord(rec)
+}
 
 /** 請瀏覽器別在空間吃緊時清掉副本。每台裝置只問一次（Firefox 會跳詢問），已經是持久的就不問；不支援或被拒絕都照舊。 */
 export async function askPersist(): Promise<void> {
@@ -40,63 +45,39 @@ export async function askPersist(): Promise<void> {
   }
 }
 
-function saveRecord(rec: SyncRecord): void {
+interface PeriodicSyncManager {
+  register(tag: string, options?: { minInterval: number }): Promise<void>
+}
+
+/**
+ * 沒開 App 時也讓瀏覽器定期喚醒 service worker 同步（Periodic Background Sync）。只有 Chromium 系、已安裝的 PWA 支援；
+ * iOS Safari、Firefox 沒有。不支援、沒給權限都靜默略過。
+ */
+export async function registerPeriodicSync(): Promise<void> {
   try {
-    localStorage.setItem(RECORD_KEY, JSON.stringify(rec))
+    const reg = await navigator.serviceWorker?.ready
+    const periodic = (reg as (ServiceWorkerRegistration & { periodicSync?: PeriodicSyncManager }) | undefined)?.periodicSync
+    if (!periodic) return
+    const perm = await navigator.permissions?.query({ name: 'periodic-background-sync' as PermissionName })
+    if (perm && perm.state !== 'granted') return
+    await periodic.register(PERIODIC_TAG, { minInterval: PERIODIC_MS })
   } catch {
-    // 私密視窗、被封鎖的儲存空間：橫幅退回不帶時間的文字
+    // 不支援或被拒絕：和沒有這個功能一樣
   }
 }
 
 let syncedAt = -Infinity
 let running: Promise<boolean> | null = null
 
-/**
- * 只存沒被轉址的 200：Access 逾時的 302（manual 下是 opaqueredirect）、錯誤頁都不能進副本。
- * 帶上副本的 ETag：伺服器回 304 就沿用舊副本，不傳整份（存著的 Response 本來就保留 headers）。
- */
-async function store(cache: Cache, path: string): Promise<Response | null> {
-  const old = await cache.match(path)
-  const etag = old?.headers.get('ETag')
-  const res = await fetch(path, { cache: 'no-store', redirect: 'manual', headers: etag ? { 'If-None-Match': etag } : {} })
-  if (res.status === 304 && old) return old
-  if (!res.ok || res.redirected) return null
-  await cache.put(path, res.clone())
-  return res
-}
-
 async function run(): Promise<boolean> {
   if (typeof caches === 'undefined' || (await check()) !== 'ok') return false
-  const cache = await caches.open(API_CACHE)
-  const list = await store(cache, '/api/reports').catch(() => null)
-  if (!list) return false // 失敗保留舊副本
-  const { reports } = (await list.json()) as { reports: ReportSummary[] }
-  const keep = new Set(
-    reports
-      .toSorted((a, b) => b.date.localeCompare(a.date))
-      .slice(0, KEEP)
-      .map((r) => `/api/reports/${encodeURIComponent(r.date)}`),
-  )
-  const queue = ['/api/today', ...keep]
-  const failed = new Set<string>()
-  await Promise.all(
-    Array.from({ length: PARALLEL }, async () => {
-      for (let path = queue.shift(); path; path = queue.shift()) {
-        if (!(await store(cache, path).catch(() => null))) failed.add(path)
-      }
-    }),
-  )
-  for (const req of await cache.keys()) {
-    const path = new URL(req.url).pathname
-    if (/^\/api\/reports\/./.test(path) && !keep.has(path)) await cache.delete(req) // 只留最近 KEEP 份
-  }
+  const rec = await refresh()
+  if (rec === false) return false // 失敗保留舊副本
   syncedAt = Date.now()
-  const missed = [...keep].filter((p) => failed.has(p))
-  if (missed.length < keep.size || keep.size === 0) {
-    // 「同步過」＝列表成功、而且至少寫入一份（一份都沒有晨報時也算）
-    const cached = new Set((await cache.keys()).map((req) => new URL(req.url).pathname))
-    saveRecord({ at: syncedAt, count: [...keep].filter((p) => cached.has(p)).length, failed: missed.length })
+  if (rec) {
+    saveRecord(rec)
     void askPersist() // 有東西值得保留了才問
+    void registerPeriodicSync()
   }
   return true
 }

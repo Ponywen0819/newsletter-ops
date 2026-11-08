@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { askPersist, KEEP, lastSync, resetSync, sync } from './sync'
+import { refresh, RECORD_URL } from './offlineCopy'
+import { adoptBackgroundRecord, askPersist, KEEP, lastSync, registerPeriodicSync, resetSync, sync } from './sync'
 import { mockFetch } from './test/fetchMock'
 
 /** 假的 Cache Storage：一個 cache，path → 內容。 */
@@ -204,5 +205,71 @@ describe('askPersist（storage.persist）', () => {
     mockFetch({ 'GET /api/reports': () => ({ status: 502, json: {} }) })
     await sync(true)
     expect(storage.persisted).not.toHaveBeenCalled()
+  })
+})
+
+describe('背景同步（service worker 的 periodicsync 用的 refresh）', () => {
+  it('紀錄也寫進 cache：service worker 沒有 localStorage', async () => {
+    const { store } = stubCaches()
+    mockFetch(routesFor(dates(2)))
+    const rec = await refresh()
+    expect(rec).toMatchObject({ count: 2, failed: 0 })
+    expect(JSON.parse(store.get(RECORD_URL) as string)).toEqual(rec)
+  })
+
+  it.each([
+    ['登入逾時（列表被轉址）', () => mockFetch({ 'GET /api/reports': () => ({ status: 302, json: {} }) })],
+    ['離線（fetch 丟錯）', () => vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('offline'))))],
+  ])('%s：不寫入任何東西', async (_name, setup) => {
+    const { cache } = stubCaches()
+    setup()
+    expect(await refresh()).toBe(false)
+    expect(cache.put).not.toHaveBeenCalled()
+  })
+
+  it('頁面啟動時把背景同步的紀錄搬進 localStorage（只搬比較新的）', async () => {
+    const newer = { at: 2000, count: 3, failed: 0 }
+    stubCaches({ [RECORD_URL]: newer })
+    localStorage.setItem('offline-sync', JSON.stringify({ at: 1000, count: 1, failed: 0 }))
+    await adoptBackgroundRecord()
+    expect(lastSync()).toEqual(newer)
+    stubCaches({ [RECORD_URL]: { at: 500, count: 9, failed: 0 } })
+    await adoptBackgroundRecord()
+    expect(lastSync()).toEqual(newer)
+  })
+})
+
+describe('registerPeriodicSync', () => {
+  function stubSW(periodicSync: unknown, state?: PermissionState) {
+    Object.defineProperty(navigator, 'serviceWorker', { value: { ready: Promise.resolve({ periodicSync }) }, configurable: true })
+    Object.defineProperty(navigator, 'permissions', {
+      value: state ? { query: vi.fn(async () => ({ state })) } : undefined,
+      configurable: true,
+    })
+  }
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'serviceWorker')
+    Reflect.deleteProperty(navigator, 'permissions')
+  })
+
+  it('支援而且有權限：註冊，間隔 12 小時', async () => {
+    const register = vi.fn(async () => {})
+    stubSW({ register }, 'granted')
+    await registerPeriodicSync()
+    expect(register).toHaveBeenCalledWith('offline-copy', { minInterval: 12 * 60 * 60_000 })
+  })
+
+  it('沒權限：不註冊', async () => {
+    const register = vi.fn(async () => {})
+    stubSW({ register }, 'denied')
+    await registerPeriodicSync()
+    expect(register).not.toHaveBeenCalled()
+  })
+
+  it('不支援、或註冊失敗：不報錯', async () => {
+    stubSW(undefined, 'granted')
+    await expect(registerPeriodicSync()).resolves.toBeUndefined()
+    stubSW({ register: async () => Promise.reject(new Error('NotAllowedError')) }, 'granted')
+    await expect(registerPeriodicSync()).resolves.toBeUndefined()
   })
 })
