@@ -76,7 +76,7 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 | 介面 | 回應 |
 | --- | --- |
 | `GET /status` | `{state: idle\|running, next_run_at, current: {trigger, started_at} \| null, last: last_run.json \| null}` |
-| `POST /run` | 202 `{started_at}`；已經在跑（這裡或別的程序握著鎖）回 409。不收 body |
+| `POST /run[?from=<步驟>]` | 202 `{started_at}`；已經在跑（這裡或別的程序握著鎖）回 409。不收 body。`from`（collect／write／render／send，預設 collect）從那一步開始，前面的產出要今天已經有；send 會從 render 起；其他值回 400 |
 
 沒有登入，靠網路隔離：compose 不 publish 這個 port，`worker` 只在自己的 `be` 網路；systemd 版綁 `127.0.0.1`（見 [deploy/README.md](../../deploy/README.md)）。
 輸出進 `logs/<YYYY-MM>.log`（月份以開始時間為準），服務自己的訊息印 stdout；失敗時附上這次 log 的最後 20 行。
