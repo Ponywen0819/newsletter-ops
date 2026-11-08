@@ -21,7 +21,9 @@ def build(meta: dict, sender: str, to: list[str]) -> EmailMessage:
     msg["Subject"] = meta["subject"]
     msg["From"] = sender
     msg["To"] = ", ".join(to)
-    msg.set_content(f"{meta['headline']}\n\n這封信是 HTML 格式，請用支援 HTML 的信箱開啟。")
+    text = Path(meta["text_path"]).read_text(encoding="utf-8") if meta.get("text_path") else \
+        f"{meta['headline']}\n\n這封信是 HTML 格式，請用支援 HTML 的信箱開啟。"
+    msg.set_content(text)
     msg.add_alternative(Path(meta["html_path"]).read_text(encoding="utf-8"), subtype="html")
     return msg
 
@@ -64,6 +66,14 @@ def selftest() -> None:
     html_part = msg.get_body(("html",))
     assert html_part is not None and "頭條" in html_part.get_content()
     assert "頭條" in msg.get_body(("plain",)).get_content()
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as tx, \
+            tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as hx:
+        tx.write("純文字版\n")
+        hx.write("<p>x</p>")
+    msg = build({"subject": "s", "headline": "h", "html_path": hx.name, "text_path": tx.name}, "a@example.com", ["b@example.com"])
+    os.unlink(tx.name)
+    os.unlink(hx.name)
+    assert msg.get_body(("plain",)).get_content() == "純文字版\n"
     print("ok")
 
 
