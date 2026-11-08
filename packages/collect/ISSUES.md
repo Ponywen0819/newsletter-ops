@@ -56,6 +56,8 @@
 
 ## 已解決（2026-11-08）
 
+- **經濟段被選股文佔掉**：CNBC Markets 的 feed 幾乎都是個股推薦（〈Three consumer stocks to buy…〉〈Here are Thursday's biggest analyst calls〉），和 `penalize` 不要股價、法說的方向相反。換成 CNBC Economy（就業、利率、GDP、央行）。（2026-11-09）
+
 - **抓取還有約 5 秒可以省**（原第 11 點）：不同網域改成並行（最多 8 個），同一網域照舊依序、守間隔（arXiv 3 秒）。30 個來源從 30.5 秒降到 14.8 秒，剩下的主要是 arXiv 5 個來源依序等待。
 
 ## 已解決（2026-09-28）
