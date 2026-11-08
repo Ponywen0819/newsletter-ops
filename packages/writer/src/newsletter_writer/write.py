@@ -21,7 +21,7 @@ from pathlib import Path
 
 from newsletter_llm import runner
 from newsletter_shared import ROOT, metrics
-from newsletter_shared.report_data import parse_report
+from newsletter_shared.report_data import parse_report, uids_of
 
 TOOLS = ["Skill", "Bash", "Read", "Write", "Edit"]
 DEFAULT_MAX_TURNS = 60  # 還沒量過實際回合數；跑幾天看 metrics 的 turns 再調
@@ -55,6 +55,14 @@ def check_format(root: Path, stamp: str) -> str | None:
     except ValueError as exc:
         return f"{stamp}.md 格式不符：{exc}"
     return None
+
+
+def coverage(root: Path, stamp: str) -> tuple[list[str], list[str]]:
+    """(curated 有但報告漏掉的 uid, 報告有但 curated 沒有的 uid)。漏掉的收不到回饋；只警告，不擋寄信。"""
+    items = json.loads((root / "data" / "curated" / f"{stamp}.json").read_text(encoding="utf-8"))["items"]
+    want = [i["uid"] for i in items]
+    got = uids_of(parse_report((root / "reports" / f"{stamp}.md").read_text(encoding="utf-8")))
+    return [u for u in want if u not in set(got)], sorted(set(got) - set(want))
 
 
 def judge(usage: runner.Usage, sdk_error: str | None, stamp: str, started: float) -> tuple[int, str, str | None]:
@@ -94,7 +102,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[writer] 最後回覆：{usage.result.result[:500]}", file=sys.stderr)
     if code:
         print(f"[writer] 失敗（exit {code}）：{reason}", file=sys.stderr)
-    return code
+        return code
+    missing, unknown = coverage(ROOT, stamp)
+    metrics.record("coverage", missing=len(missing), unknown=len(unknown))
+    if missing:
+        print(f"[writer] ! 報告漏掉 {len(missing)} 則 curated 項目（收不到回饋）：{', '.join(missing)}", file=sys.stderr)
+    if unknown:
+        print(f"[writer] ! 報告有 {len(unknown)} 個 curated 裡沒有的 uid：{', '.join(unknown)}", file=sys.stderr)
+    return 0
 
 
 def selftest() -> None:
@@ -116,6 +131,11 @@ def selftest() -> None:
         assert "格式不符" in check_format(root, stamp)
         report.write_text("> **今日頭條：** x\n<!-- subject: s -->\n")
         assert check_format(root, stamp) is None
+        a, b, c = "a" * 16, "b" * 16, "c" * 16
+        curated.write_text(json.dumps({"items": [{"uid": a}, {"uid": b}]}))
+        report.write_text(f"> **今日頭條：** x\n<!-- subject: s -->\n\n## 段\n\n- 一\n<!-- mark:    uid={a} -->\n"
+                          f"- 二\n<!-- mark:    uid={c} -->\n")
+        assert coverage(root, stamp) == ([b], [c]), coverage(root, stamp)
     assert "WebSearch" not in TOOLS and "WebFetch" not in TOOLS  # 上網是 collect 的事
     selftest_main()
     print("ok")
@@ -162,7 +182,7 @@ def selftest_main() -> None:
             return code, out.getvalue(), err.getvalue()
 
         code, out, err = run(good)
-        assert (code, out) == (0, ""), (code, out, err)
+        assert (code, out) == (0, "") and "漏掉 1 則" in err, (code, out, err)
         code, out, err = run("# 沒有 subject 也沒有今日頭條\n")
         assert (code, out) == (4, "") and "格式不符" in err, (code, out, err)
         report.unlink()
