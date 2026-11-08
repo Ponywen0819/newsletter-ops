@@ -7,7 +7,7 @@
       uv run --project apps/worker worker --selftest
 
 要不要跑只看 state/last_run.json（run_pipeline 寫的，手動跑的也算）和 pipeline 的鎖：
-今天跑完了（不論成敗）就等明天；失敗不自動重跑，要重跑用 POST /run。
+今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
 認證的驗證只看 auth_health.json 的時間：今天排定時間之後驗過（web 的 /auth 測試也算）就不再驗。
 """
 from __future__ import annotations
@@ -34,6 +34,8 @@ TICK = 30  # 秒；每次醒來重讀牆上時鐘，不怕主機睡眠、校時
 TAIL = 20  # 失敗時印出本次 log 的最後幾行
 HHMM_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
 AUTH_EXIT = {5: "auth", 6: "quota"}  # newsletter-write 的授權失敗／額度用完（其他步驟不用 5、6）
+RETRY_AFTER = timedelta(minutes=30)  # 暫時性失敗（網路、來源掛掉）等這麼久重跑一次
+NO_RETRY = {0, daily.EXIT_STOPPED, *AUTH_EXIT}  # 重跑也沒用、或是人要它停的
 
 
 def parse_hhmm(value: str) -> time:
@@ -50,13 +52,17 @@ def next_run_at(now: datetime, at: time, tz: ZoneInfo) -> datetime:
 
 
 def due(now: datetime, record: dict | None, lock_held: bool, at: time, tz: ZoneInfo) -> str | None:
-    """現在該做什麼：None＝等下次、"busy"＝別條正在跑、"schedule"／"catchup"＝現在跑（值就是 trigger）。"""
+    """現在該做什麼：None＝等下次、"busy"＝別條正在跑、"schedule"／"catchup"／"retry"＝現在跑（值就是 trigger）。"""
     local = now.astimezone(tz)
     scheduled = datetime.combine(local.date(), at, tz)
     if local < scheduled:
         return None
     if record is not None and record.get("date") == f"{local:%Y-%m-%d}" and record.get("finished_at"):
-        return None  # 今天跑完了，成敗都等明天
+        if record.get("exit_code") in NO_RETRY or record.get("trigger") == "retry":
+            return None  # 成功、不該重跑、或已經重跑過：等明天
+        if now - datetime.fromisoformat(record["finished_at"]) < RETRY_AFTER:
+            return None
+        return "busy" if lock_held else "retry"
     if lock_held:
         return "busy"  # 包括「今天開始了還沒結束」：鎖被握著＝還在跑；鎖空著＝被打斷，下面重跑
     return "catchup" if local - scheduled > CATCHUP_AFTER else "schedule"

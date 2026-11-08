@@ -31,7 +31,7 @@ Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`�
   程序死掉鎖就放掉，不會留下過期的鎖。這把鎖只防「兩條 pipeline 同時跑」；各個檔案自己的讀寫排隊見 [shared/README.md](../../packages/shared/README.md)「檔案鎖」。
 
 - **執行紀錄**：拿到鎖才寫 `state/last_run.json`（整檔取代）：開始時 `{date, trigger, started_at, finished_at: null, exit_code: null}`，結束補上後兩個。
-  `date` 是 `config/config.json` 時區的日期；`trigger` 是 `schedule`／`catchup`／`manual`（`/run`）／`cli`。搶不到鎖不寫。
+  `date` 是 `config/config.json` 時區的日期；`trigger` 是 `schedule`／`catchup`／`retry`／`manual`（`/run`）／`cli`。搶不到鎖不寫。
   有 `started_at` 沒 `finished_at`：鎖被握著＝還在跑，鎖空著＝被打斷（程序被 SIGKILL、斷電）。
 
 | exit code | 意義 |
@@ -57,7 +57,8 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 | --- | --- | --- | --- |
 | 還沒到 HH:MM | 任何 | — | 等 |
 | 已過 | 沒有（或是昨天的） | 空 | 跑；晚了超過 5 分鐘記 `catchup`，否則 `schedule` |
-| 已過 | 跑完了（不論成敗） | — | 等明天；失敗要重跑用 `POST /run` |
+| 已過 | 成功，或失敗是 exit 5／6（認證、額度）／143（被停止） | — | 等明天；修好後用 `POST /run` 補 |
+| 已過 | 其他失敗、結束超過 30 分鐘、trigger 不是 `retry` | 空 | 重跑一次，記 `retry`；再失敗就等明天 |
 | 已過 | 開始了沒結束 | 空 | 上次被打斷，重跑 |
 | 已過 | 任何 | 被握著 | 別條正在跑，下次再看 |
 
