@@ -128,6 +128,7 @@ npx nx run worker:start                                 # 常駐排程服務（�
 (cd apps/web-ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
 uv run --project apps/web-server newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
 uv run --project packages/shared newsletter-feedback            # 收集報告裡填的標記
+uv run --project packages/shared newsletter-feedback --stats    # 依來源／主題／關鍵字統計回饋
 ```
 
 各指令的選項與細節：蒐集 → [collect/README.md](packages/collect/README.md)；寫報告 → [writer/README.md](packages/writer/README.md)；認證與用量 → [llm/README.md](packages/llm/README.md)；email 與寄信 → [notify/README.md](packages/notify/README.md)；網頁 → [web-server/README.md](apps/web-server/README.md)。
