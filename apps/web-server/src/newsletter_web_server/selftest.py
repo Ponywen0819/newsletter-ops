@@ -70,6 +70,7 @@ def selftest() -> None:
             _selftest_reports(req, site, root, uid_a)
             _selftest_static(req, shell)
             _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
+            _selftest_etag(req, uid_a)
 
         # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
         bare = root / "bare"
@@ -82,6 +83,25 @@ def selftest() -> None:
             assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
     print("ok")
+
+
+def _selftest_etag(req, uid_a: str) -> None:
+    """離線副本的條件請求：沒變回 304（沒有 body），標記或晨報變了 ETag 跟著變。"""
+    path = "/api/reports/2026-09-28"
+    status, headers, _ = req("GET", path)
+    etag = headers["etag"]
+    assert status == 200 and etag.startswith('"') and headers["cache-control"] == "no-store", headers
+    for sent in (etag, f"W/{etag}", f'"x", {etag}', "*"):  # Cloudflare 可能改成弱 ETag
+        status, headers, again = req("GET", path, {"If-None-Match": sent})
+        assert status == 304 and again == "" and headers["etag"] == etag, (sent, status)
+    assert req("GET", path, {"If-None-Match": '"nope"'})[0] == 200
+    assert req("GET", "/api/reports")[1].get("etag") and req("GET", "/api/today")[1].get("etag")
+    assert "etag" not in req("GET", "/api/session")[1]  # 只有同步的對象有
+    req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": "+"})
+    status, headers, _ = req("GET", path, {"If-None-Match": etag})
+    assert status == 200 and headers["etag"] != etag  # 標記變了
+    req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": ""})
+    assert req("GET", path, {"If-None-Match": etag})[0] == 304  # 改回去就和原本一樣
 
 
 def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:

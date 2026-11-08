@@ -51,9 +51,15 @@ function saveRecord(rec: SyncRecord): void {
 let syncedAt = -Infinity
 let running: Promise<boolean> | null = null
 
-/** 只存沒被轉址的 200：Access 逾時的 302（manual 下是 opaqueredirect）、錯誤頁都不能進副本。 */
+/**
+ * 只存沒被轉址的 200：Access 逾時的 302（manual 下是 opaqueredirect）、錯誤頁都不能進副本。
+ * 帶上副本的 ETag：伺服器回 304 就沿用舊副本，不傳整份（存著的 Response 本來就保留 headers）。
+ */
 async function store(cache: Cache, path: string): Promise<Response | null> {
-  const res = await fetch(path, { cache: 'no-store', redirect: 'manual' })
+  const old = await cache.match(path)
+  const etag = old?.headers.get('ETag')
+  const res = await fetch(path, { cache: 'no-store', redirect: 'manual', headers: etag ? { 'If-None-Match': etag } : {} })
+  if (res.status === 304 && old) return old
   if (!res.ok || res.redirected) return null
   await cache.put(path, res.clone())
   return res
