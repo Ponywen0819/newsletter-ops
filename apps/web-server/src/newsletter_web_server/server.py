@@ -24,7 +24,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 MAX_BODY = 4096
 # 與 apps/web-ui/src/App.tsx 的路由同步
-SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
+SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/stats|/auth")
 # 離線副本同步的對象：回 ETag，If-None-Match 相符回 304（前端自己帶，所以照舊 no-store）
 ETAG_PATHS = re.compile(r"/api/today|/api/reports|/api/reports/\d{4}-\d{2}-\d{2}")
 
@@ -179,6 +179,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/today": self.site.reports.today_payload,
             "/api/reports": self.site.reports.list_payload,
             "/api/auth-health": self.site.auth.health,
+            "/api/feedback-stats": self.site.reports.feedback_stats,
         }
         if path in fixed:
             return fixed[path]()

@@ -14,7 +14,7 @@ npm test             # Vitest + Testing Library：元件與路由
 npm run typecheck
 ```
 
-- 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
+- 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/stats` 回饋統計（從歷史晨報左欄連過去）、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
   其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/server.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
 - 鍵盤：晨報頁 `j`／`k` 跳到下一則／上一則（≥1100px，有左側目錄時）；`[`／`]` 換到前一份／下一份（內文最後也有連結）。輸入框裡、帶修飾鍵時不攔截。
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（worker 每天驗一次，不輪詢），

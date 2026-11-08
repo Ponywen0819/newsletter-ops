@@ -83,6 +83,18 @@ export interface ReportSummary {
   headline: string
 }
 
+export interface StatRow {
+  name: string
+  pos: number
+  neg: number
+}
+
+/** GET /api/feedback-stats：依來源／主題／關鍵字的正負面則數，則數多的在前 */
+export interface FeedbackStats {
+  total: number
+  groups: { source: StatRow[]; topic: StatRow[]; keyword: StatRow[] }
+}
+
 /** GET /api/search?q=：含 q 的行（純文字），新到舊；超過上限時 truncated */
 export interface SearchResult {
   q: string

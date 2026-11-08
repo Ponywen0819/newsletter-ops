@@ -75,3 +75,7 @@
   color: inherit;
   border-radius: 2px;
 }
+.report-stats-link {
+  margin: 8px 0 0;
+  font-size: var(--fs-list);
+}

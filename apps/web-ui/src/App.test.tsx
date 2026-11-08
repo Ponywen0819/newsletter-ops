@@ -80,6 +80,27 @@ describe('路由', () => {
     expect(screen.queryByRole('navigation', { name: '前後的晨報' })).toBeNull()
   })
 
+  it('/stats：從歷史晨報的左欄連過去', async () => {
+    open('/reports', { 'GET /api/reports': () => ({ json: { reports: [] } }) })
+    expect(within(document.querySelector('.reader-side') as HTMLElement).getByRole('link', { name: '回饋統計 →' })).toHaveAttribute('href', '/stats')
+  })
+
+  it('/stats：三組表格（則數多的在前、比例）；沒有回饋時說明', async () => {
+    open('/stats', {
+      'GET /api/feedback-stats': () => ({
+        json: { total: 3, groups: { source: [{ name: 'BBC', pos: 2, neg: 1 }], topic: [{ name: 'world', pos: 2, neg: 1 }], keyword: [] } },
+      }),
+    })
+    expect(await screen.findByRole('heading', { level: 1, name: '回饋統計' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '來源' })).toBeInTheDocument()
+    expect(within(screen.getByRole('table', { name: '來源' })).getByRole('row', { name: 'BBC 2 1 67%' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '命中的關鍵字' })).toBeNull() // 空的組不顯示
+    cleanup()
+
+    open('/stats', { 'GET /api/feedback-stats': () => ({ json: { total: 0, groups: { source: [], topic: [], keyword: [] } } }) })
+    expect(await screen.findByText(/還沒有任何回饋/)).toBeInTheDocument()
+  })
+
   it('/ 一份晨報都沒有', async () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {} } }) })
     expect(await screen.findByText('目前還沒有任何晨報。')).toBeInTheDocument()

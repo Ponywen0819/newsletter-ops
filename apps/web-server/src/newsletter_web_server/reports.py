@@ -110,6 +110,18 @@ class Reports:
                             return {"q": q, "results": results[:SEARCH_LIMIT], "truncated": True}
         return {"q": q, "results": results, "truncated": False}
 
+    def feedback_stats(self) -> dict:
+        """newsletter-feedback --stats 的網頁版：依來源／主題／關鍵字的正負面則數，則數多的在前。"""
+        if self.feedback_path.exists():
+            with lock.locked(self.feedback_path):
+                rows = feedback.read_feedback(self.feedback_path)
+        else:
+            rows = {}
+        groups = {group: [{"name": name, "pos": pos, "neg": neg}
+                          for name, (pos, neg) in sorted(counts.items(), key=lambda kv: (-sum(kv[1]), kv[0]))]
+                  for group, counts in feedback.stats(rows).items()}
+        return {"total": sum(1 for r in rows.values() if r.get("mark") in feedback.VALID_MARKS), "groups": groups}
+
     def _find_report(self, uid: str) -> str | None:
         """含有這個 uid 的最新一份報告（日期）。"""
         needle = f"uid={uid}"

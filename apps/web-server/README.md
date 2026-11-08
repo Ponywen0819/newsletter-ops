@@ -56,6 +56,7 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | `GET /api/heartbeat` | `{ok}` | 連線偵測，不讀檔、不寫入（見 [ui/README.md](../web-ui/README.md)「PWA」） |
 | `GET /api/today` | `{date, latest, report, marks, run}`（有晨報時另有 `prev, next`） | 當日晨報；還沒產出時 `report` 是 null。`run` 是當天的 `state/last_run.json`（`trigger, started_at, finished_at, exit_code, step`），今天還沒跑是 null |
 | `GET /api/reports` | `{reports: [{date, headline}]}` | 歷史列表，新到舊 |
+| `GET /api/feedback-stats` | `{total, groups: {source, topic, keyword: [{name, pos, neg}]}}` | `newsletter-feedback --stats` 的網頁版；每則只算最後一筆、取消的不算，則數多的在前 |
 | `GET /api/search?q=` | `{q, results: [{date, text}], truncated}` | 所有晨報裡含 `q` 的行（不分大小寫，去掉 Markdown 與 mark；空白分開的多個詞要都有），新到舊最多 50 筆；`q` 最多 100 字 |
 | `GET /api/reports/<date>` | `{date, report, marks, prev, next}` | `report` 是 `report_data.parse_report()` 的結構；`prev`／`next` 是前一份（更舊）／下一份（更新）的日期，沒有是 null |
 | `GET /api/feedback/<uid>` | `{uid, date, title, mark}` | email 確認頁用，只讀 |
