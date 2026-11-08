@@ -1,5 +1,0 @@
-# uv workspace 的根：只列成員，本身沒有 [project]（根目錄不是套件）。
-# 依賴宣告在各成員的 pyproject.toml（只有 agent 需要第三方套件 claude-agent-sdk）；
-# `uv sync`、`uv run` 會把所有成員以 editable 裝進同一個環境。
-[tool.uv.workspace]
-members = ["shared", "agent", "notify", "web/server", "pipeline"]

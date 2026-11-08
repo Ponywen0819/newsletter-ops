@@ -1,0 +1,16 @@
+{
+  "name": "web-server",
+  "projectType": "application",
+  "tags": [
+    "type:app",
+    "lang:py"
+  ],
+  "targets": {
+    "selftest": {
+      "command": "uv run --locked --project {projectRoot} newsletter-web --selftest"
+    },
+    "lint": {
+      "command": "uvx ruff@0.17.3 check {projectRoot}"
+    }
+  }
+}

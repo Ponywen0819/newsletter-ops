@@ -1,27 +1,17 @@
 # 白名單：只把執行需要的東西送進 build context。
 # 本機的 reports/、data/、state/、logs/、.env、.git、.venv 一律不進映像。
 *
-!pyproject.toml
-!uv.lock
 !.python-version
-!run_daily.sh
-!shared/pyproject.toml
-!shared/src
-!agent/pyproject.toml
-!agent/src
-!notify/pyproject.toml
-!notify/src
-!web/server/pyproject.toml
-!web/server/src
-!pipeline/pyproject.toml
-!pipeline/src
-!web/ui/index.html
-!web/ui/package.json
-!web/ui/package-lock.json
-!web/ui/tsconfig.json
-!web/ui/vite.config.ts
-!web/ui/src
-!web/ui/public
+# 模組（apps/、packages/、web/ 底下一個目錄一個）
+!*/*/pyproject.toml
+!*/*/uv.lock
+!*/*/src
+!apps/web-ui/index.html
+!apps/web-ui/package.json
+!apps/web-ui/package-lock.json
+!apps/web-ui/tsconfig.json
+!apps/web-ui/vite.config.ts
+!apps/web-ui/public
 !config
 !.claude
 !docker

@@ -1,0 +1,20 @@
+[project]
+name = "newsletter-llm"
+version = "0.1.0"
+description = "newsletter-ops 的 Claude Agent SDK 執行器：OAuth 認證、執行、失敗分類、用量紀錄"
+requires-python = ">=3.10"
+# 唯一的第三方依賴 claude-agent-sdk 在這裡；下限是測試過的版本，不是已知的最低相容版本。
+dependencies = [
+    "claude-agent-sdk>=0.2.123",
+    "newsletter-shared",
+]
+
+[project.scripts]
+newsletter-llm = "newsletter_llm.runner:main"
+
+[tool.uv.sources]
+newsletter-shared = { path = "../../packages/shared", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.11.13,<0.12"]
+build-backend = "uv_build"

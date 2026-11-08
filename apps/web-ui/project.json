@@ -1,0 +1,8 @@
+{
+  "name": "web-ui",
+  "projectType": "application",
+  "tags": [
+    "type:app",
+    "lang:ts"
+  ]
+}

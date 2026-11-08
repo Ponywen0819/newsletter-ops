@@ -1,0 +1,120 @@
+/*
+ * 筆電的新聞目錄（≥1100px）：左側 sticky 的目錄＋右側一整頁往下捲的內文。
+ * 內文與窄螢幕完全一樣（所有新聞依序顯示、用滾輪閱讀）；目錄只負責「現在讀到哪、點一下跳過去」。
+ * <1100px 沒有目錄，.unit、.group 只是沒有樣式的包裝。
+ */
+.reader-nav {
+  display: none;
+}
+@media (min-width: 1100px) {
+  /* 卡片在這幾頁只是容器：寬度放到「左欄 280 ＋ 間距 24 ＋ 右欄 720」，白底改由右欄承擔。
+     哪幾頁是 reader 由路由決定（Layout 的 data-layout），不看內容，所以載入中、出錯時外框也一樣 */
+  [data-layout='reader'] main.card {
+    max-width: 1024px;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+  }
+  /* 標頭內容跟著放寬、貼齊左欄左緣，不然站名與連結會縮在中間 720px 那一欄 */
+  [data-layout='reader'] header nav {
+    max-width: 1024px;
+    padding: 0;
+  }
+  .reader {
+    --header-h: 45px; /* 標頭列高度（44px 連結＋1px 底線）：左欄 sticky 與捲動定位都要閃開它 */
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    column-gap: 24px;
+    align-items: start;
+  }
+
+  /* 左欄：標題＋目錄。跟著捲動停在標頭下面；目錄比視窗長就自己捲 */
+  .reader-side {
+    position: sticky;
+    top: calc(var(--header-h) + 16px);
+    display: flex;
+    flex-direction: column;
+    /* 扣掉標頭與上下留白，整頁高度才不會超過視窗 */
+    max-height: calc(100vh - var(--header-h) - 2 * var(--page-pad-y) - 8px);
+  }
+  .reader-nav {
+    display: block;
+    min-height: 0;
+    margin-top: 16px;
+    overflow-y: auto;
+  }
+  .reader-nav ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .reader-nav-title {
+    margin: 16px 0 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .reader-nav a {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--text);
+    text-decoration: none;
+  }
+  /* 標題常有 40–60 字：最多 2 行，全文在 title 屬性裡 */
+  .reader-nav a > span {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .reader-nav a:hover {
+    background: var(--rule);
+  }
+  .reader-nav a[aria-current='true'] {
+    background: var(--card);
+    box-shadow: inset 3px 0 0 var(--link);
+    font-weight: 600;
+    color: var(--link);
+  }
+
+  /* 歷史晨報的月份目錄：月份在左、份數靠右（份數是次要資訊，muted、不跟著 aria-current 變色變粗） */
+  .reader-nav-months a {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .reader-nav-count {
+    flex: none;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+
+  /* 右欄：就是原本的白色卡片，一整頁往下捲 */
+  .reader-body {
+    box-sizing: border-box;
+    padding: var(--card-pad-y) var(--gutter);
+    background: var(--card);
+    border-radius: var(--card-radius);
+  }
+  /* 歷史列表的 16px 上邊距（分月份時是第一個月份小標的 28px）是留給它上面的 h1 的；
+     桌機版 h1 在左欄，列表／第一個月份是白卡的第一個東西，不再多空一段 */
+  .reader-body > .reports,
+  .reader-body > .unit:first-child > h2 {
+    margin-top: 0;
+  }
+  /* 點目錄／j／k 捲過去時，停在 sticky 標頭的下面，而不是被它蓋住 */
+  .reader .unit,
+  .reader .group-title {
+    scroll-margin-top: calc(var(--header-h) + 16px);
+  }
+}
+/* 點目錄時平順捲過去；系統設定「減少動態效果」的人不套用 */
+@media (min-width: 1100px) and (prefers-reduced-motion: no-preference) {
+  html:has(.reader) {
+    scroll-behavior: smooth;
+  }
+}

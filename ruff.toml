@@ -1,0 +1,13 @@
+# 全 repo 共用的 Ruff 設定（uvx ruff@0.17.3 check）
+target-version = "py311"
+
+[lint]
+# 只開抓 bug 與明顯 smell 的規則，不開純風格的
+select = ["E", "F", "W", "B", "SIM", "C90", "PL", "RUF"]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # 中文全形標點
+    "PLR2004",                     # magic value
+    "PLC0415",                     # selftest 裡的區域 import
+    "E501",                        # 行長是風格
+    "PLR0915",                     # selftest 本來就長；複雜度交給 C901
+]

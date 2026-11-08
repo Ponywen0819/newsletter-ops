@@ -1,8 +1,9 @@
 name: selftest
 
-# 各模組的自我檢查都只用標準庫、不連網。用 uv 把 workspace 裝好（含 claude-agent-sdk，鎖檔決定版本），
-# 但 agent_run.py 的自我檢查與前端的 npm test 仍不在這裡跑。
-on: push
+# 各模組的 lint、自我檢查（不連網）、前端測試都交給 Nx；只在 main 跑，release.yml 接在後面
+on:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -10,28 +11,29 @@ permissions:
 jobs:
   selftest:
     runs-on: ubuntu-latest
+    env:
+      NX_NO_CLOUD: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
-      # setup-uv 沒有 v10 這種浮動 tag，要釘完整版本；uv 版本與 Dockerfile、本機一致
+      # setup-uv 沒有浮動的主版本 tag
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: "0.11.13"
           enable-cache: true
-      - run: uv sync --locked
-      - run: uv run --locked python -m newsletter_agent.curate
-      - run: uv run --locked python -m newsletter_agent.fetch
-      - run: uv run --locked newsletter-metrics --selftest
-      - run: uv run --locked newsletter-render --selftest
-      - run: uv run --locked newsletter-send --selftest
-      - run: uv run --locked newsletter-feedback --selftest
-      - run: uv run --locked python -m newsletter_shared.lock --selftest
-      - run: uv run --locked python -m newsletter_shared.auth_store --selftest
-      - run: uv run --locked python -m newsletter_shared.report_data --selftest
-      - run: uv run --locked newsletter-web --selftest
-      - run: uv run --locked newsletter-run --selftest
-      - run: uv run --locked newsletter-fetch --list-sources
-      - run: python3 deploy/check_boundaries.py --selftest
-      - run: python3 deploy/check_boundaries.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/web-ui/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: apps/web-ui
+      - run: npx nx run-many -t lint selftest typecheck test
+      - run: git ls-files '*.sh' | xargs shellcheck --severity=warning
+      - run: uv run --no-project python deploy/check_boundaries.py --selftest
+      - run: uv run --no-project python deploy/check_boundaries.py

@@ -1,0 +1,21 @@
+# systemd --user 單元。安裝見 deploy/README.md。repo 預設放在 ~/newsletter-ops。
+[Unit]
+Description=newsletter-ops worker（每日排程，127.0.0.1:8790）
+
+[Service]
+WorkingDirectory=%h/newsletter-ops
+# 機密：GMAIL_USER、GMAIL_APP_PASSWORD 等，範本見 deploy/newsletter.env.example
+EnvironmentFile=%h/.config/newsletter-ops/env
+# --host 寫死 127.0.0.1：/status、/run 沒有登入
+ExecStart=/usr/bin/env uv run --locked --project apps/worker worker --host 127.0.0.1 --port 8790
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+# 停止時要等執行中的步驟收尾、寫好紀錄
+TimeoutStopSec=2min
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
