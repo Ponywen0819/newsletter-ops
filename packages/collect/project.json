@@ -7,7 +7,7 @@
   ],
   "targets": {
     "selftest": {
-      "command": "uv run --locked --project {projectRoot} python -m newsletter_collect.curate && uv run --locked --project {projectRoot} python -m newsletter_collect.fetch && uv run --locked --project {projectRoot} python -m newsletter_collect.search && uv run --locked --project {projectRoot} python -m newsletter_collect.enrich && uv run --locked --project {projectRoot} newsletter-collect --list-sources"
+      "command": "uv run --locked --project {projectRoot} python -m newsletter_collect.curate && uv run --locked --project {projectRoot} python -m newsletter_collect.fetch && uv run --locked --project {projectRoot} python -m newsletter_collect.search && uv run --locked --project {projectRoot} python -m newsletter_collect.enrich && uv run --locked --project {projectRoot} newsletter-collect --list-sources && uv run --locked --project {projectRoot} newsletter-collect --selftest"
     },
     "lint": {
       "command": "uvx ruff@0.17.3 check {projectRoot}"

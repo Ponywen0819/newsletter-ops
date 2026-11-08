@@ -62,7 +62,7 @@ ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json
 
 # 執行期生成物（都不進版控；位置都在 repo 根，Docker 裡是 volume）
-data/raw/<date>.jsonl          當日原始抓取（append，供回溯）
+data/raw/<date>.jsonl          當日原始抓取（append，供回溯；只留 raw_retention_days 天）
 data/search/<date>.json        搜尋補充的稽核紀錄：缺口、query、LLM 原始回覆、收下與退回（含原因）
 data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入
 reports/<date>.md              最終報告
