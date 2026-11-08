@@ -217,6 +217,16 @@ describe('版面由路由決定', () => {
     expect([...document.querySelectorAll('.reports mark')].map((m) => m.textContent)).toEqual(['NVIDIA', 'Nvidia'])
     expect(screen.getByRole('searchbox')).toHaveValue('nvidia')
     await waitFor(() => expect(document.title).toBe('搜尋「nvidia」— 歷史晨報'))
+    cleanup()
+
+    // 多個詞：每個都標
+    open('/reports?q=nvidia%20%E8%82%A1%E5%83%B9', {
+      'GET /api/search?q=nvidia%20%E8%82%A1%E5%83%B9': () => ({
+        json: { q: 'nvidia 股價', results: [{ date: '2026-09-28', text: 'Nvidia 股價上漲（a.b）' }], truncated: false },
+      }),
+    })
+    await screen.findByText('找到 1 筆')
+    expect([...document.querySelectorAll('.reports mark')].map((m) => m.textContent)).toEqual(['Nvidia', '股價'])
   })
 
   it('/reports 搜尋：送出就查；沒有結果、太多結果、失敗各有說明；清空回列表', async () => {
