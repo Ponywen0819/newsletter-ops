@@ -56,7 +56,7 @@ config/interests.md            關注範圍（自然語言），報告判讀的�
 config/config.json             執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json        來源清單，一個主題一個檔
 .claude/skills/news-digest/    報告撰寫的 skill，隨專案進版控
-Dockerfile, docker-compose.yml, docker/   容器部署：web + worker + cloudflared，生成物放 volume
+Dockerfile, docker-compose.yml, docker/   容器部署：一個 Dockerfile 建 web、worker 兩個映像，加上 cloudflared；生成物放 volume
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
 ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 固定所有 Python 模組的直譯器版本
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json

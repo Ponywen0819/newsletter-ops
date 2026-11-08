@@ -9,8 +9,10 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
                                     三個容器共用一個 volume：newsletter-data（reports／data／state／logs）
 ```
 
-- `Dockerfile`：web 與排程共用同一個映像（Python 3.11 + uv 鎖定的依賴，要執行的模組各自一個 `.venv`，非 root 執行）。多階段建置：先用 Node 建置網頁前端（`apps/web-ui/`），
-  只把 `apps/web-ui/dist` 帶進最終映像，所以 host 與映像裡都不需要 Node；`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
+- `Dockerfile`：一個檔、兩個 target，建出兩個映像：`newsletter-ops-web`（`--target web`）與 `newsletter-ops-worker`（`--target worker`）。
+  各自只帶自己 app 的 venv（`/opt/web-server`、`/opt/worker`，用 uv 鎖定的依賴、不可編輯安裝），**不帶原始碼、也沒有 uv**，指令直接在 PATH 上；
+  非 root 執行，兩邊共用 base 層（使用者、`config/`、volume 連結）。web 另外帶前端：先用 Node 建置 `apps/web-ui/`，只把 `dist` 帶進映像，
+  所以 host 與映像裡都不需要 Node；worker 另外帶 `.claude/`（寫報告的 skill）。`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`worker`、`cloudflared` 三個服務與 volume。`worker` 跑 `worker`（見 [apps/worker/README.md](../apps/worker/README.md)），
   它的 `/status`、`/run` 不 publish，而且只在 `be` 網路：`/run` 會燒額度、寄信，沒有登入的 `web` 與對外的 `cloudflared` 都碰不到。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
@@ -76,7 +78,7 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 | 裝成 PWA、離線、Access 逾時 | 照 [apps/web-ui/README.md](../apps/web-ui/README.md)「PWA」一節的「正式站驗收」表 |
 | `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的「👍 有用」連結 | 先經 Access 登入，再看到「確認標為 有用」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
 | `docker network inspect newsletter-ops_be --format '{{range .Containers}}{{.Name}} {{end}}'` | 只有 worker 的容器 |
-| `docker compose run --rm worker uv run --project apps/worker newsletter-llm --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
+| `docker compose run --rm worker newsletter-llm --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、用掉訂閱額度）。
 Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理頁面重新登入即可。
@@ -88,21 +90,20 @@ docker compose logs -f worker                  # 排程輸出：下次執行時�
 docker compose exec worker python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8790/status').read().decode())"   # 是否在跑、下次幾點、上次結果
 docker compose exec worker python -c "import urllib.request as u; print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())"   # 立刻跑一次（記成 manual；執行中回 409）
 docker compose exec web ls reports                # volume 裡的報告
-docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test worker uv run --project apps/worker newsletter-write   # 只產報告、不寄信（要先有當日 curated JSON）
+docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test worker newsletter-write   # 只產報告、不寄信（要先有當日 curated JSON）
 git pull && docker compose up -d --build          # 手動更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
 
 - 每天 08:00（`config/config.json` 的時區，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器啟動時，今天過了時間卻還沒跑過（或上次跑到一半被停掉）就補跑一次；
   只補同一天，跨日就算了。今天跑過但失敗了**不會**自動重跑（避免 token 失效時每次重啟都燒一次），修好後用上面的 `/run` 補。
   手動跑的也算「今天跑過」，所以 08:00 前手動跑完，08:00 就不會再寄一次。`docker stop` 會等執行中的步驟收尾（最多 2 分鐘）。
-- 每個**新**容器的第一次 `uv run` 會在 log 印出 `Building … Uninstalled 4 packages / Installed 4 packages`：uv 判定 editable 模組比安裝記錄新而重裝
-  （約 10 毫秒、不需要網路），之後同一個容器就安靜了。這不是錯誤。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
 
 **6. 自動部署（GHCR）**
 
-`main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建映像推到 `ghcr.io/ponywen0819/newsletter-ops`，
-tag 是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。host 上的 timer 每 10 分鐘拉一次，有新版才重建容器。
+`main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建兩個映像推到
+`ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 都是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
+host 上的 timer 每 10 分鐘拉一次，有新版才重建容器。
 
 ```bash
 # package 是 private 時才需要；PAT 只要 read:packages
@@ -119,6 +120,17 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 - 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
 - **退版**：`.env` 加 `NEWSLETTER_TAG=sha-<commit>`，然後 `docker compose up -d`；要回到自動跟新版就把那行刪掉。
 - timer 只更新映像；`docker-compose.yml` 改了要自己 `git pull`。
+- **從單一映像換過來時**（舊的 `ghcr.io/ponywen0819/newsletter-ops`）：先 `git pull` 拿到新的 compose，再 `docker compose up -d`；
+  確認兩個容器都 healthy 後，`docker image rm ghcr.io/ponywen0819/newsletter-ops:latest` 刪掉舊映像（不會自己刪）。
+
+Actions 不能跑時（例如額度用完）可以在自己的電腦建好推上去，結果和 release.yml 一樣。需要 `write:packages` 的 classic PAT：
+
+```bash
+echo <PAT> | docker login ghcr.io -u Ponywen0819 --password-stdin
+git switch --detach origin/main
+for t in web worker; do docker buildx build --platform linux/arm64 --target "$t" --push \
+  -t "ghcr.io/ponywen0819/newsletter-ops-$t:latest" -t "ghcr.io/ponywen0819/newsletter-ops-$t:sha-$(git rev-parse HEAD)" . || break; done
+```
 
 **7. 資料保存：不保存**
 
