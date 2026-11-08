@@ -199,6 +199,7 @@ _NAME = re.compile(r"[A-Z][\w'’.-]*[A-Za-z0-9]")
 _NOT_NAMES = {"the", "a", "an", "how", "why", "what", "who", "when", "where", "watch", "new", "after", "before",
               "as", "in", "on", "at", "for", "with", "from", "is", "are", "was", "will", "can", "this", "that",
               "live", "breaking", "exclusive", "analysis", "opinion", "video", "says", "said"}
+COVERAGE_BOOST, COVERAGE_MAX = 0.5, 2  # 每多一家報導同一則加多少 rank、最多算幾家（arXiv 的跨類別不算）
 SAME_STORY_SHARED, SAME_STORY_JACCARD = 3, 0.4  # 用 2026-11-08 的國際新聞調的：同一則的各家報導都在 0.4 以上
 
 
@@ -237,6 +238,8 @@ def dedupe(items: list[dict], threshold: float = 0.88, name_topics: frozenset[st
             kept.append(item)
     for item in kept:
         item["also_in"] = sorted({s for s in item.get("also_in", []) if s != item["source"]})
+        if item["also_in"] and not item["source"].startswith("arXiv"):
+            item["rank"] = round(item.get("rank", 0) + COVERAGE_BOOST * min(len(item["also_in"]), COVERAGE_MAX), 2)
     return kept
 
 
@@ -371,7 +374,7 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
              w("a2", "AJ", "Iran oil exports fall as Trump tariffs bite", "Tehran's sales to China dropped in October.", 1.5)]
     got = dedupe([dict(i) for i in batch], name_topics=frozenset({"world"}))
     assert [i["uid"] for i in got] == ["b1", "b2", "a2"], [i["uid"] for i in got]
-    assert got[0]["also_in"] == ["AJ"]
+    assert got[0]["also_in"] == ["AJ"] and got[0]["rank"] == 3.5  # 多一家報導，rank 加 0.5
     assert len(dedupe([dict(i) for i in batch])) == 4  # 沒開就照舊
 
     # 同日重跑：沒有 redo 時第二次拿到第二梯隊；帶上次的 uid 就拿回同一批
