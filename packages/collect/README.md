@@ -122,6 +122,10 @@ weight，錯誤訊息會指出是哪個檔的哪個來源，程式以 exit code 
 `config.json` 的 `quota` 決定每個主題最多收幾則，沒列到的用 `default_quota`。
 高產量來源（TechNews 一天 40 則）會把研究類主題整個擠掉，不是因為更相關，只是因為量大。
 
+### 略過影片等不適合的項目
+
+feed 可以設 `skip`（正規表示式），標題或網址命中就不收。BBC World 設了 `^Watch:|/videos/`，擋掉影片新聞。
+
 ### 來源保底分
 
 `baseline_relevance` 寫在主題檔，給「則則值得看但標題常沒有技術關鍵字」的來源。

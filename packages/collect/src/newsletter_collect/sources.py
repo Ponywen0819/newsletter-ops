@@ -7,13 +7,15 @@
   "enabled": true,                  // 選填
   "defaults": {"weight": 1.0},      // 選填，套用到本檔所有 feed
   "feeds": [{"name": "arXiv cs.CV", "type": "arxiv", "query": "cat:cs.CV"},
-            {"name": "HF Blog", "type": "rss", "url": "https://...", "weight": 1.2, "enabled": false}]
+            {"name": "HF Blog", "type": "rss", "url": "https://...", "weight": 1.2, "enabled": false},
+            {"name": "BBC", "type": "rss", "url": "https://...", "skip": "^Watch:|/videos/"}]  // skip：標題或網址命中就不收
 }
 topic 缺少時用檔名 stem。
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 VALID_TYPES = {"rss", "arxiv"}
@@ -39,6 +41,10 @@ def _validate(feed: dict, origin: str) -> None:
         float(feed.get("weight", 1.0))
     except (TypeError, ValueError):
         raise SourceConfigError(f"{origin}: {name} 的 weight 不是數字") from None
+    try:
+        re.compile(feed.get("skip") or "")
+    except (TypeError, re.error) as exc:
+        raise SourceConfigError(f"{origin}: {name} 的 skip 不是正規表示式：{exc}") from None
 
 
 def load_sources(config_dir: Path) -> tuple[list[dict], dict[str, str], list[str]]:

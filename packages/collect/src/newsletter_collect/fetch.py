@@ -124,6 +124,7 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
     # ponytail: RSS 1.0（RDF，如 Nature / Science）去掉預設 namespace 後欄位跟 RSS 2.0 相同，直接共用解析
     root = ET.fromstring(raw.replace(b'xmlns="http://purl.org/rss/1.0/"', b"", 1))
     items: list[Item] = []
+    skip = re.compile(src["skip"]) if src.get("skip") else None
     entries = root.findall(".//item") or root.findall(".//atom:entry", NS)
     for node in entries[:limit]:
         if node.tag.endswith("entry"):  # Atom
@@ -158,6 +159,8 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
             venue_note = ""
         if not title or not link:
             continue
+        if skip and (skip.search(title) or skip.search(link)):
+            continue  # 來源設定的 skip：例如 BBC 的影片（/videos/、Watch:）
         items.append(Item(
             uid=make_uid(link, title), title=title, url=canonical_url(link),
             source=src["name"], topic=src.get("topic", "general"),
@@ -249,4 +252,12 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     order = [s["url"] for s in interleave([{"url": u} for u in
              ["https://a/1", "https://a/2", "https://a/3", "https://b/1", "https://c/1"]])]
     assert order == ["https://a/1", "https://b/1", "https://c/1", "https://a/2", "https://a/3"], order
+    rss = (b"<rss><channel>"
+           b"<item><title>Real news</title><link>https://x/news/1</link></item>"
+           b"<item><title>Watch: a ship sinks</title><link>https://x/news/2</link></item>"
+           b"<item><title>Red carpet</title><link>https://x/news/videos/3</link></item>"
+           b"</channel></rss>")
+    skip_src = {"name": "s", "skip": r"^Watch:|/videos/"}
+    assert [i.title for i in parse_feed(rss, skip_src, 10)] == ["Real news"]
+    assert len(parse_feed(rss, {"name": "s"}, 10)) == 3
     print("ok")
