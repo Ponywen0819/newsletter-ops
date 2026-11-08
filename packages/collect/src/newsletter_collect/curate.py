@@ -2,7 +2,7 @@
 
 評分拆成兩個值：
   relevance  來源保底分 + 關鍵字命中。是門檻，低於 min_relevance 不收。
-  rank       relevance × 來源權重 + 新鮮度。只決定排序。
+  rank       relevance × 來源權重 + 新鮮度（+ feed 順序、多家報導的加分）。只決定排序。
 拆開是為了讓「夠新」無法把不相關的東西帶進來。
 
 arXiv 論文另看 Comments / Journal-Ref 裡的會議或期刊（config.json 的 arxiv_venues）加分，結果寫進 item["venue"]。
