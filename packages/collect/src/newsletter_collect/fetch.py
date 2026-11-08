@@ -42,6 +42,8 @@ class Item:
     lookback_hours: int | None = None  # 來源自訂的時間窗，None 表示用全域預設
     baseline_relevance: float = 0.0     # 高信噪比來源的保底相關性分數
     venue_note: str = ""                # arXiv 的 Comments + Journal-Ref，會議/期刊接受資訊在這裡
+    position: int = 0                   # 在 feed 裡的順序（0 起）
+    order_boost: float = 0.0            # 來源設定：feed 的排列是編輯排過的，前面的加分（curate 用）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -137,7 +139,7 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
     items: list[Item] = []
     skip = re.compile(src["skip"]) if src.get("skip") else None
     entries = root.findall(".//item") or root.findall(".//atom:entry", NS)
-    for node in entries[:limit]:
+    for position, node in enumerate(entries[:limit]):
         if node.tag.endswith("entry"):  # Atom
             title = _clean(node.findtext("atom:title", default="", namespaces=NS), 300)
             link = ""
@@ -179,7 +181,7 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
             summary=summary, authors=[a for a in authors if a],
             lookback_hours=src.get("lookback_hours"),
             baseline_relevance=float(src.get("baseline_relevance", 0.0)),
-            venue_note=venue_note,
+            venue_note=venue_note, position=position, order_boost=float(src.get("order_boost", 0.0)),
         ))
     return items
 
