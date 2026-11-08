@@ -15,6 +15,10 @@ from .errors import ApiError, NotFound
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 UID_RE = re.compile(r"[0-9a-f]{16}")
 MARKS = {"+", "-", ""}  # "" ＝ 取消
+SEARCH_LIMIT = 50
+SEARCH_MAX_QUERY = 100
+_COMMENT = re.compile(r"<!--.*?-->")
+_LINE_PREFIX = re.compile(r"^[\s>*-]*(?:#+\s*)?")
 
 
 def level(mark: str) -> str:
@@ -84,6 +88,23 @@ class Reports:
             headline = report_data.plain(re.sub(r"^[>\s]*\**今日頭條[：:]\**\s*", "", line))
             rows.append({"date": date, "headline": headline})
         return {"reports": rows}
+
+    def search(self, q: str) -> dict:
+        """所有晨報裡含 q 的行（不分大小寫，去掉 Markdown 語法與 mark 註解），新到舊，最多 SEARCH_LIMIT 筆。"""
+        q = q.strip()
+        if len(q) > SEARCH_MAX_QUERY:
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"搜尋字串最多 {SEARCH_MAX_QUERY} 字")
+        results: list[dict] = []
+        if q:
+            needle = q.casefold()
+            for date in self.report_dates():
+                for line in self._report_path(date).read_text(encoding="utf-8").splitlines():
+                    text = report_data.plain(_LINE_PREFIX.sub("", _COMMENT.sub("", line)))
+                    if needle in text.casefold():
+                        results.append({"date": date, "text": text})
+                        if len(results) > SEARCH_LIMIT:
+                            return {"q": q, "results": results[:SEARCH_LIMIT], "truncated": True}
+        return {"q": q, "results": results, "truncated": False}
 
     def _find_report(self, uid: str) -> str | None:
         """含有這個 uid 的最新一份報告（日期）。"""

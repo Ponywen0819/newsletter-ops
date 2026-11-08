@@ -143,6 +143,24 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     record.unlink()
     site.reports.today = lambda: "2026-09-28"
 
+    # 搜尋：不分大小寫、去掉語法與 mark、新到舊；空字串沒有結果；太長 400；超過上限截斷
+    status, data = get("/api/search?q=%E7%B4%B0%E7%AF%80")  # 細節
+    assert status == 200 and data["results"][0] == {"date": "2026-09-28", "text": "細節"}, data
+    assert [r["date"] for r in data["results"]] == sorted((r["date"] for r in data["results"]), reverse=True)
+    status, data = get("/api/search?q=" + "%E6%A8%99%E9%A1%8C")  # 標題
+    assert status == 200 and data["results"] and all("mark:" not in r["text"] and "**" not in r["text"]
+                                                      for r in data["results"]), data
+    assert get("/api/search?q=")[1] == {"q": "", "results": [], "truncated": False}
+    assert get("/api/search")[1]["results"] == []
+    assert get("/api/search?q=" + "x" * 101)[0] == 400
+    import newsletter_web_server.reports as reports_mod
+    saved_limit, reports_mod.SEARCH_LIMIT = reports_mod.SEARCH_LIMIT, 1
+    try:
+        data = get("/api/search?q=a")[1]
+        assert len(data["results"]) == 1 and data["truncated"], data
+    finally:
+        reports_mod.SEARCH_LIMIT = saved_limit
+
     # 歷史列表：新到舊、略過非日期檔名、顯示頭條
     status, data = get("/api/reports")
     assert status == 200 and data == {"reports": [{"date": "2026-09-28", "headline": "某事發生，見 來源。"},

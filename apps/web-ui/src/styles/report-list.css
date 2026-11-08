@@ -49,3 +49,29 @@
   }
 }
 
+
+/* 左欄的搜尋框與結果數 */
+.report-search {
+  margin: 12px 0 0;
+}
+.report-search input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.report-search-count {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-list);
+}
+.reports mark {
+  background: light-dark(#fde68a, #5c4a12);
+  color: inherit;
+  border-radius: 2px;
+}

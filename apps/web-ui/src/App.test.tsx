@@ -160,7 +160,7 @@ describe('版面由路由決定', () => {
     const body = () => document.querySelector('.reader-body')
     open('/reports', { 'GET /api/reports': never })
     expect(body()).toHaveTextContent('載入中…')
-    expect(side()).toBeEmptyDOMElement()
+    expect(side()).toContainElement(screen.getByRole('searchbox', { name: '搜尋歷史晨報' })) // 載入中也能搜尋
     cleanup()
 
     open('/reports', { 'GET /api/reports': () => ({ status: 500, json: { error: '壞了' } }) })
@@ -172,6 +172,41 @@ describe('版面由路由決定', () => {
     const link = await screen.findByRole('link', { name: '2026-09-28' })
     expect(side()).toContainElement(screen.getByRole('heading', { level: 1, name: '歷史晨報' }))
     expect(body()).toContainElement(link)
+  })
+
+  it('/reports?q=：列出含字詞的行、標出字詞、連到那一天', async () => {
+    open('/reports?q=nvidia', {
+      'GET /api/search?q=nvidia': () => ({
+        json: { q: 'nvidia', results: [{ date: '2026-09-28', text: 'NVIDIA 發表新晶片，Nvidia 股價上漲' }], truncated: false },
+      }),
+    })
+    expect(await screen.findByText('找到 1 筆')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '2026-09-28' })).toHaveAttribute('href', '/reports/2026-09-28')
+    expect([...document.querySelectorAll('.reports mark')].map((m) => m.textContent)).toEqual(['NVIDIA', 'Nvidia'])
+    expect(screen.getByRole('searchbox')).toHaveValue('nvidia')
+    expect(document.title).toBe('搜尋「nvidia」— 歷史晨報')
+  })
+
+  it('/reports 搜尋：送出就查；沒有結果、太多結果、失敗各有說明；清空回列表', async () => {
+    open('/reports', {
+      'GET /api/reports': () => ({ json: { reports: [{ date: '2026-09-28', headline: '某事發生' }] } }),
+      'GET /api/search?q=%E6%B2%92%E6%9C%89': () => ({ json: { q: '沒有', results: [], truncated: false } }),
+      'GET /api/search?q=a': () => ({ json: { q: 'a', results: [{ date: '2026-09-28', text: 'a' }], truncated: true } }),
+      'GET /api/search?q=x': () => ({ status: 500, json: { error: '壞了' } }),
+    })
+    await screen.findByRole('link', { name: '2026-09-28' }) // 等列表載入完，搜尋框才不會被換掉
+    await userEvent.type(screen.getByRole('searchbox'), '沒有{Enter}')
+    expect(await screen.findByText('沒有找到「沒有」')).toBeInTheDocument()
+    await userEvent.clear(screen.getByRole('searchbox'))
+    await userEvent.type(screen.getByRole('searchbox'), 'a{Enter}')
+    expect(await screen.findByText('找到 1+ 筆')).toBeInTheDocument()
+    expect(screen.getByText(/只列出最新的 1 筆/)).toBeInTheDocument()
+    await userEvent.clear(screen.getByRole('searchbox'))
+    await userEvent.type(screen.getByRole('searchbox'), 'x{Enter}')
+    expect(await screen.findByRole('heading', { name: '搜尋失敗' })).toBeInTheDocument()
+    await userEvent.clear(screen.getByRole('searchbox'))
+    await userEvent.type(screen.getByRole('searchbox'), '{Enter}')
+    expect(await screen.findByRole('link', { name: '2026-09-28' })).toBeInTheDocument()
   })
 
   it('站內切換首頁 → 歷史 → 單日，外框一直是 reader；點到 single 的頁面才換', async () => {

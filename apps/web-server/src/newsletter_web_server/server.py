@@ -12,7 +12,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from newsletter_shared import ROOT
 
@@ -186,6 +186,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.site.reports.report_payload(m[1])
         if m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
             return self.site.reports.feedback_target(m[1])
+        if path == "/api/search":
+            return self.site.reports.search(parse_qs(urlsplit(self.path).query).get("q", [""])[0])
         if path == "/api/auth" and self._local():
             return self.site.auth.status()
         raise NotFound(path)

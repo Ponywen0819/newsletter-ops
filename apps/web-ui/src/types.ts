@@ -77,6 +77,13 @@ export interface ReportSummary {
   headline: string
 }
 
+/** GET /api/search?q=：含 q 的行（純文字），新到舊；超過上限時 truncated */
+export interface SearchResult {
+  q: string
+  results: { date: string; text: string }[]
+  truncated: boolean
+}
+
 export interface Session {
   /** 這個請求是不是從本機來（經 Tunnel 進來的不算）；只有本機能看到「Claude 授權」 */
   local: boolean
