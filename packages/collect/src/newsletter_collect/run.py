@@ -22,7 +22,7 @@ from newsletter_collect import fetch as fetch_mod
 from newsletter_collect import search as search_mod
 from newsletter_collect import sources as sources_mod
 from newsletter_shared import metrics
-from newsletter_shared import DEFAULT_TZ, ROOT
+from newsletter_shared import DEFAULT_TZ, ROOT, today
 
 
 INTERESTS = ROOT / "config" / "interests.md"
@@ -39,7 +39,7 @@ def interests_age() -> tuple[int | None, str]:
                       INTERESTS.read_text(encoding="utf-8"), re.M)
     if not match:
         return None, f"{INTERESTS.name} 裡沒有 updated: YYYY-MM-DD 這行"
-    days = (date.today() - date.fromisoformat(match.group(1))).days
+    days = (date.fromisoformat(today()) - date.fromisoformat(match.group(1))).days
     if days >= STALE_AFTER_DAYS:
         return days, (f"興趣檔已 {days} 天沒更新（{match.group(1)}）——"
                       "研究重心變了的話，關鍵字多半也該跟著改")

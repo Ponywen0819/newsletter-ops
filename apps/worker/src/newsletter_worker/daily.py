@@ -22,8 +22,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Iterator
 
-from newsletter_shared import ROOT, atomic, lock, today
+from newsletter_shared import ROOT, atomic, lock, today, tz
 
+TZ = tz()  # log 的時間跟 config 的 timezone，不跟容器的 TZ
 EXIT_BUSY = 75
 EXIT_STOPPED = 128 + signal.SIGTERM
 EXIT_TIMEOUT = 124
@@ -53,7 +54,7 @@ def read_record() -> dict | None:
 
 
 def say(log: IO[str], message: str) -> None:
-    print(f"=== {datetime.now():%Y-%m-%d %H:%M:%S} === {message}", file=log, flush=True)
+    print(f"=== {datetime.now(TZ):%Y-%m-%d %H:%M:%S} === {message}", file=log, flush=True)
 
 
 def step(log: IO[str], key: str, *args: str, input: str | None = None, capture: bool = False,
