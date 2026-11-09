@@ -48,6 +48,9 @@ Zero Trust 後台（介面名稱依版本略有不同）：
 2. 該 Tunnel 的 Public Hostname：填你的網域 `news.example.com`，Service 類型選 `HTTP`、URL 填 `web:8787`（compose 服務名稱）。DNS 紀錄會自動建立。
 3. Access → Applications → Add an application → Self-hosted：Application domain 填同一個 `news.example.com`；
    Policy 一條就好：Action = Allow，Include = Emails，只填你自己的 email。不要留 Everyone 之類的其他 policy。
+4. （建議，縱深防禦）同一個 Application 的 Overview 有 **Application Audience (AUD) Tag**；team 名稱是登入頁網址 `https://<team>.cloudflareaccess.com` 的 `<team>`。
+   寫進 `.env` 的 `NEWSLETTER_ACCESS_AUD`、`NEWSLETTER_ACCESS_TEAM`，web 就會驗每個經 Tunnel 進來的請求帶的 Access JWT，
+   沒有或無效回 403；之後 Access 政策就算被誤刪或改錯，也不會整站公開。本機的請求（healthcheck、`/auth`）不驗。
 
 **3. 啟動**
 

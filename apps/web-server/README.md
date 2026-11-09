@@ -35,6 +35,7 @@ uv run --project apps/web-server newsletter-web --selftest    # API、靜態檔�
 ## 安全邊界
 
 - **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，主 port 不 publish，只有管理 port 以 `127.0.0.1:8788` publish，見 [deploy/README.md](../../deploy/README.md)）。
+- **Access JWT（選用）**：設了 `NEWSLETTER_ACCESS_TEAM`、`NEWSLETTER_ACCESS_AUD` 時，非本機的請求都要帶有效的 `Cf-Access-Jwt-Assertion`（RS256，驗 aud／iss／exp，公鑰從 `<team>.cloudflareaccess.com/cdn-cgi/access/certs` 取並快取），否則 403；取不到公鑰也拒絕。Access 政策被誤刪時不會整站公開（`access.py`）。
 - `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），前端的限制見 [ui/README.md](../web-ui/README.md)。
 - **`/auth`（貼 OAuth token）只能從本機開**：要同時符合來源是 loopback、`Host` 是本機、沒有 `Cf-*`／`X-Forwarded-*` 等代理標頭、`Origin`（若有）是本機，否則 404。
