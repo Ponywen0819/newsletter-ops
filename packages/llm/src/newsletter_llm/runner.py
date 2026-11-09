@@ -209,18 +209,22 @@ async def _query(prompt: str, options, usage: Usage, tag: str) -> None:
                     print(f"[{tag}] {brief(block)}", file=sys.stderr)
 
 
-def run(prompt: str, *, tools: list[str], max_turns: int, token: str, tag: str) -> tuple[Usage, str | None, float]:
-    """跑一次 agent，回傳 (usage, SDK 例外, 耗時秒數)。只開 tools 裡的工具，其餘的 agent 看不到也用不了。"""
-    options = sdk.ClaudeAgentOptions(
-        cwd=ROOT,
+def run(prompt: str, *, tools: list[str], max_turns: int, token: str, tag: str,
+        **options) -> tuple[Usage, str | None, float]:
+    """跑一次 agent，回傳 (usage, SDK 例外, 耗時秒數)。只開 tools 裡的工具，其餘的 agent 看不到也用不了。
+    options 疊在預設上（例如帶範圍的 allowed_tools、disallowed_tools、mcp_servers）。
+    dontAsk 下沒被 allow 的直接拒絕，但 cwd 內的讀取預設就放行，要擋得寫 disallowed_tools。"""
+    options = sdk.ClaudeAgentOptions(**{
+        "cwd": ROOT,
         # 用 Skill 才載入專案設定（.claude/skills），且不吃使用者層級的同名 skill；其他情況什麼設定都不載入
-        setting_sources=["project"] if "Skill" in tools else [],
-        tools=tools,
-        allowed_tools=tools,
-        permission_mode="dontAsk",    # 沒預先允許的直接拒絕，不要卡在沒人回答的提示
-        max_turns=max_turns,
-        env=agent_env(token),
-    )
+        "setting_sources": ["project"] if "Skill" in tools else [],
+        "tools": tools,
+        "allowed_tools": tools,
+        "permission_mode": "dontAsk",    # 沒預先允許的直接拒絕，不要卡在沒人回答的提示
+        "max_turns": max_turns,
+        "env": agent_env(token),
+        **options,
+    })
     usage, error, t0 = Usage(), None, time.monotonic()
     try:
         asyncio.run(_query(prompt, options, usage, tag))

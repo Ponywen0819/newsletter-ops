@@ -188,7 +188,10 @@ cd ROOT && uv run --locked --project packages/shared newsletter-metrics claude
 ### 無人值守執行
 
 `uv run --locked --project packages/writer newsletter-write` 會以 Claude Agent SDK 跑本 skill，沒有人可以回答問題，也看不到對話。
-可用的工具只有 Skill、Bash、Read、Write、Edit。這時：
+可用的工具只有 Skill、Read、Write、Edit 與 `report_check`；沒有 Bash（curated JSON 裡的網頁原文不受信任），
+只能寫 `reports/`，讀不到 `state/`。這時：
+
+- 第 5 步的格式檢查改呼叫 `report_check` 工具，它和 `newsletter-report-check` 做一樣的檢查：回 `ok` 就是通過，否則照原因修正後再呼叫。
 
 - 不要停下來問，不確定的地方照上面的規則自行判斷。
 - 不跑 `newsletter-collect`：蒐集由排程在前一步做完。當日 curated JSON 不存在或 `items` 是空的，就是蒐集失敗，直接停止。

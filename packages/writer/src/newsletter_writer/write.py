@@ -4,8 +4,8 @@
 用法：uv run --project packages/writer newsletter-write [--max-turns N]
       uv run --project packages/writer newsletter-write --selftest
 
-不上網：只開 Skill / Bash / Read / Write / Edit，沒有 WebSearch、WebFetch，報告的內容只能來自 curated JSON
-（搜尋與原文都由 collect 先存好）。訊息一律走 stderr。
+不上網、沒有 Bash：curated JSON 含有網頁原文（不受信任），agent 只能讀 ROOT 內（state/ 除外）、只能寫 reports/，
+格式檢查用程式內的 report_check 工具。報告的內容只能來自 curated JSON（搜尋與原文都由 collect 先存好）。訊息一律走 stderr。
 exit code：0 成功／1 agent 失敗／2 環境問題（沒 SDK、沒 token）／3 報告沒產出／4 格式不符／5 授權失敗／6 額度用完
 """
 from __future__ import annotations
@@ -23,7 +23,10 @@ from newsletter_llm import runner
 from newsletter_shared import ROOT, metrics
 from newsletter_shared.report_data import parse_report, uids_of
 
-TOOLS = ["Skill", "Bash", "Read", "Write", "Edit"]
+TOOLS = ["Skill", "Read", "Write", "Edit"]
+CHECK_TOOL = "mcp__newsletter__report_check"
+ALLOW = ["Skill", "Edit(./reports/**)", CHECK_TOOL]  # Edit 規則涵蓋 Write；cwd 內的 Read 預設放行
+DENY = ["Read(./state/**)", "Read(./.env)"]  # state/ 有 OAuth token
 DEFAULT_MAX_TURNS = 60  # 還沒量過實際回合數；跑幾天看 metrics 的 turns 再調
 
 PROMPT = """請使用 news-digest skill，產出今天（{stamp}）的晨間簡報。專案根目錄 ROOT 就是目前的工作目錄（{root}）。
@@ -68,6 +71,22 @@ def coverage(root: Path, stamp: str) -> tuple[list[str], list[str], list[str]]:
             sorted(set(got) & optional))
 
 
+def report_check(root: Path, stamp: str) -> str | None:
+    """agent 的格式檢查（同 newsletter-report-check）：None 表示通過。"""
+    if not (root / "reports" / f"{stamp}.md").exists():
+        return f"找不到 reports/{stamp}.md"
+    return check_format(root, stamp)
+
+
+def report_check_server(stamp: str):
+    """把 report_check 包成 agent 的工具，取代 Bash。"""
+    @runner.sdk.tool("report_check", f"檢查 reports/{stamp}.md 的格式；通過回 ok，否則回原因（照原因修正後再檢查）", {})
+    async def tool(args: dict) -> dict:
+        reason = report_check(ROOT, stamp)
+        return {"content": [{"type": "text", "text": reason or "ok"}], "is_error": reason is not None}
+    return runner.sdk.create_sdk_mcp_server("newsletter", tools=[tool])
+
+
 def judge(usage: runner.Usage, sdk_error: str | None, stamp: str, started: float) -> tuple[int, str, str | None]:
     """回傳 (exit code, metrics 的 status, 失敗原因)。"""
     if (fail := runner.failure(usage, sdk_error)) is not None:
@@ -96,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
 
     stamp = f"{datetime.now(metrics.TZ):%Y-%m-%d}"
     started = time.time()
-    usage, sdk_error, wall = runner.run(PROMPT.format(stamp=stamp, root=ROOT), tools=TOOLS,
+    usage, sdk_error, wall = runner.run(PROMPT.format(stamp=stamp, root=ROOT), tools=TOOLS, allowed_tools=ALLOW, disallowed_tools=DENY,
+                                        mcp_servers={"newsletter": report_check_server(stamp)},
                                         max_turns=args.max_turns, token=auth.token, tag="writer")
     code, status, reason = judge(usage, sdk_error, stamp, started)
     if usage.result is not None:
@@ -135,13 +155,15 @@ def selftest() -> None:
         assert verify(root, stamp, now) is None
         assert "格式不符" in check_format(root, stamp)
         report.write_text("> **今日頭條：** x\n<!-- subject: s -->\n")
-        assert check_format(root, stamp) is None
+        assert check_format(root, stamp) is None and report_check(root, stamp) is None
+        assert "找不到" in report_check(root, "2026-01-02")
         a, b, c = "a" * 16, "b" * 16, "c" * 16
         curated.write_text(json.dumps({"items": [{"uid": a}, {"uid": b}], "near_misses": [{"uid": "d" * 16}]}))
         report.write_text(f"> **今日頭條：** x\n<!-- subject: s -->\n\n## 段\n\n- 一\n<!-- mark:    uid={a} -->\n"
                           f"- 二\n<!-- mark:    uid={c} -->\n- 三\n<!-- mark:    uid={'d' * 16} -->\n")
         assert coverage(root, stamp) == ([b], [c], ["d" * 16]), coverage(root, stamp)
-    assert "WebSearch" not in TOOLS and "WebFetch" not in TOOLS  # 上網是 collect 的事
+    assert not {"WebSearch", "WebFetch", "Bash"} & set(TOOLS)  # 上網是 collect 的事；原文不受信任，不給 Bash
+    assert not any(a.split("(")[0] in ("Read", "Write", "Bash") for a in ALLOW), ALLOW  # 不帶範圍的 Read 會放行 cwd 外
     selftest_main()
     print("ok")
 
@@ -171,8 +193,9 @@ def selftest_main() -> None:
         auth_store.save(secret, root / "oauth_token.json")
 
         def run(written: str | None) -> tuple[int, str, str]:
-            def fake_run(prompt, *, tools, max_turns, token, tag):  # 取代真正呼叫 SDK 的那一步
-                assert tools == TOOLS and token == secret
+            def fake_run(prompt, *, tools, max_turns, token, tag, **options):  # 取代真正呼叫 SDK 的那一步
+                assert tools == TOOLS and token == secret and set(options) == {"allowed_tools", "disallowed_tools", "mcp_servers"}
+                assert options["allowed_tools"] == ALLOW and options["disallowed_tools"] == DENY
                 if written is not None:
                     report.write_text(written, encoding="utf-8")
                 usage = runner.Usage()
