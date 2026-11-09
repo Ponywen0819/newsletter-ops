@@ -77,8 +77,9 @@ uv run --project packages/shared python -m newsletter_shared.report_data --selft
 ## 量測（debug）
 
 `config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run --project packages/collect newsletter-collect ...`），每個階段會寫一行到
-`logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`search`、`enrich`、`render`，
-以及 news-digest 跑完後由 `uv run --project packages/shared newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
+`logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`search`、`enrich`、`claude`（writer 的用量）、
+`coverage`（報告漏掉幾則、寫進幾則 near_misses）、`render`，最後是 worker 的 `pipeline`（觸發方式、從哪一步開始、總耗時、exit code、失敗的那一步）。
+在對話裡跑 news-digest 時，`claude` 改由 `uv run --project packages/shared newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計。
 
 ```bash
 uv run --project packages/shared newsletter-metrics summary 14         # 最近 14 天，每次正式執行一行
@@ -88,6 +89,8 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run --project packages/collect n
 
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
 - 每遇到一筆 `fetch` 就算新的一次執行，之後的 curate／render／claude 歸到這一次。
+- summary 的 `usd` 是 writer 加搜尋的估算；`miss`／`nm` 是 coverage；`result` 是 `ok` 或 `<步驟>:<exit code>`。
+- selftest 不記（nx 的 selftest 與 `worker --selftest` 都設 `NEWSLETTER_DEBUG=0`）。
 - token 只含主 session 的 API 回合；工具內部用的小模型不在紀錄裡，所以不計。
 - `non_tool_seconds` 是總時間扣掉工具時間，含模型生成、串流與排隊。
 - 用 SDK 跑時（writer、搜尋）的用量紀錄見 [llm/README.md](../llm/README.md)「用量與成本」。

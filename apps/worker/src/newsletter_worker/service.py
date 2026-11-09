@@ -280,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--selftest", action="store_true")
     args, rest = ap.parse_known_args(argv)
     if args.selftest:
+        os.environ["NEWSLETTER_DEBUG"] = "0"  # 假的執行不進 metrics
         from .service_selftest import selftest
 
         daily.selftest()

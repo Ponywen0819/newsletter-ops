@@ -93,6 +93,7 @@ docker compose logs -f worker                  # 排程輸出：下次執行時�
 docker compose exec worker python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8790/status').read().decode())"   # 是否在跑、下次幾點、上次結果
 docker compose exec worker python -c "import urllib.request as u; print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())"   # 立刻跑一次（記成 manual；執行中回 409）。網址加 ?from=write／render 就從那一步開始，例如寄信設定修好後用 ?from=render，不必重寫報告
 docker compose exec web ls reports                # volume 裡的報告
+docker compose exec worker newsletter-metrics summary 14   # 最近 14 天每次執行的耗時、token、成本、結果（config 的 debug 要開）
 docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test worker newsletter-write   # 只產報告、不寄信（要先有當日 curated JSON）
 git pull && docker compose up -d --build          # 手動更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
