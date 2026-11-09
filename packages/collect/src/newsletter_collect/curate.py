@@ -2,7 +2,7 @@
 
 評分拆成兩個值：
   relevance  來源保底分 + 關鍵字命中。是門檻，低於 min_relevance 不收。
-  rank       relevance × 來源權重 + 新鮮度（+ feed 順序、多家報導的加分）。只決定排序。
+  rank       relevance × 來源權重 + 新鮮度（+ feed 順序、多家報導的加分），再乘上回饋倍率。只決定排序。
 拆開是為了讓「夠新」無法把不相關的東西帶進來。
 
 arXiv 論文另看 Comments / Journal-Ref 裡的會議或期刊（config.json 的 arxiv_venues）加分，結果寫進 item["venue"]。
@@ -17,9 +17,10 @@ import sys
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
-from newsletter_shared import ROOT, atomic
+from newsletter_shared import ROOT, atomic, feedback, lock
 
 STATE = ROOT / "state" / "seen.json"
+FEEDBACK = ROOT / "state" / "feedback.jsonl"
 STOP = re.compile(r"[^\w一-鿿]+")
 _ASCII_KW = re.compile(r"^[\x00-\x7f]+$")
 _PATTERN_CACHE: dict[str, re.Pattern | None] = {}
@@ -325,6 +326,19 @@ def near_misses(fresh: list[dict], ranked: list[dict], config: dict) -> list[dic
     return out
 
 
+def source_boosts(config: dict) -> dict[str, float]:
+    """來源 → rank 倍率，依網頁／報告上的回饋。p＝(正＋prior)/(總＋2·prior)，倍率＝1＋2·strength·(p−0.5)，
+    範圍 1±strength；prior 讓少量回饋動得很少（預設 10 個 + 是 ×1.1、200 個 - 是 ×0.81）。strength 0 關閉。"""
+    cfg = config.get("feedback_ranking", {})
+    strength, prior = cfg.get("strength", 0.2), cfg.get("prior", 5)
+    if not strength or not FEEDBACK.exists():
+        return {}
+    with lock.locked(FEEDBACK):
+        rows = feedback.read_feedback(FEEDBACK)
+    return {name: round(1 + 2 * strength * ((pos + prior) / (pos + neg + 2 * prior) - 0.5), 3)
+            for name, (pos, neg) in feedback.stats(rows)["source"].items()}
+
+
 def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], dict]:
     """redo：同一天重跑時，上一次收錄的 uid。它們當作沒看過，否則第二次只剩第二梯隊，頭條全不見。"""
     seen = load_seen()
@@ -333,9 +347,12 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
     default_hours = config.get("lookback_hours", 24)
     fresh = [i for i in items if in_window(i, default_hours) and i["uid"] not in seen]
 
+    boosts = source_boosts(config)
     for item in fresh:
         item["relevance"], item["rank"], item["matched_keywords"] = score(
             item, config.get("keywords", {}), config.get("arxiv_venues", {}))
+        if (b := boosts.get(item.get("source", ""), 1.0)) != 1.0:
+            item["rank"], item["feedback_boost"] = round(item["rank"] * b, 2), b
 
     min_relevance = config.get("min_relevance", 1.0)
     relevant = [i for i in fresh if i["relevance"] >= min_relevance]
@@ -421,6 +438,7 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     import tempfile
     from pathlib import Path
     STATE = Path(tempfile.mkdtemp()) / "seen.json"  # 不碰真的 state/seen.json
+    FEEDBACK = STATE.parent / "feedback.jsonl"  # 也不讀真的回饋
     now = datetime.now(timezone.utc).isoformat()
     def batch() -> list[dict]:
         return [{"uid": f"u{n}", "title": t, "url": f"https://x.example/{n}", "source": "s", "topic": "t",
@@ -435,6 +453,22 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert uids(first) == {"u3", "u2"}
     assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
     assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的：沒帶 redo 才會往下一梯隊走
+
+    # 回饋倍率：沒有回饋＝{}；少量幾乎不動；壓倒性也不超過 1±strength；只動 rank 不動 relevance
+    assert source_boosts({}) == {}
+    FEEDBACK.write_text("".join(json.dumps({"uid": f"g{n}", "mark": "+", "source": "Good"}) + "\n" for n in range(10)) +
+                        "".join(json.dumps({"uid": f"b{n}", "mark": "--", "source": "Bad"}) + "\n" for n in range(200)) +
+                        json.dumps({"uid": "g0", "mark": "", "source": "Good"}) + "\n")  # 取消的不算
+    boosts = source_boosts({})
+    assert boosts == {"Good": 1.095, "Bad": 0.81}, boosts  # Good 9 個 +（1 個取消）
+    assert source_boosts({"feedback_ranking": {"strength": 0}}) == {}
+    assert source_boosts({"feedback_ranking": {"strength": 0.5, "prior": 1}})["Bad"] > 0.5
+    b0, b1 = batch()[:2]
+    good, plain = sorted(curate([{**b0, "uid": "fg", "source": "Good"}, {**b1, "uid": "fp", "baseline_relevance": 2.0}],
+                                {"min_relevance": 0})[0], key=lambda i: i["uid"])
+    assert good["feedback_boost"] == 1.095 and good["rank"] > plain["rank"] and good["relevance"] == plain["relevance"]
+    assert "feedback_boost" not in plain
+    FEEDBACK.unlink()
 
     # 每個來源的上限：有別的來源時讓位，沒有就補回來
     def src_item(uid, source, rank):
