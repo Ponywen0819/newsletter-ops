@@ -6,6 +6,18 @@
   line-height: normal;
   color: var(--muted);
 }
+/* 首頁：今天的還沒產出，顯示最新一份時的提示 */
+.report-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+.report-banner strong {
+  color: var(--text);
+}
 .callout {
   margin: 0 0 8px;
   /* 手機寬度寶貴：callout 左邊框＋左右 padding 已吃掉 30px 以上，padding 收緊一點給文字 */

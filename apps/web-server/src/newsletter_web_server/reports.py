@@ -80,7 +80,10 @@ class Reports:
         try:
             payload = self.report_payload(date)
         except NotFound:
+            # 今天的還沒產出：附上最新一份，首頁直接顯示，不用再點一次
             payload = {"date": date, "report": None, "marks": {}}
+            if latest:
+                payload["fallback"] = self.report_payload(latest[0])
         return {**payload, "latest": latest[0] if latest else None, "run": self.run_record(date)}
 
     def list_payload(self) -> dict:

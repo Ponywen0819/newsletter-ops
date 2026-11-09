@@ -24,10 +24,30 @@ describe('路由', () => {
     expect(document.querySelectorAll('[aria-pressed="true"]')).toHaveLength(1)
   })
 
-  it('/ 當日還沒產出：說明並連到最新一份；一份都沒有就說沒有', async () => {
+  it('/ 當日還沒產出：舊的副本（沒有 fallback）說明並連到最新一份', async () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {} } }) })
     expect(await screen.findByRole('heading', { name: '2026-10-03 的晨報還沒產出' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '2026-10-02' })).toHaveAttribute('href', '/reports/2026-10-02')
+  })
+
+  it('/ 當日還沒產出、有 fallback：上方提示，下面直接是最新一份', async () => {
+    const fallback = { date: '2026-10-02', report, marks: { [UID_A]: '+' }, prev: '2026-10-01', next: null }
+    const run = { trigger: 'schedule', started_at: 'a', finished_at: 'b', exit_code: 3, step: 'collect' }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run } }) })
+    const banner = (await screen.findByText('2026-10-03 的晨報產生失敗')).closest('p')
+    expect(banner).toHaveAttribute('role', 'status')
+    expect(banner).toHaveTextContent('2026-10-03 的晨報產生失敗：在「蒐集新聞」這步失敗（exit 3）')
+    expect(banner).toHaveTextContent('下面是最新一份（2026-10-02）')
+    expect(screen.getByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
+    expect(document.querySelectorAll('[aria-pressed="true"]')).toHaveLength(1)
+    expect(screen.getByRole('link', { name: '← 前一份 2026-10-01' })).toBeInTheDocument()
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-10-02'))
+    cleanup()
+
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback } }) })
+    expect((await screen.findByText('2026-10-03 的晨報還沒產出')).closest('p')).toHaveTextContent(
+      '2026-10-03 的晨報還沒產出。下面是最新一份（2026-10-02）',
+    )
   })
 
   it.each([
