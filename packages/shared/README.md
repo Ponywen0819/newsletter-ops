@@ -88,7 +88,7 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run --project packages/collect n
 ```
 
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
-- 每遇到一筆 `fetch` 就算新的一次執行，之後的 curate／render／claude 歸到這一次。
+- worker 跑的每筆紀錄帶 `run_id`（`NEWSLETTER_RUN_ID`，子程序繼承），summary 依它分列，`?from=write` 補跑也自成一列；沒有 `run_id` 的（舊紀錄、手動跑）每遇到一筆 `fetch` 算新的一次。
 - summary 的 `usd` 是 writer 加搜尋的估算；`miss`／`nm` 是 coverage；`result` 是 `ok` 或 `<步驟>:<exit code>`。
 - selftest 不記（nx 的 selftest 與 `worker --selftest` 都設 `NEWSLETTER_DEBUG=0`）。
 - token 只含主 session 的 API 回合；工具內部用的小模型不在紀錄裡，所以不計。
