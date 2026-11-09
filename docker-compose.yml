@@ -9,7 +9,7 @@ x-app: &app
     - newsletter-data:/var/lib/newsletter
   # 只有 volume、/tmp 與家目錄（claude CLI 的設定與 session 紀錄）可寫；不需要任何 capability
   read_only: true
-  tmpfs: [/tmp, /home/app]
+  tmpfs: [/tmp, "/home/app:mode=1777"]  # 不給 mode 時 compose 建出來是 root 的 755，app 寫不進去（podman 不收 uid=）
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
 
