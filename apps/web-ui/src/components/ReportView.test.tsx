@@ -36,6 +36,9 @@ describe('ReportView', () => {
     expect(screen.getByRole('heading', { name: '科技與 AI' })).toBeInTheDocument()
     const sources = within(screen.getByRole('heading', { name: '資料來源' }).nextElementSibling as HTMLElement)
     expect(sources.getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual(['https://a.example/x?a=1&b=2', 'https://a.example/1'])
+    expect(sources.getAllByRole('link').every((a) => a.getAttribute('target') === '_blank' && a.getAttribute('rel') === 'noopener noreferrer')).toBe(true)
+    // 站內連結（目錄、前後份）不開新分頁
+    expect(document.querySelectorAll('a[href^="#"][target], a[href^="/"][target]')).toHaveLength(0)
   })
 
   it('巢狀清單；mark 在最外層項目的子清單之後，不在子項目裡', () => {
