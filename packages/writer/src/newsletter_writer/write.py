@@ -43,7 +43,7 @@ def permissions(root: Path) -> tuple[list[str], list[str]]:
              *scoped("Read", "data/curated", root)]
     deny = [*scoped("Read", "state", root), "Read(./.env)"]  # state/ 有 OAuth token
     return allow, deny
-DEFAULT_MAX_TURNS = 60  # 還沒量過實際回合數；跑幾天看 metrics 的 turns 再調
+DEFAULT_MAX_TURNS = 30  # 正式機實測 8～11 回合（2026-11）；約 3 倍餘裕，也是失控時的花費上限
 
 PROMPT = """請使用 news-digest skill，產出今天（{stamp}）的晨間簡報。專案根目錄 ROOT 就是目前的工作目錄（{root}）。
 這是無人值守執行，沒有人可以回答問題：不確定的地方依 skill 的規則自行判斷，不要停下來問。
