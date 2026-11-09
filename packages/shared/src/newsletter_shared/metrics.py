@@ -180,7 +180,7 @@ def cmd_summary(argv: list[str]) -> int:
     today = datetime.now(TZ).date()
     stages = ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
     header = (f"{'date':10} {'time':5} {'label':5} {'via':4} " + " ".join(f"{s[:6]:>6}" for s in stages) +
-              f" {'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6} {'miss':>4} {'nm':>3} {'result':8}  top tools")
+              f" {'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6} {'s+':>3} {'miss':>4} {'nm':>3} {'result':8}  top tools")
     print(header)
     print("-" * len(header))
     for n in range(days - 1, -1, -1):
@@ -198,7 +198,7 @@ def cmd_summary(argv: list[str]) -> int:
 
 def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
     first = min(run.values(), key=lambda r: r["ts"])
-    c, cov, p = run.get("claude", {}), run.get("coverage", {}), run.get("pipeline")
+    c, cov, p, sy = run.get("claude", {}), run.get("coverage", {}), run.get("pipeline"), run.get("search_yield", {})
     tok = c.get("tokens", {})
     top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
     via = c.get("runner", "chat") if c else "-"  # sdk＝newsletter-write；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
@@ -208,7 +208,7 @@ def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
     secs = " ".join(f"{run[s]['seconds']:>6.1f}" if "seconds" in run.get(s, {}) else f"{'-':>6}" for s in stages)
     return (f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} {secs} "
             f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
-            f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6} {cov.get('missing', '-'):>4} "
+            f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6} {sy.get('accepted', '-'):>3} {cov.get('missing', '-'):>4} "
             f"{cov.get('near_misses_used', '-'):>3} {result:8}  {top}")
 
 
@@ -256,9 +256,10 @@ def selftest() -> None:
                       "tokens": {"input": 1, "cache_read": 2, "output": 3}},
            "search": {"ts": "x", "seconds": 60.0, "total_cost_usd": 0.25},
            "coverage": {"ts": "x", "missing": 2, "near_misses_used": 1},
+           "search_yield": {"ts": "x", "accepted": 0},
            "pipeline": {"ts": "x", "seconds": 400.0, "exit_code": 6, "step": "write"}}
     line = summary_line("2026-01-01", run, ("fetch", "search", "enrich", "pipeline"))
-    assert line.split()[4:13] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.75", "2"], line
+    assert line.split()[4:14] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.75", "0", "2"], line
     assert "write:6" in line, line
     print("ok")
 

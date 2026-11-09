@@ -19,7 +19,7 @@ from difflib import SequenceMatcher
 from typing import Callable
 
 from newsletter_collect import curate, fetch
-from newsletter_shared import ROOT, atomic
+from newsletter_shared import ROOT, atomic, metrics
 
 TOOLS = ["WebSearch"]
 REQUIRED = ("topic", "title", "url", "published", "query")
@@ -206,6 +206,9 @@ def run(ranked: list[dict], config: dict, stamp: str, redo: set[str]) -> tuple[l
             seen = curate.load_seen()
             seen.update({i["uid"]: now.isoformat() for i in kept})
             curate.save_seen(seen)
+    if topics:  # 搜尋有沒有用：花了額度補到幾則（stage search 只有用量）
+        metrics.record("search_yield", gaps=len(topics), accepted=len(kept), rejected=len(log["rejected"]),
+                       error=bool(log["error"]))
     path = ROOT / "data" / "search" / f"{stamp}.json"
     atomic.write_text(path, json.dumps(log, ensure_ascii=False, indent=2))
     print(f"[search] 收下 {len(kept)} 則、退回 {len(log['rejected'])} 則 → {path}", file=sys.stderr)
