@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 
+from . import access
 from .server import BUILD_COMMAND, DEFAULT_HOST, DEFAULT_PORT, Site, make_server
 
 
@@ -30,7 +31,9 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--admin-port 不能和 --port 相同")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
-    site = Site()
+    site = Site(access=access.from_env())
+    if site.access is None:
+        print(f"[web] 沒設 {access.TEAM_ENV}／{access.AUD_ENV}：不驗 Cloudflare Access 的 JWT，安全全靠 Access 政策", file=sys.stderr)
     if site.index_html() is None:
         print(f"[web] 找不到 apps/web-ui/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
     server = make_server(site, args.host, args.port)

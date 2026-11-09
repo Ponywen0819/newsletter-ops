@@ -71,6 +71,7 @@ def selftest() -> None:
             _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
             _selftest_etag(req, uid_a)
         _selftest_timeout(site)
+        _selftest_access(root)
 
         # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
         bare = root / "bare"
@@ -84,6 +85,44 @@ def selftest() -> None:
             assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
     print("ok")
+
+
+def _selftest_access(root: Path) -> None:
+    """設了 Access：經 tunnel 來的請求（帶 cf-* 標頭）要有效的 JWT，否則 403；本機不驗。"""
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from .access import Access, from_env
+
+    key, other = (rsa.generate_private_key(public_exponent=65537, key_size=2048) for _ in range(2))
+    access = Access("https://team.cloudflareaccess.com/", "aud-1", key_for=lambda token: key.public_key())
+    assert access.issuer == "https://team.cloudflareaccess.com" and Access("team", "a", key_for=id).issuer == access.issuer
+
+    def token(signer=key, **over) -> str:
+        claims = {"aud": "aud-1", "iss": access.issuer, "exp": int(time.time()) + 60, "email": "me@example.com", **over}
+        return jwt.encode(claims, signer, algorithm="RS256")
+
+    tunnel = {"Cf-Ray": "abc", "Host": "news.example.com"}
+    with served(Site(root, today=lambda: "2026-09-28", access=access)) as req:
+        assert req("GET", "/api/session")[0] == 200  # 本機（healthcheck）不驗
+        for bad in (None, "x.y.z", token(aud="other"), token(iss="https://evil.cloudflareaccess.com"),
+                    token(exp=int(time.time()) - 10), token(signer=other)):
+            h = {**tunnel, **({"Cf-Access-Jwt-Assertion": bad} if bad else {})}
+            for method, path in (("GET", "/api/today"), ("GET", "/"), ("GET", "/assets/app-abc123.js"), ("HEAD", "/")):
+                assert req(method, path, h)[0] == 403, (bad, method, path)
+            assert req("POST", "/api/feedback", {**h, "Content-Type": "application/json"}, {"uid": "x", "mark": "+"})[0] == 403
+        good = {**tunnel, "Cf-Access-Jwt-Assertion": token()}
+        assert req("GET", "/api/today", good)[0] == 200 and req("GET", "/", good)[0] == 200
+    with served(Site(root, today=lambda: "2026-09-28")) as req:
+        assert req("GET", "/api/today", tunnel)[0] == 200  # 沒設就不驗
+    env = {"NEWSLETTER_ACCESS_TEAM": "team", "NEWSLETTER_ACCESS_AUD": "aud-1"}
+    from unittest import mock
+    with mock.patch.dict(os.environ, env):
+        assert from_env() is not None and from_env().aud == "aud-1"
+    with mock.patch.dict(os.environ, {**env, "NEWSLETTER_ACCESS_AUD": ""}):
+        assert from_env() is None
 
 
 def _selftest_timeout(site: Site) -> None:

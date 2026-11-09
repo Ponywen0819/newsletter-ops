@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from newsletter_shared import ROOT
 
+from .access import HEADER as ACCESS_HEADER
+from .access import Access
 from .auth import Auth
 from .errors import ApiError, NotFound
 from .reports import Reports
@@ -92,7 +94,8 @@ class Site:
     """Handler 用到的全部狀態。root 可換掉，selftest 用暫存目錄。"""
 
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
-                 checker: Callable[[str], dict] | None = None):
+                 checker: Callable[[str], dict] | None = None, access: Access | None = None):
+        self.access = access  # 有設就驗 Cloudflare Access 的 JWT（本機請求不驗）
         self.reports = Reports(root, today)
         self.auth = Auth(root, checker)
         self.dist = root / "apps" / "web-ui" / "dist"
@@ -162,11 +165,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
 
+    def _denied(self) -> bool:
+        """Access 驗證沒過就回 403。本機（容器的 healthcheck、管理 port）不驗。"""
+        access = self.site.access
+        if access is None or self._local() or access.ok(self.headers.get(ACCESS_HEADER)):
+            return False
+        self._send(HTTPStatus.FORBIDDEN, "forbidden")
+        return True
+
     def do_HEAD(self) -> None:
         self.head_only = True
         self.do_GET()
 
     def do_GET(self) -> None:
+        if self._denied():
+            return
         path = urlsplit(self.path).path.rstrip("/") or "/"
         if path.startswith("/api/"):
             self._get_api(path)
@@ -240,6 +253,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(HTTPStatus.BAD_REQUEST, "body 不是合法的 JSON") from None
 
     def do_POST(self) -> None:
+        if self._denied():
+            return
         path = urlsplit(self.path).path.rstrip("/")
         local_only = POST_ROUTES.get(path)
         if local_only is None or (local_only and not self._local()):
