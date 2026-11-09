@@ -7,6 +7,11 @@ x-app: &app
   init: true
   volumes:
     - newsletter-data:/var/lib/newsletter
+  # 只有 volume、/tmp 與家目錄（claude CLI 的設定與 session 紀錄）可寫；不需要任何 capability
+  read_only: true
+  tmpfs: [/tmp, /home/app]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
 
 services:
   web:
@@ -55,6 +60,9 @@ services:
     image: cloudflare/cloudflared:2026.10.7
     # QUIC 在家用網路上會定期斷線，改用 http2
     command: tunnel --no-autoupdate --protocol http2 run
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN（Cloudflare Zero Trust 建立 Tunnel 時取得）}
     depends_on:
