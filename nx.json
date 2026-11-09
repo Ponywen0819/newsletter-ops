@@ -20,7 +20,12 @@
         "default",
         "^default",
         "{workspaceRoot}/config/**/*"
-      ]
+      ],
+      "options": {
+        "env": {
+          "NEWSLETTER_DEBUG": "0"
+        }
+      }
     },
     "lint": {
       "cache": true,

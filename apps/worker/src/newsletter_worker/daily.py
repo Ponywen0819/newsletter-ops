@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Iterator
 
-from newsletter_shared import ROOT, atomic, lock, today, tz
+from newsletter_shared import ROOT, atomic, lock, metrics, today, tz
 
 TZ = tz()  # log 的時間跟 config 的 timezone，不跟容器的 TZ
 EXIT_BUSY = 75
@@ -103,13 +103,15 @@ def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", st
             rec = {"date": today(), "trigger": trigger, "started_at": now_iso(),
                    "finished_at": None, "exit_code": None, "step": None}
             atomic.write_text(RECORD, json.dumps(rec))
-            code, failed = 1, []  # _run 丟例外時記成失敗
+            code, failed, t0 = 1, [], time.monotonic()  # _run 丟例外時記成失敗
             try:
                 code = _run(collect_args, log, stop, failed, start)
                 return code
             finally:
-                atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code,
-                                                      "step": failed[-1] if failed else None}))
+                step_ = failed[-1] if failed else None
+                atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code, "step": step_}))
+                metrics.record("pipeline", seconds=round(time.monotonic() - t0, 1), trigger=trigger, start=start,
+                               exit_code=code, step=step_)
     except lock.LockBusy:
         say(log, "已有另一條 pipeline 在跑（state/pipeline.lock 被占用），這次不執行")
         return EXIT_BUSY

@@ -1,5 +1,5 @@
 {
-  "debug": false,
+  "debug": true,
   "timezone": "Asia/Taipei",
   "lookback_hours": 24,
   "max_items_per_source": 40,
