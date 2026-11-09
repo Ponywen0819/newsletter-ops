@@ -112,7 +112,7 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
 `main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建兩個映像推到
 `ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
 發行時在 `main` 打的 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`）也會建一次，映像 tag 是同名的 `v1.2.0` 與 `sha-<commit>`。
-host 上的 timer 每 10 分鐘拉一次，有新版才重建容器。
+host 上的 timer 每 10 分鐘跑一次：先 `git pull --ff-only`（compose 檔跟著 repo），再拉映像，有新版才重建容器。repo 要停在 `main`。
 
 ```bash
 # package 是 private 時才需要；PAT 只要 read:packages
@@ -128,7 +128,8 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 - 每日流程正在跑時這輪會跳過。
 - 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
 - **退版**：`.env` 加 `NEWSLETTER_TAG=v1.1.0`（或 `sha-<commit>`），然後 `docker compose up -d`；固定 tag 時 timer 只會拉同一個 tag，等於停止自動更新。要回到自動跟新版就把那行刪掉。
-- timer 只更新映像；`docker-compose.yml` 改了要自己 `git pull`。
+- host 上的 repo 有本機修改或分岔時 `git pull` 會失敗，這輪整個不更新（看 journal）；本機設定放 `.env` 或 `docker-compose.override.yml`（未追蹤的檔不影響）。
+- podman 的 `docker compose ps` 狀態欄不會顯示 healthy，要看健康狀態用 `docker inspect newsletter-ops-worker-1 --format '{{.State.Health.Status}}'`。
 - **從單一映像換過來時**（舊的 `ghcr.io/ponywen0819/newsletter-ops`）：先 `git pull` 拿到新的 compose，再 `docker compose up -d`；
   確認兩個容器都 healthy 後，`docker image rm ghcr.io/ponywen0819/newsletter-ops:latest` 刪掉舊映像（不會自己刪）。
 
