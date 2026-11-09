@@ -23,7 +23,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
   萬一 Tunnel 誤指到它，Cloudflare 帶的 `Cf-*` 標頭與公網 `Host` 仍會被拒（`/auth` 照樣 404），但那只是第二道防線。
 - 機密放 `.env`（Gmail 帳密、`TUNNEL_TOKEN`）：`web` 容器拿不到這些，`worker` 拿不到 `TUNNEL_TOKEN`。Claude 的 OAuth token 另外存在 volume 的 `state/oauth_token.json`（權限 600），`web` 負責驗證並儲存、`worker` 讀取。
 
-`docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是自動部署（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
+`docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是自動部署、`push-images.sh` 是 Actions 不能跑時手動推映像（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
 
 用 Podman 代替 Docker 也行（Debian 13 實測）：`apt install podman-docker docker-compose catatonit nftables aardvark-dns`、`systemctl enable --now podman.socket podman-restart.service`，
 之後照常用 `docker compose`。`catatonit` 給 `init: true` 用，`nftables`、`aardvark-dns` 給 netavark 建網路與容器內 DNS 用。
@@ -141,12 +141,11 @@ Actions 不能跑時（例如額度用完）可以在自己的電腦建好推上
 
 ```bash
 echo <PAT> | docker login ghcr.io -u Ponywen0819 --password-stdin
-git switch --detach origin/main
-for t in web worker; do docker buildx build --platform linux/arm64 --target "$t" --push \
-  -t "ghcr.io/ponywen0819/newsletter-ops-$t:latest" -t "ghcr.io/ponywen0819/newsletter-ops-$t:sha-$(git rev-parse HEAD)" . || break; done
+deploy/push-images.sh          # origin/main → :latest 與 :sha-<commit>
+deploy/push-images.sh v1.2.0   # 版本 tag → :v1.2.0 與 :sha-<commit>
 ```
 
-建版本號的映像時改成 `git switch --detach v1.2.0`，`:latest` 換成 `:v1.2.0`。
+一律從 `git archive` 的乾淨副本建，工作目錄有沒有修改都不影響。
 
 **7. 資料保存：只備份回饋**
 
