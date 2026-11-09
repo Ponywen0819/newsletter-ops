@@ -3,6 +3,7 @@
 
 用法：uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send [--dry-run]
       echo '{"subject": "…", "text": "…"}' | uv run --project packages/notify newsletter-send --notice   # 純文字通知（worker 的失敗通知）
+      notice 可加 "attachments": [{"path": "…", "filename": "…"}]（worker 的回饋備份）
       uv run --project packages/notify newsletter-send --selftest
 
 環境變數：GMAIL_USER、GMAIL_APP_PASSWORD（應用程式密碼）、NEWSLETTER_MAIL_TO（逗號分隔，預設寄給自己）
@@ -35,6 +36,9 @@ def build_notice(meta: dict, sender: str, to: list[str]) -> EmailMessage:
     msg["From"] = sender
     msg["To"] = ", ".join(to)
     msg.set_content(meta["text"])
+    for a in meta.get("attachments", []):
+        msg.add_attachment(Path(a["path"]).read_bytes(), maintype="application", subtype="octet-stream",
+                           filename=a["filename"])
     return msg
 
 
@@ -86,6 +90,14 @@ def selftest() -> None:
     assert msg.get_body(("plain",)).get_content() == "純文字版\n"
     msg = build_notice({"subject": "失敗", "text": "內容\n"}, "a@example.com", ["b@example.com"])
     assert msg["Subject"] == "失敗" and msg.get_content() == "內容\n" and not msg.is_multipart()
+    with tempfile.NamedTemporaryFile("wb", suffix=".jsonl", delete=False) as ax:
+        ax.write(b'{"uid": "x"}\n')
+    msg = build_notice({"subject": "備份", "text": "t\n", "attachments": [{"path": ax.name, "filename": "f.jsonl"}]},
+                       "a@example.com", ["b@example.com"])
+    os.unlink(ax.name)
+    att = next(msg.iter_attachments())
+    assert msg.get_body(("plain",)).get_content() == "t\n" and att.get_filename() == "f.jsonl"
+    assert att.get_content() == b'{"uid": "x"}\n'
     print("ok")
 
 

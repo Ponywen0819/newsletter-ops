@@ -144,10 +144,10 @@ for t in web worker; do docker buildx build --platform linux/arm64 --target "$t"
 
 建版本號的映像時改成 `git switch --detach v1.2.0`，`:latest` 換成 `:v1.2.0`。
 
-**7. 資料保存：不保存**
+**7. 資料保存：只備份回饋**
 
 生成物都在 volume `newsletter-data`（容器內 `/var/lib/newsletter`），換容器、換映像、`docker compose down` 都還在；
-**`docker compose down -v` 或 `docker volume rm` 才會刪掉**。不備份，決定見[根目錄 README](../README.md)「資料保存」。
+**`docker compose down -v` 或 `docker volume rm` 才會刪掉**。只有 `state/feedback.jsonl` 每週日寄一份到 `NEWSLETTER_MAIL_TO`，決定見[根目錄 README](../README.md)「資料保存」。
 
 ## 不用 Docker：systemd + cloudflared
 

@@ -57,6 +57,33 @@ def _selftest_heartbeat() -> None:
         svc.heartbeat(True)  # 連不到：只記 log，不丟例外
 
 
+def _selftest_backup(tmp: Path) -> None:
+    service = service_for(tmp, time(23, 59), time(7, 30))
+    fb = service.state / "feedback.jsonl"
+    fb.parent.mkdir(parents=True, exist_ok=True)
+    sunday, monday = tpe("2026-11-08 08:00"), tpe("2026-11-09 08:00")
+    service.backup(sunday)
+    assert service.notices == [] and not (service.state / "backup_week").exists()  # type: ignore[attr-defined]  # 沒有回饋
+    service.backed_up = None
+    fb.write_text('{"uid": "a"}\n{"uid": "b"}\n')
+    service.backup(tpe("2026-11-08 07:00"))  # 週日但還沒到 check_at
+    service.backup(monday)
+    assert service.notices == []  # type: ignore[attr-defined]
+    service.backup(sunday)
+    n = service.notices[-1]  # type: ignore[attr-defined]
+    assert "2 列" in n["subject"] and n["attachments"][0]["filename"] == "feedback-2026-11-08.jsonl", n
+    assert Path(n["attachments"][0]["path"]).read_text() == fb.read_text()
+    assert (service.state / "backup_week").read_text() == "2026-W45"
+    service.backup(tpe("2026-11-08 09:00"))
+    again = service_for(tmp, time(23, 59), time(7, 30))  # 重啟：讀 backup_week，同週不重寄
+    again.backup(tpe("2026-11-08 10:00"))
+    assert len(service.notices) == 1 and again.notices == []  # type: ignore[attr-defined]
+    fail = service_for(tmp, time(23, 59), time(7, 30))
+    fail.notifier = lambda notice: False
+    fail.backup(tpe("2026-11-15 08:00"))  # 寄不出去：不寫 backup_week
+    assert (service.state / "backup_week").read_text() == "2026-W45"
+
+
 def selftest() -> None:
     _selftest_heartbeat()
     _selftest_clock()
@@ -67,6 +94,8 @@ def selftest() -> None:
     with tempfile.TemporaryDirectory() as d, daily.fake_steps(Path(d)):
         _selftest_http(Path(d))
         _selftest_tick(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        _selftest_backup(Path(d))
     _selftest_sigterm()
     print("ok")
 

@@ -14,6 +14,7 @@ token 剩 REMIND_DAYS 裡的天數時（推算的到期日），在驗證時間�
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -28,7 +29,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT, auth_health, auth_store, lock, tz
+from newsletter_shared import ROOT, atomic, auth_health, auth_store, lock, tz
 
 from . import daily
 
@@ -130,7 +131,7 @@ def expiry_notice(st: dict) -> dict | None:
     return {"subject": f"晨報：Claude token {left}", "text": text}
 
 
-def send_notice(notice: dict) -> None:
+def send_notice(notice: dict) -> bool:
     """另開程序寄（worker 不 import notify）；寄不出去只記 log。"""
     try:
         proc = subprocess.run([sys.executable, "-m", "newsletter_notify.send_email", "--notice"], cwd=ROOT,
@@ -140,10 +141,27 @@ def send_notice(notice: dict) -> None:
         detail = proc.stderr.strip().splitlines()[-1:] if not ok else []
     except (OSError, subprocess.TimeoutExpired) as exc:
         ok, detail = False, [str(exc)]
-    say("已寄失敗通知" if ok else f"失敗通知寄不出去：{' '.join(detail)}")
+    say(f"已寄：{notice['subject']}" if ok else f"通知寄不出去（{notice['subject']}）：{' '.join(detail)}")
+    return ok
 
 
 HEARTBEAT_ENV = "NEWSLETTER_HEARTBEAT_URL"
+BACKUP_WEEKDAY = 6  # 週日
+
+
+def backup_notice(src: Path, copy: Path, date: str) -> dict | None:
+    """state/feedback.jsonl 的備份信（在鎖內複製一份再附上）；沒有回饋就 None。
+    ponytail: 整個檔案當附件，Gmail 上限 25 MB；一則約 300 bytes，要很多年才會碰到，到時再壓縮。"""
+    if not src.exists():
+        return None
+    with lock.locked(src):
+        data = src.read_bytes()
+    atomic.write_text(copy, data.decode("utf-8"))
+    rows = data.count(b"\n")
+    return {"subject": f"newsletter 回饋備份 {date}（{rows} 列）",
+            "text": f"附件是 state/feedback.jsonl（{rows} 列），每週日寄一次。\n"
+                    "還原：把附件放回 volume 的 state/feedback.jsonl（容器裡是 /var/lib/newsletter/state/）。\n",
+            "attachments": [{"path": str(copy), "filename": f"feedback-{date}.jsonl"}]}
 
 
 def heartbeat(ok: bool) -> None:
@@ -167,6 +185,8 @@ class Service:
         self.notifier = send_notice
         self.beat = heartbeat
         self.token_status = lambda: auth_store.status(auth_store.token_path())
+        self.state = self.health.parent
+        self.backed_up: str | None = None  # 這週寄過備份了沒（ISO 週）；重啟後讀 state/backup_week
         self.reminded: str | None = None  # 今天檢查過到期提醒了沒（日期）；重啟後同一天可能再寄一次
         self.stop = threading.Event()
         self.current: dict | None = None  # {trigger, started_at}
@@ -230,8 +250,22 @@ class Service:
             say(notice["subject"])
             self.notifier(notice)
 
+    def backup(self, now: datetime) -> None:
+        local = now.astimezone(self.tz)
+        week, marker = f"{local:%G-W%V}", self.state / "backup_week"
+        if local.weekday() != BACKUP_WEEKDAY or local.time() < self.check_at or self.backed_up == week:
+            return
+        self.backed_up = week  # 寄不出去也等下週，不要每分鐘重試
+        with contextlib.suppress(OSError):
+            if marker.read_text(encoding="utf-8").strip() == week:
+                return
+        notice = backup_notice(self.state / "feedback.jsonl", self.state / "feedback-backup.jsonl", f"{local:%Y-%m-%d}")
+        if notice is not None and self.notifier(notice) is not False:
+            atomic.write_text(marker, week)
+
     def tick(self, now: datetime) -> None:
         self.remind(now)
+        self.backup(now)
         if check_due(now, auth_health.read(self.health), self.check_at, self.tz):
             self.check_auth()  # 同步跑：同一輪要開始的 pipeline 排在它後面
         if self.current is None and (action := due(now, daily.read_record(), lock_held(), self.at, self.tz)) not in (None, "busy"):
