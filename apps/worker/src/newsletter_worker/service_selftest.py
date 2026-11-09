@@ -31,6 +31,8 @@ def service_for(tmp: Path, at: time, check_at: time = CHECK_AT) -> Service:
     service.checker = lambda: service.checks.append(1) or {"ok": True, "kind": "ok", "message": ""}  # type: ignore[attr-defined]
     service.notices = []  # type: ignore[attr-defined]
     service.notifier = service.notices.append  # type: ignore[attr-defined]
+    service.beats = []  # type: ignore[attr-defined]
+    service.beat = service.beats.append  # type: ignore[attr-defined]
     service.token_status = lambda: {"state": "ok", "days_left": 200}
     return service
 
@@ -39,7 +41,51 @@ def tpe(s: str) -> datetime:
     return datetime.fromisoformat(s).replace(tzinfo=TPE)
 
 
+def _selftest_heartbeat() -> None:
+    from unittest import mock
+
+    from . import service as svc
+    hits: list[str] = []
+    with mock.patch.object(svc.urllib.request, "urlopen", lambda url, timeout: hits.append(url) or mock.MagicMock()):
+        with mock.patch.dict(os.environ, {svc.HEARTBEAT_ENV: ""}):
+            svc.heartbeat(True)
+        with mock.patch.dict(os.environ, {svc.HEARTBEAT_ENV: "https://hc.example/abc/"}):
+            svc.heartbeat(True)
+            svc.heartbeat(False)
+    assert hits == ["https://hc.example/abc", "https://hc.example/abc/fail"], hits
+    with mock.patch.dict(os.environ, {svc.HEARTBEAT_ENV: "http://127.0.0.1:9/x"}):
+        svc.heartbeat(True)  # 連不到：只記 log，不丟例外
+
+
+def _selftest_backup(tmp: Path) -> None:
+    service = service_for(tmp, time(23, 59), time(7, 30))
+    fb = service.state / "feedback.jsonl"
+    fb.parent.mkdir(parents=True, exist_ok=True)
+    sunday, monday = tpe("2026-11-08 08:00"), tpe("2026-11-09 08:00")
+    service.backup(sunday)
+    assert service.notices == [] and not (service.state / "backup_week").exists()  # type: ignore[attr-defined]  # 沒有回饋
+    service.backed_up = None
+    fb.write_text('{"uid": "a"}\n{"uid": "b"}\n')
+    service.backup(tpe("2026-11-08 07:00"))  # 週日但還沒到 check_at
+    service.backup(monday)
+    assert service.notices == []  # type: ignore[attr-defined]
+    service.backup(sunday)
+    n = service.notices[-1]  # type: ignore[attr-defined]
+    assert "2 列" in n["subject"] and n["attachments"][0]["filename"] == "feedback-2026-11-08.jsonl", n
+    assert Path(n["attachments"][0]["path"]).read_text() == fb.read_text()
+    assert (service.state / "backup_week").read_text() == "2026-W45"
+    service.backup(tpe("2026-11-08 09:00"))
+    again = service_for(tmp, time(23, 59), time(7, 30))  # 重啟：讀 backup_week，同週不重寄
+    again.backup(tpe("2026-11-08 10:00"))
+    assert len(service.notices) == 1 and again.notices == []  # type: ignore[attr-defined]
+    fail = service_for(tmp, time(23, 59), time(7, 30))
+    fail.notifier = lambda notice: False
+    fail.backup(tpe("2026-11-15 08:00"))  # 寄不出去：不寫 backup_week
+    assert (service.state / "backup_week").read_text() == "2026-W45"
+
+
 def selftest() -> None:
+    _selftest_heartbeat()
     _selftest_clock()
     _selftest_due()
     _selftest_check_due()
@@ -48,6 +94,8 @@ def selftest() -> None:
     with tempfile.TemporaryDirectory() as d, daily.fake_steps(Path(d)):
         _selftest_http(Path(d))
         _selftest_tick(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        _selftest_backup(Path(d))
     _selftest_sigterm()
     print("ok")
 
@@ -287,6 +335,8 @@ def _selftest_tick(tmp: Path) -> None:
     os.environ["FAKE_FAIL"] = ""
     assert daily.read_record()["trigger"] == "retry" and "已經自動重跑過一次" in service.notices[-1]["text"]  # type: ignore[attr-defined]
     assert len(service.notices) == 3  # type: ignore[attr-defined]
+    # heartbeat：成功一次一個 True；寄失敗通知時（最終失敗）一個 False；之後還會重跑的不送
+    assert service.beats == [True, False, False, True, False], service.beats  # type: ignore[attr-defined]
 
 
 # 真的程序收 SIGTERM：子程序被終止、紀錄寫好、期限內離開

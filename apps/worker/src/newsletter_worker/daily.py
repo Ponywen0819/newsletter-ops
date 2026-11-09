@@ -104,6 +104,7 @@ def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", st
                    "finished_at": None, "exit_code": None, "step": None}
             atomic.write_text(RECORD, json.dumps(rec))
             code, failed, t0 = 1, [], time.monotonic()  # _run 丟例外時記成失敗
+            os.environ[metrics.RUN_ID_ENV] = f"{datetime.now(TZ):%Y%m%dT%H%M%S}-{trigger}"  # 子程序繼承；有鎖，同時只有一條
             try:
                 code = _run(collect_args, log, stop, failed, start)
                 return code
@@ -112,6 +113,7 @@ def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", st
                 atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code, "step": step_}))
                 metrics.record("pipeline", seconds=round(time.monotonic() - t0, 1), trigger=trigger, start=start,
                                exit_code=code, step=step_)
+                os.environ.pop(metrics.RUN_ID_ENV, None)
     except lock.LockBusy:
         say(log, "已有另一條 pipeline 在跑（state/pipeline.lock 被占用），這次不執行")
         return EXIT_BUSY

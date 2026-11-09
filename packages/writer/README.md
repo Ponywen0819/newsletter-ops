@@ -12,14 +12,16 @@ src/newsletter_writer/
 
 ```bash
 uv run --project packages/writer newsletter-write                  # 依 skill 寫報告並驗收，約數分鐘
-uv run --project packages/writer newsletter-write --max-turns 80   # 預設 60 回合，超過視為失敗
+uv run --project packages/writer newsletter-write --max-turns 50   # 預設 30 回合（實測 8～11），超過視為失敗
 ```
 
 與在對話裡打 `/news-digest` 用**同一份** skill、結果一致；對話裡 curated JSON 不存在時 skill 會先跑 `newsletter-collect`，
 這裡（無人值守）不跑，直接失敗——蒐集是 worker 前一步的事。
 
-- **工具**：只開 Skill、Bash、Read、Write、Edit，沒有 WebSearch、WebFetch。Bash 仍在（skill 要跑 `newsletter-report-check`），
-  所以技術上還能用 curl 連網，靠 skill 的規則禁止；要徹底擋得另外做沙箱。
+- **工具**：只開 Skill、Read、Write、Edit 與程式內的 `report_check`（取代 `newsletter-report-check`），沒有 WebSearch、WebFetch、Bash。
+  curated JSON 含網頁原文，可能藏著給 agent 的指令，所以權限照最壞情況設：寫入只限 `reports/`（`Edit(./reports/**)`，Edit 規則涵蓋 Write），
+  讀不到 `state/`（OAuth token 在那裡）與 `.env`；cwd 以外本來就讀不到。沒有 Bash 就沒有連網或讀環境變數的管道。
+  容器裡 `data/`、`reports/`、`state/` 是連到 volume 的 symlink（在 cwd 外），所以每條規則同時給相對路徑與解析後的絕對路徑（`permissions()`）。
 - **認證**：只用儲存的 OAuth token，政策見 [llm/README.md](../llm/README.md)「認證」。
 - **用量**：寫成 `stage: claude`、`runner: sdk` 的 metrics 紀錄，見 llm/README.md「用量與成本」。
 

@@ -126,13 +126,17 @@
     "world": 5,
     "science": 4
   },
+  "feedback_ranking": {
+    "strength": 0.2,
+    "prior": 5
+  },
   "search": {
     "always": [
       "world"
     ],
     "per_gap": 2,
     "lookback_hours": 48,
-    "max_turns": 20
+    "max_turns": 10
   },
   "arxiv_venues": {
     "conference": [

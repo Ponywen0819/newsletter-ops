@@ -23,7 +23,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
   萬一 Tunnel 誤指到它，Cloudflare 帶的 `Cf-*` 標頭與公網 `Host` 仍會被拒（`/auth` 照樣 404），但那只是第二道防線。
 - 機密放 `.env`（Gmail 帳密、`TUNNEL_TOKEN`）：`web` 容器拿不到這些，`worker` 拿不到 `TUNNEL_TOKEN`。Claude 的 OAuth token 另外存在 volume 的 `state/oauth_token.json`（權限 600），`web` 負責驗證並儲存、`worker` 讀取。
 
-`docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是自動部署（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
+`docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是自動部署、`push-images.sh` 是 Actions 不能跑時手動推映像（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
 
 用 Podman 代替 Docker 也行（Debian 13 實測）：`apt install podman-docker docker-compose catatonit nftables aardvark-dns`、`systemctl enable --now podman.socket podman-restart.service`，
 之後照常用 `docker compose`。`catatonit` 給 `init: true` 用，`nftables`、`aardvark-dns` 給 netavark 建網路與容器內 DNS 用。
@@ -48,6 +48,9 @@ Zero Trust 後台（介面名稱依版本略有不同）：
 2. 該 Tunnel 的 Public Hostname：填你的網域 `news.example.com`，Service 類型選 `HTTP`、URL 填 `web:8787`（compose 服務名稱）。DNS 紀錄會自動建立。
 3. Access → Applications → Add an application → Self-hosted：Application domain 填同一個 `news.example.com`；
    Policy 一條就好：Action = Allow，Include = Emails，只填你自己的 email。不要留 Everyone 之類的其他 policy。
+4. （建議，縱深防禦）同一個 Application 的 Overview 有 **Application Audience (AUD) Tag**；team 名稱是登入頁網址 `https://<team>.cloudflareaccess.com` 的 `<team>`。
+   寫進 `.env` 的 `NEWSLETTER_ACCESS_AUD`、`NEWSLETTER_ACCESS_TEAM`，web 就會驗每個經 Tunnel 進來的請求帶的 Access JWT，
+   沒有或無效回 403；之後 Access 政策就算被誤刪或改錯，也不會整站公開。本機的請求（healthcheck、`/auth`）不驗。
 
 **3. 啟動**
 
@@ -86,6 +89,9 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、用掉訂閱額度）。
 Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理頁面重新登入即可。
 
+**外部監控（建議）**：失敗通知是 worker 自己寄的，整台掛掉時不會有信。到 [healthchecks.io](https://healthchecks.io) 開一個 check
+（週期 1 天、寬限 1～2 小時），把 ping 網址寫進 `.env` 的 `NEWSLETTER_HEARTBEAT_URL`，`docker compose up -d` 生效。說明見 [worker/README.md](../apps/worker/README.md)「heartbeat」。
+
 **5. 日常操作**
 
 ```bash
@@ -103,13 +109,15 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
   手動跑的也算「今天跑過」，所以 08:00 前手動跑完，08:00 就不會再寄一次。`docker stop` 會等執行中的步驟收尾（最多 2 分鐘）。
 - 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT`）worker 驗一次 Claude 認證（一次極小的呼叫），結果寫 `state/auth_health.json`，網頁的授權橫幅讀它。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
+- 三個容器都以唯讀根目錄、`cap_drop: [ALL]`、`no-new-privileges` 執行；web／worker 只有 volume、`/tmp`、`/home/app`（tmpfs，claude CLI 的設定與 session 紀錄，重啟就清掉）可寫。要在容器裡臨時寫檔請寫 `/tmp`。
+- `cloudflared` 映像固定版本（compose 裡的 tag），timer 不會換它；要升級就改 tag、發行，看 `docker compose logs cloudflared` 有沒有 `Registered tunnel connection`。
 
 **6. 自動部署（GHCR）**
 
 `main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建兩個映像推到
 `ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
 發行時在 `main` 打的 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`）也會建一次，映像 tag 是同名的 `v1.2.0` 與 `sha-<commit>`。
-host 上的 timer 每 10 分鐘拉一次，有新版才重建容器。
+host 上的 timer 每 10 分鐘跑一次：先 `git pull --ff-only`（compose 檔跟著 repo），再拉映像，有新版才重建容器。repo 要停在 `main`。
 
 ```bash
 # package 是 private 時才需要；PAT 只要 read:packages
@@ -125,7 +133,8 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 - 每日流程正在跑時這輪會跳過。
 - 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
 - **退版**：`.env` 加 `NEWSLETTER_TAG=v1.1.0`（或 `sha-<commit>`），然後 `docker compose up -d`；固定 tag 時 timer 只會拉同一個 tag，等於停止自動更新。要回到自動跟新版就把那行刪掉。
-- timer 只更新映像；`docker-compose.yml` 改了要自己 `git pull`。
+- host 上的 repo 有本機修改或分岔時 `git pull` 會失敗，這輪整個不更新（看 journal）；本機設定放 `.env` 或 `docker-compose.override.yml`（未追蹤的檔不影響）。
+- podman 的 `docker compose ps` 狀態欄不會顯示 healthy，要看健康狀態用 `docker inspect newsletter-ops-worker-1 --format '{{.State.Health.Status}}'`。
 - **從單一映像換過來時**（舊的 `ghcr.io/ponywen0819/newsletter-ops`）：先 `git pull` 拿到新的 compose，再 `docker compose up -d`；
   確認兩個容器都 healthy 後，`docker image rm ghcr.io/ponywen0819/newsletter-ops:latest` 刪掉舊映像（不會自己刪）。
 
@@ -133,17 +142,16 @@ Actions 不能跑時（例如額度用完）可以在自己的電腦建好推上
 
 ```bash
 echo <PAT> | docker login ghcr.io -u Ponywen0819 --password-stdin
-git switch --detach origin/main
-for t in web worker; do docker buildx build --platform linux/arm64 --target "$t" --push \
-  -t "ghcr.io/ponywen0819/newsletter-ops-$t:latest" -t "ghcr.io/ponywen0819/newsletter-ops-$t:sha-$(git rev-parse HEAD)" . || break; done
+deploy/push-images.sh          # origin/main → :latest 與 :sha-<commit>
+deploy/push-images.sh v1.2.0   # 版本 tag → :v1.2.0 與 :sha-<commit>
 ```
 
-建版本號的映像時改成 `git switch --detach v1.2.0`，`:latest` 換成 `:v1.2.0`。
+一律從 `git archive` 的乾淨副本建，工作目錄有沒有修改都不影響。
 
-**7. 資料保存：不保存**
+**7. 資料保存：只備份回饋**
 
 生成物都在 volume `newsletter-data`（容器內 `/var/lib/newsletter`），換容器、換映像、`docker compose down` 都還在；
-**`docker compose down -v` 或 `docker volume rm` 才會刪掉**。不備份，決定見[根目錄 README](../README.md)「資料保存」。
+**`docker compose down -v` 或 `docker volume rm` 才會刪掉**。只有 `state/feedback.jsonl` 每週日寄一份到 `NEWSLETTER_MAIL_TO`，決定見[根目錄 README](../README.md)「資料保存」。
 
 ## 不用 Docker：systemd + cloudflared
 

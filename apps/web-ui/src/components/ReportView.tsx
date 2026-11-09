@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { groupReport, type Unit } from '../reportUnits'
 import type { Adjacent, Block, ListItem, Mark, Marks, Report } from '../types'
 import { isWide, useSectionNav } from '../useSectionNav'
 import { FeedbackButtons } from './FeedbackButtons'
-import { Inline } from './Inline'
+import { EXTERNAL, Inline } from './Inline'
 import { ReaderShell } from './ReaderShell'
 
 type OnMark = (uid: string, mark: Mark) => void
@@ -73,7 +73,9 @@ function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Repor
           <ol className="sources">
             {sources.map((source) => (
               <li key={source.url}>
-                <a href={source.url}>{source.title}</a>
+                <a href={source.url} {...EXTERNAL}>
+                  {source.title}
+                </a>
               </li>
             ))}
           </ol>
@@ -117,7 +119,9 @@ function AdjacentNav({ prev, next }: Adjacent) {
   )
 }
 
-export function ReportView({ report, marks, onMark, adjacent = {} }: { report: Report; marks: Marks; onMark: OnMark; adjacent?: Adjacent }) {
+type ViewProps = { report: Report; marks: Marks; adjacent?: Adjacent; banner?: ReactNode }
+
+export function ReportView({ report, marks, onMark, adjacent = {}, banner }: ViewProps & { onMark: OnMark }) {
   const grouped = useMemo(() => groupReport(report), [report])
   const ids = useMemo(() => grouped.units.map((u) => u.id), [grouped])
   const articleRef = useRef<HTMLElement>(null)
@@ -173,6 +177,7 @@ export function ReportView({ report, marks, onMark, adjacent = {} }: { report: R
           </>
         }
       >
+        {banner}
         {grouped.callout && <BlockView block={grouped.callout} votes={{ marks, onMark }} />}
         {grouped.groups.map((group, gi) => (
           <div key={gi} className="group">
@@ -194,8 +199,8 @@ export function ReportView({ report, marks, onMark, adjacent = {} }: { report: R
 }
 
 /** 晨報加上標記狀態，以伺服器回傳的結果更新。 */
-export function ReportPanel({ report, marks: initial, adjacent }: { report: Report; marks: Marks; adjacent?: Adjacent }) {
+export function ReportPanel({ marks: initial, ...rest }: ViewProps) {
   const [marks, setMarks] = useState(initial)
   const onMark: OnMark = (uid, mark) => setMarks((current) => ({ ...current, [uid]: mark }))
-  return <ReportView report={report} marks={marks} onMark={onMark} adjacent={adjacent} />
+  return <ReportView {...rest} marks={marks} onMark={onMark} />
 }

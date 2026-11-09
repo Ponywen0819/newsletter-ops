@@ -22,6 +22,7 @@ from newsletter_shared import ROOT, tz
 
 METRICS_DIR = ROOT / "logs" / "metrics"
 TZ = tz()
+RUN_ID_ENV = "NEWSLETTER_RUN_ID"  # worker 每次執行設一個，各步驟的紀錄才分得開
 TRANSCRIPTS = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ROOT))
 
 
@@ -42,6 +43,8 @@ def record(stage: str, **fields) -> None:
     now = datetime.now(TZ)
     row = {"ts": now.isoformat(timespec="seconds"), "stage": stage,
            "label": os.environ.get("NEWSLETTER_RUN_LABEL", "prod"), **fields}
+    if run_id := os.environ.get(RUN_ID_ENV):
+        row["run_id"] = run_id
     METRICS_DIR.mkdir(parents=True, exist_ok=True)
     with (METRICS_DIR / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -151,15 +154,23 @@ def cmd_claude(argv: list[str]) -> int:
 
 
 def split_runs(rows: list[dict]) -> list[dict[str, dict]]:
-    """依時間順序切成多次執行：每筆 fetch 開啟新的一次，之後的階段歸到這一次。
-    ponytail: 不傳執行編號；只重跑 render 或 claude 時會歸到前一次 fetch。要精確再改成 run_id。"""
+    """依時間順序切成多次執行。有 run_id（worker 跑的）就依它分；
+    舊紀錄或手動跑的沒有，每筆 fetch 開啟新的一次，之後的階段歸到這一次。"""
     runs: list[dict[str, dict]] = []
+    by_id: dict[str, dict[str, dict]] = {}
+    current: dict[str, dict] | None = None
     for row in rows:
         if row["stage"] == "fetch_source":
             continue  # 單一來源的明細，不進表格
-        if row["stage"] == "fetch" or not runs or row["stage"] in runs[-1]:
-            runs.append({})
-        runs[-1][row["stage"]] = row
+        if rid := row.get("run_id"):
+            if rid not in by_id:
+                runs.append(by_id.setdefault(rid, {}))
+            by_id[rid][row["stage"]] = row
+            continue
+        if row["stage"] == "fetch" or current is None or row["stage"] in current:
+            current = {}
+            runs.append(current)
+        current[row["stage"]] = row
     return runs
 
 
@@ -169,7 +180,7 @@ def cmd_summary(argv: list[str]) -> int:
     today = datetime.now(TZ).date()
     stages = ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
     header = (f"{'date':10} {'time':5} {'label':5} {'via':4} " + " ".join(f"{s[:6]:>6}" for s in stages) +
-              f" {'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6} {'miss':>4} {'nm':>3} {'result':8}  top tools")
+              f" {'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6} {'s+':>3} {'miss':>4} {'nm':>3} {'result':8}  top tools")
     print(header)
     print("-" * len(header))
     for n in range(days - 1, -1, -1):
@@ -187,7 +198,7 @@ def cmd_summary(argv: list[str]) -> int:
 
 def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
     first = min(run.values(), key=lambda r: r["ts"])
-    c, cov, p = run.get("claude", {}), run.get("coverage", {}), run.get("pipeline")
+    c, cov, p, sy = run.get("claude", {}), run.get("coverage", {}), run.get("pipeline"), run.get("search_yield", {})
     tok = c.get("tokens", {})
     top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
     via = c.get("runner", "chat") if c else "-"  # sdk＝newsletter-write；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
@@ -197,7 +208,7 @@ def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
     secs = " ".join(f"{run[s]['seconds']:>6.1f}" if "seconds" in run.get(s, {}) else f"{'-':>6}" for s in stages)
     return (f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} {secs} "
             f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
-            f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6} {cov.get('missing', '-'):>4} "
+            f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6} {sy.get('accepted', '-'):>3} {cov.get('missing', '-'):>4} "
             f"{cov.get('near_misses_used', '-'):>3} {result:8}  {top}")
 
 
@@ -235,15 +246,20 @@ def selftest() -> None:
     runs = split_runs([{"stage": st, "ts": str(i)} for i, st in enumerate(stages)])
     assert [sorted(r) for r in runs] == [["claude", "curate", "fetch", "render"],
                                          ["curate", "fetch", "render"], ["render"]], runs
+    # run_id：第二次從 write 補跑（沒有 fetch）也自成一列，不黏到前一次
+    tagged = [("a", "fetch"), ("a", "claude"), ("a", "pipeline"), ("b", "claude"), ("b", "render"), ("b", "pipeline")]
+    runs = split_runs([{"stage": st, "ts": str(i), "run_id": r} for i, (r, st) in enumerate(tagged)])
+    assert [sorted(r) for r in runs] == [["claude", "fetch", "pipeline"], ["claude", "pipeline", "render"]], runs
     assert u["seconds"] == 10.0 and u["non_tool_seconds"] == 2.0, u
     run = {"fetch": {"ts": "2026-01-01T08:00:00", "seconds": 20.0},
            "claude": {"ts": "x", "seconds": 300.0, "runner": "sdk", "total_cost_usd": 1.5, "api_turns": 9,
                       "tokens": {"input": 1, "cache_read": 2, "output": 3}},
            "search": {"ts": "x", "seconds": 60.0, "total_cost_usd": 0.25},
            "coverage": {"ts": "x", "missing": 2, "near_misses_used": 1},
+           "search_yield": {"ts": "x", "accepted": 0},
            "pipeline": {"ts": "x", "seconds": 400.0, "exit_code": 6, "step": "write"}}
     line = summary_line("2026-01-01", run, ("fetch", "search", "enrich", "pipeline"))
-    assert line.split()[4:13] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.75", "2"], line
+    assert line.split()[4:14] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.75", "0", "2"], line
     assert "write:6" in line, line
     print("ok")
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -69,6 +70,8 @@ def selftest() -> None:
             _selftest_static(req, shell)
             _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
             _selftest_etag(req, uid_a)
+        _selftest_timeout(site)
+        _selftest_access(root)
 
         # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
         bare = root / "bare"
@@ -82,6 +85,64 @@ def selftest() -> None:
             assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
     print("ok")
+
+
+def _selftest_access(root: Path) -> None:
+    """設了 Access：經 tunnel 來的請求（帶 cf-* 標頭）要有效的 JWT，否則 403；本機不驗。"""
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from .access import Access, from_env
+
+    key, other = (rsa.generate_private_key(public_exponent=65537, key_size=2048) for _ in range(2))
+    access = Access("https://team.cloudflareaccess.com/", "aud-1", key_for=lambda token: key.public_key())
+    assert access.issuer == "https://team.cloudflareaccess.com" and Access("team", "a", key_for=id).issuer == access.issuer
+
+    def token(signer=key, **over) -> str:
+        claims = {"aud": "aud-1", "iss": access.issuer, "exp": int(time.time()) + 60, "email": "me@example.com", **over}
+        return jwt.encode(claims, signer, algorithm="RS256")
+
+    tunnel = {"Cf-Ray": "abc", "Host": "news.example.com"}
+    with served(Site(root, today=lambda: "2026-09-28", access=access)) as req:
+        assert req("GET", "/api/session")[0] == 200  # 本機（healthcheck）不驗
+        for bad in (None, "x.y.z", token(aud="other"), token(iss="https://evil.cloudflareaccess.com"),
+                    token(exp=int(time.time()) - 10), token(signer=other)):
+            h = {**tunnel, **({"Cf-Access-Jwt-Assertion": bad} if bad else {})}
+            for method, path in (("GET", "/api/today"), ("GET", "/"), ("GET", "/assets/app-abc123.js"), ("HEAD", "/")):
+                assert req(method, path, h)[0] == 403, (bad, method, path)
+            assert req("POST", "/api/feedback", {**h, "Content-Type": "application/json"}, {"uid": "x", "mark": "+"})[0] == 403
+        good = {**tunnel, "Cf-Access-Jwt-Assertion": token()}
+        assert req("GET", "/api/today", good)[0] == 200 and req("GET", "/", good)[0] == 200
+    with served(Site(root, today=lambda: "2026-09-28")) as req:
+        assert req("GET", "/api/today", tunnel)[0] == 200  # 沒設就不驗
+    env = {"NEWSLETTER_ACCESS_TEAM": "team", "NEWSLETTER_ACCESS_AUD": "aud-1"}
+    from unittest import mock
+    with mock.patch.dict(os.environ, env):
+        assert from_env() is not None and from_env().aud == "aud-1"
+    with mock.patch.dict(os.environ, {**env, "NEWSLETTER_ACCESS_AUD": ""}):
+        assert from_env() is None
+
+
+def _selftest_timeout(site: Site) -> None:
+    """只送一半的請求：逾時後伺服器關掉連線，不會一直佔著 thread。"""
+    import socket
+    import time
+    from unittest import mock
+
+    from .server import Handler, make_server
+    with mock.patch.object(Handler, "timeout", 0.5):
+        server = make_server(site, "127.0.0.1", 0, quiet=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with socket.create_connection(server.server_address, timeout=5) as sock:
+                sock.sendall(b"GET /api/session HTTP/1.1\r\nHost: x\r\n")  # 標頭沒送完
+                t0 = time.monotonic()
+                assert sock.recv(1024) == b"" and time.monotonic() - t0 < 4  # 被關掉，不是等到 client 自己逾時
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 def _selftest_etag(req, uid_a: str) -> None:
@@ -99,6 +160,8 @@ def _selftest_etag(req, uid_a: str) -> None:
         assert head[0] == got[0] and head[2] == "" and head[1]["content-length"] == got[1]["content-length"], (p, head)
     assert req("GET", "/api/reports")[1].get("etag") and req("GET", "/api/today")[1].get("etag")
     assert "etag" not in req("GET", "/api/session")[1]  # 只有同步的對象有
+    for p in ("/", "/api/session", "/api/nope", "/assets/app-abc123.js"):
+        assert req("GET", p)[1]["referrer-policy"] == "no-referrer", p
     req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": "+"})
     status, headers, _ = req("GET", path, {"If-None-Match": etag})
     assert status == 200 and headers["etag"] != etag  # 標記變了
@@ -129,11 +192,11 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     raw = req("GET", "/api/reports/2026-09-28")[2]
     assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw
 
-    # 當日：有就給整份，沒有就給最新一份的日期
+    # 當日：有就給整份，沒有就給最新一份的日期與整份（fallback）
     assert get("/api/today") == (200, {**data, "latest": "2026-09-28", "run": None})
     site.reports.today = lambda: "2026-10-05"
     assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28",
-                                       "run": None})
+                                       "fallback": data, "run": None})
 
     # 當天的執行紀錄（worker 寫的 last_run.json）：只給當天的，壞掉當沒有
     record = root / "state" / "last_run.json"

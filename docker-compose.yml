@@ -7,6 +7,11 @@ x-app: &app
   init: true
   volumes:
     - newsletter-data:/var/lib/newsletter
+  # 只有 volume、/tmp 與家目錄（claude CLI 的設定與 session 紀錄）可寫；不需要任何 capability
+  read_only: true
+  tmpfs: [/tmp, "/home/app:mode=1777"]  # 不給 mode 時 compose 建出來是 root 的 755，app 寫不進去（podman 不收 uid=）
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
 
 services:
   web:
@@ -17,6 +22,10 @@ services:
     command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787", "--admin-port", "8788"]
     ports:
       - "127.0.0.1:8788:8788"
+    # 有設就驗 Cloudflare Access 的 JWT：Access 政策被誤刪時不會整站公開（見 deploy/README.md 步驟 2）
+    environment:
+      NEWSLETTER_ACCESS_TEAM: ${NEWSLETTER_ACCESS_TEAM:-}
+      NEWSLETTER_ACCESS_AUD: ${NEWSLETTER_ACCESS_AUD:-}
     # 用 CMD-SHELL：podman 會把 CMD 陣列裡含空格的參數拆開
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)\""]
@@ -44,11 +53,16 @@ services:
       NEWSLETTER_RUN_AT: ${NEWSLETTER_RUN_AT:-08:00}
       NEWSLETTER_AUTH_CHECK_AT: ${NEWSLETTER_AUTH_CHECK_AT:-07:30}
       NEWSLETTER_BASE_URL: ${NEWSLETTER_BASE_URL:-}
+      NEWSLETTER_HEARTBEAT_URL: ${NEWSLETTER_HEARTBEAT_URL:-}
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # 固定版本：上游改行為（例如 QUIC）會讓 tunnel 斷線；要升級時改這裡
+    image: cloudflare/cloudflared:2026.10.7
     # QUIC 在家用網路上會定期斷線，改用 http2
     command: tunnel --no-autoupdate --protocol http2 run
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN（Cloudflare Zero Trust 建立 Tunnel 時取得）}
     depends_on:
