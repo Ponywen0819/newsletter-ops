@@ -126,6 +126,10 @@
     "world": 5,
     "science": 4
   },
+  "feedback_ranking": {
+    "strength": 0.2,
+    "prior": 5
+  },
   "search": {
     "always": [
       "world"

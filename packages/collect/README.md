@@ -90,7 +90,7 @@ weight，錯誤訊息會指出是哪個檔的哪個來源，程式以 exit code 
 | 值 | 組成 | 用途 |
 | --- | --- | --- |
 | `relevance` | 來源保底分 ＋ 關鍵字命中 | **門檻**，低於 `min_relevance` 一律不收 |
-| `rank` | `relevance` × 來源 `weight` ＋ 新鮮度 | **只決定排序**，不影響是否收錄 |
+| `rank` | (`relevance` × 來源 `weight` ＋ 新鮮度) × 回饋倍率 | **只決定排序**，不影響是否收錄 |
 
 關鍵字權重：`boost_high` +2.0、`boost_mid` +0.8、`boost_low` +0.4、`penalize` −4.0。
 新鮮度為指數衰減，半衰期 12 小時，最高 +1.5。
@@ -149,6 +149,14 @@ writer 依 `interests.md` 決定要不要寫進報告；寫了一樣帶 mark，�
 
 國際新聞沒有關鍵字可評分，排序原本只剩來源權重與新鮮度。編輯排過的 feed 可以設 `order_boost`：前 10 則依序加 rank（第一則加滿，往後線性遞減），只影響排序、不影響是否過門檻。
 BBC World 設 1.0（它的頭條在 feed 最前面）。
+
+### 回饋倍率
+
+網頁與報告上的 👍／👎（`state/feedback.jsonl`，每則以最後一次為準）依來源換成 rank 倍率，寫進項目的 `feedback_boost`：
+p＝(正＋prior)÷(總數＋2·prior)，倍率＝1＋2·strength·(p−0.5)。設定在 `config.json` 的 `feedback_ranking`（預設 strength 0.2、prior 5）。
+- 範圍 1±strength，只動排序、不影響是否過門檻，也不會讓一個來源被完全擋掉。
+- prior 讓少量回饋動得很少：10 個 + 是 ×1.1，200 個 - 是 ×0.81。
+- `strength` 設 0 關閉。各來源的則數可用 `newsletter-feedback --stats` 或網頁的「回饋統計」看。
 
 ### 來源保底分
 
