@@ -25,7 +25,8 @@ function runNote(run: RunRecord | null | undefined): { title: string; text: stri
 // 晨報以外的狀態沒有左欄內容，但一樣放在 ReaderShell：外框從載入中到載入完成都不變
 export function TodayPage() {
   const { data, error } = useFetch(api.today, [useRecovered()])
-  useDocumentTitle(data?.report ? `每日晨間簡報 ${data.date}` : '每日晨間簡報')
+  const shown = data?.report ? data.date : data?.fallback?.date
+  useDocumentTitle(shown ? `每日晨間簡報 ${shown}` : '每日晨間簡報')
 
   if (error)
     return (
@@ -41,6 +42,22 @@ export function TodayPage() {
     )
   if (!data.report) {
     const note = runNote(data.run)
+    const fb = data.fallback
+    if (fb)
+      return (
+        <ReportPanel
+          key={fb.date}
+          report={fb.report}
+          marks={fb.marks}
+          adjacent={{ prev: fb.prev }}
+          banner={
+            <p className="report-banner" role="status">
+              <strong>{`${data.date} 的${note?.title ?? '晨報還沒產出'}`}</strong>
+              {note ? `：${note.text}` : '。'}下面是最新一份（{fb.date}）。
+            </p>
+          }
+        />
+      )
     if (note)
       return (
         <ReaderShell>

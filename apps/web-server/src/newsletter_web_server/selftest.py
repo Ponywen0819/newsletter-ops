@@ -153,11 +153,11 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     raw = req("GET", "/api/reports/2026-09-28")[2]
     assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw
 
-    # 當日：有就給整份，沒有就給最新一份的日期
+    # 當日：有就給整份，沒有就給最新一份的日期與整份（fallback）
     assert get("/api/today") == (200, {**data, "latest": "2026-09-28", "run": None})
     site.reports.today = lambda: "2026-10-05"
     assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28",
-                                       "run": None})
+                                       "fallback": data, "run": None})
 
     # 當天的執行紀錄（worker 寫的 last_run.json）：只給當天的，壞掉當沒有
     record = root / "state" / "last_run.json"

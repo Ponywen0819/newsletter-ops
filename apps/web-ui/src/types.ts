@@ -66,6 +66,8 @@ export interface TodayPayload extends Adjacent {
   latest: string | null
   /** 當天的執行紀錄（worker 的 state/last_run.json）；今天還沒跑是 null。舊的副本沒有這欄 */
   run?: RunRecord | null
+  /** 當日晨報還沒產出、但有舊的時，最新一份的整份資料（同 /api/reports/<date>）。舊的副本沒有這欄 */
+  fallback?: ReportPayload
 }
 
 export interface RunRecord {
