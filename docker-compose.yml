@@ -47,7 +47,8 @@ services:
       NEWSLETTER_HEARTBEAT_URL: ${NEWSLETTER_HEARTBEAT_URL:-}
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # 固定版本：上游改行為（例如 QUIC）會讓 tunnel 斷線；要升級時改這裡
+    image: cloudflare/cloudflared:2026.10.7
     # QUIC 在家用網路上會定期斷線，改用 http2
     command: tunnel --no-autoupdate --protocol http2 run
     environment:
