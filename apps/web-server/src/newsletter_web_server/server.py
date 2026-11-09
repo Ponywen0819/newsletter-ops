@@ -120,6 +120,7 @@ class Site:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "newsletter-web"
+    timeout = 30  # 秒；送一半就不動的連線不能一直佔著 thread
     head_only = False  # HEAD：同 GET，但不送 body（監控服務常用 HEAD）
 
     @property
@@ -141,6 +142,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")  # 點報告裡的外部連結不帶出報告網址
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
