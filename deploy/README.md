@@ -25,6 +25,9 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
 
 `docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是自動部署（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、cloudflared 設定、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
 
+用 Podman 代替 Docker 也行（Debian 13 實測）：`apt install podman-docker docker-compose catatonit nftables aardvark-dns`、`systemctl enable --now podman.socket podman-restart.service`，
+之後照常用 `docker compose`。`catatonit` 給 `init: true` 用，`nftables`、`aardvark-dns` 給 netavark 建網路與容器內 DNS 用。
+
 **1. 取得程式與機密**
 
 ```bash
@@ -88,21 +91,24 @@ Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理�
 ```bash
 docker compose logs -f worker                  # 排程輸出：下次執行時間、開始、結束；失敗時附上 logs/ 的最後 20 行
 docker compose exec worker python -c "import urllib.request as u; print(u.urlopen('http://127.0.0.1:8790/status').read().decode())"   # 是否在跑、下次幾點、上次結果
-docker compose exec worker python -c "import urllib.request as u; print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())"   # 立刻跑一次（記成 manual；執行中回 409）
+docker compose exec worker python -c "import urllib.request as u; print(u.urlopen(u.Request('http://127.0.0.1:8790/run', method='POST')).read().decode())"   # 立刻跑一次（記成 manual；執行中回 409）。網址加 ?from=write／render 就從那一步開始，例如寄信設定修好後用 ?from=render，不必重寫報告
 docker compose exec web ls reports                # volume 裡的報告
+docker compose exec worker newsletter-metrics summary 14   # 最近 14 天每次執行的耗時、token、成本、結果（config 的 debug 要開）
 docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test worker newsletter-write   # 只產報告、不寄信（要先有當日 curated JSON）
 git pull && docker compose up -d --build          # 手動更新（interests.md、config/、程式都在映像裡，要重 build）
 ```
 
 - 每天 08:00（`config/config.json` 的時區，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器啟動時，今天過了時間卻還沒跑過（或上次跑到一半被停掉）就補跑一次；
-  只補同一天，跨日就算了。今天跑過但失敗了**不會**自動重跑（避免 token 失效時每次重啟都燒一次），修好後用上面的 `/run` 補。
+  只補同一天，跨日就算了。今天跑過但失敗了，30 分鐘後從失敗的那一步自動重跑**一次**（網路、來源暫時掛掉；寄信失敗不會重寫報告）；認證失效或額度用完不重跑（避免每次都燒一次），修好後用上面的 `/run` 補。
   手動跑的也算「今天跑過」，所以 08:00 前手動跑完，08:00 就不會再寄一次。`docker stop` 會等執行中的步驟收尾（最多 2 分鐘）。
+- 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT`）worker 驗一次 Claude 認證（一次極小的呼叫），結果寫 `state/auth_health.json`，網頁的授權橫幅讀它。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
 
 **6. 自動部署（GHCR）**
 
 `main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建兩個映像推到
-`ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 都是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
+`ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
+發行時在 `main` 打的 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`）也會建一次，映像 tag 是同名的 `v1.2.0` 與 `sha-<commit>`。
 host 上的 timer 每 10 分鐘拉一次，有新版才重建容器。
 
 ```bash
@@ -118,7 +124,7 @@ sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使�
 
 - 每日流程正在跑時這輪會跳過。
 - 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
-- **退版**：`.env` 加 `NEWSLETTER_TAG=sha-<commit>`，然後 `docker compose up -d`；要回到自動跟新版就把那行刪掉。
+- **退版**：`.env` 加 `NEWSLETTER_TAG=v1.1.0`（或 `sha-<commit>`），然後 `docker compose up -d`；固定 tag 時 timer 只會拉同一個 tag，等於停止自動更新。要回到自動跟新版就把那行刪掉。
 - timer 只更新映像；`docker-compose.yml` 改了要自己 `git pull`。
 - **從單一映像換過來時**（舊的 `ghcr.io/ponywen0819/newsletter-ops`）：先 `git pull` 拿到新的 compose，再 `docker compose up -d`；
   確認兩個容器都 healthy 後，`docker image rm ghcr.io/ponywen0819/newsletter-ops:latest` 刪掉舊映像（不會自己刪）。
@@ -131,6 +137,8 @@ git switch --detach origin/main
 for t in web worker; do docker buildx build --platform linux/arm64 --target "$t" --push \
   -t "ghcr.io/ponywen0819/newsletter-ops-$t:latest" -t "ghcr.io/ponywen0819/newsletter-ops-$t:sha-$(git rev-parse HEAD)" . || break; done
 ```
+
+建版本號的映像時改成 `git switch --detach v1.2.0`，`:latest` 換成 `:v1.2.0`。
 
 **7. 資料保存：不保存**
 

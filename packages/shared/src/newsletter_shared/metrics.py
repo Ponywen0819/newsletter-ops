@@ -17,12 +17,11 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT
+from newsletter_shared import ROOT, tz
 
 METRICS_DIR = ROOT / "logs" / "metrics"
-TZ = ZoneInfo("Asia/Taipei")
+TZ = tz()
 TRANSCRIPTS = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ROOT))
 
 
@@ -168,8 +167,9 @@ def cmd_summary(argv: list[str]) -> int:
     show_all = "--all" in argv
     days = int(next((a for a in argv if a.isdigit()), 7))
     today = datetime.now(TZ).date()
-    header = (f"{'date':10} {'time':5} {'label':5} {'via':4} {'fetch':>7} {'curate':>7} {'claude':>7} {'render':>7} "
-              f"{'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6}  top tools")
+    stages = ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
+    header = (f"{'date':10} {'time':5} {'label':5} {'via':4} " + " ".join(f"{s[:6]:>6}" for s in stages) +
+              f" {'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6} {'miss':>4} {'nm':>3} {'result':8}  top tools")
     print(header)
     print("-" * len(header))
     for n in range(days - 1, -1, -1):
@@ -180,21 +180,25 @@ def cmd_summary(argv: list[str]) -> int:
         rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
         if not show_all:
             rows = [r for r in rows if r.get("label", "prod") == "prod"]  # 舊紀錄沒有 label，當 prod
-        def sec(run: dict, s: str) -> str:
-            return f"{run[s]['seconds']:.1f}" if s in run else "-"
-
         for run in split_runs(rows):
-            first = min(run.values(), key=lambda r: r["ts"])
-            c = run.get("claude", {})
-            tok = c.get("tokens", {})
-            top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
-            via = c.get("runner", "chat") if c else "-"  # sdk＝newsletter-write；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
-            usd = f"{c['total_cost_usd']:.2f}" if c.get("total_cost_usd") is not None else "-"  # 只有 sdk 路線拿得到
-            print(f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} "
-                  f"{sec(run, 'fetch'):>7} {sec(run, 'curate'):>7} {sec(run, 'claude'):>7} {sec(run, 'render'):>7} "
-                  f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
-                  f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6}  {top}")
+            print(summary_line(day, run, stages))
     return 0
+
+
+def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
+    first = min(run.values(), key=lambda r: r["ts"])
+    c, cov, p = run.get("claude", {}), run.get("coverage", {}), run.get("pipeline")
+    tok = c.get("tokens", {})
+    top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
+    via = c.get("runner", "chat") if c else "-"  # sdk＝newsletter-write；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
+    costs = [r["total_cost_usd"] for r in (c, run.get("search", {})) if r.get("total_cost_usd") is not None]
+    usd = f"{sum(costs):.2f}" if costs else "-"  # writer＋搜尋；只有 sdk 路線拿得到
+    result = "-" if p is None else "ok" if not p["exit_code"] else f"{p['step']}:{p['exit_code']}"
+    secs = " ".join(f"{run[s]['seconds']:>6.1f}" if "seconds" in run.get(s, {}) else f"{'-':>6}" for s in stages)
+    return (f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} {secs} "
+            f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
+            f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6} {cov.get('missing', '-'):>4} "
+            f"{cov.get('near_misses_used', '-'):>3} {result:8}  {top}")
 
 
 def selftest() -> None:
@@ -232,6 +236,15 @@ def selftest() -> None:
     assert [sorted(r) for r in runs] == [["claude", "curate", "fetch", "render"],
                                          ["curate", "fetch", "render"], ["render"]], runs
     assert u["seconds"] == 10.0 and u["non_tool_seconds"] == 2.0, u
+    run = {"fetch": {"ts": "2026-01-01T08:00:00", "seconds": 20.0},
+           "claude": {"ts": "x", "seconds": 300.0, "runner": "sdk", "total_cost_usd": 1.5, "api_turns": 9,
+                      "tokens": {"input": 1, "cache_read": 2, "output": 3}},
+           "search": {"ts": "x", "seconds": 60.0, "total_cost_usd": 0.25},
+           "coverage": {"ts": "x", "missing": 2, "near_misses_used": 1},
+           "pipeline": {"ts": "x", "seconds": 400.0, "exit_code": 6, "step": "write"}}
+    line = summary_line("2026-01-01", run, ("fetch", "search", "enrich", "pipeline"))
+    assert line.split()[4:13] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.75", "2"], line
+    assert "write:6" in line, line
     print("ok")
 
 

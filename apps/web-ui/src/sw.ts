@@ -5,9 +5,15 @@ import { addRoute, cleanupOutdatedCaches, createHandlerBoundToURL, precache } fr
 import { NavigationRoute, registerRoute } from 'workbox-routing'
 import { NetworkFirst } from 'workbox-strategies'
 import { API_CACHE } from './cacheName'
+import { PERIODIC_TAG, refresh } from './offlineCopy'
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: (string | { url: string; revision: string | null })[]
+}
+
+/** Periodic Background Sync 的事件（lib.webworker 還沒有這個型別） */
+interface PeriodicSyncEvent extends ExtendableEvent {
+  tag: string
 }
 
 precache(self.__WB_MANIFEST)
@@ -44,3 +50,9 @@ registerRoute(
     plugins: [new CacheableResponsePlugin({ statuses: [200] })],
   }),
 )
+
+// 沒開 App 時瀏覽器定期喚醒（頁面端 sync.ts 註冊；只有 Chromium 系已安裝的 PWA 會觸發）。和頁面同一套同步：
+// 離線、連不上、Access 逾時的轉址都在 refresh() 裡被擋下，不寫入任何東西，也不通知。
+self.addEventListener('periodicsync', ((event: PeriodicSyncEvent) => {
+  if (event.tag === PERIODIC_TAG) event.waitUntil(refresh().then(() => undefined, () => undefined))
+}) as EventListener)

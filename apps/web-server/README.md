@@ -3,11 +3,11 @@
 晨報網頁的後端（`newsletter-web`）：JSON API（`/api/*`）＋提供前端 [web-ui](../web-ui/README.md) 的建置結果 `apps/web-ui/dist`；有用／沒用寫進 `feedback.jsonl`；`/auth` 貼 OAuth token。標準庫，無登入。專案全貌見[根目錄 README](../../README.md)。
 
 頁面全由前端畫，兩邊的合約是 API（型別在 `apps/web-ui/src/types.ts`）與 `server.py` 的 `SPA_ROUTES`，改了要兩邊同步。
-依賴 [llm](../../packages/llm/README.md) 只為了驗證 OAuth token（以子程序呼叫 `newsletter-llm --auth-check`，貼上時與背景定時驗證；程式本身不 import llm），用 `uv run --project apps/web-server newsletter-web` 啟動就有 SDK。
+依賴 [llm](../../packages/llm/README.md) 只為了驗證 OAuth token（貼上 token 與按「測試連線」時以子程序呼叫 `newsletter-llm --auth-check`；程式本身不 import llm），用 `uv run --project apps/web-server newsletter-web` 啟動就有 SDK。
 
 ```
 src/newsletter_web_server/
-  web.py       入口：參數、啟動伺服器與定時驗證
+  web.py       入口：參數、啟動伺服器
   server.py    HTTP：路由、本機判斷、靜態檔；Site 把 reports 與 auth 組起來給 Handler 用
   reports.py   晨報與回饋的讀寫
   auth.py      OAuth token 的驗證、儲存、定時檢查
@@ -20,8 +20,7 @@ src/newsletter_web_server/
 ```bash
 (cd apps/web-ui && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
 uv run --project apps/web-server newsletter-web               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
-uv run --project apps/web-server newsletter-web --auth-check-interval 1800   # 背景驗證 Claude 認證的間隔（秒），預設 3600；0＝不驗證
-uv run --project apps/web-server newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制、定時驗證
+uv run --project apps/web-server newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制、驗證結果的讀寫
 ```
 
 `/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則主要新聞末尾有「有用／沒用」兩顆按鈕（上／下箭頭圖示），按下即 append 一行到
@@ -42,8 +41,9 @@ uv run --project apps/web-server newsletter-web --selftest    # API、靜態檔�
   cloudflared 也是從 `127.0.0.1` 連進來，所以光看來源位址不夠。遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>`。
   Docker 部署改用 `--admin-port` 另開的管理 port（來源只要求私有位址，其他檢查照舊），見 [deploy/README.md](../../deploy/README.md)。
   token 只存在這一頁存的檔，不讀 `CLAUDE_CODE_OAUTH_TOKEN`，政策見 [llm/README.md](../../packages/llm/README.md)「認證」。
-- **定時驗證**：啟動時與之後每 `--auth-check-interval` 秒（`NEWSLETTER_AUTH_CHECK_INTERVAL`，預設 3600、0＝關閉）用儲存的 token 跑一次 `--auth-check`，
-  每次都是真的呼叫、用掉極少額度，結果只放記憶體。`GET /api/auth-health` 的 `state`：
+- **驗證結果**：定時驗證在 worker（每天 07:30，見 [worker/README.md](../worker/README.md)），這裡不開定時器。
+  `/auth` 貼上 token（通過時）與「測試連線」的結果也寫進同一個 `state/auth_health.json`，刪除 token 時一起刪掉。
+  `GET /api/auth-health` 讀這個檔：檔案不存在是 `unknown`／`unchecked`（不顯示橫幅），超過 26 小時沒更新是 `unknown`／`stale`（worker 可能停了，不再說正常）。`state`：
   `ok`、`expiring`（依一年效期推算快到期）、`missing`（沒有 token）、`invalid`（要重新授權）、`unknown`（額度用完、逾時等，**不代表失效**）。
 
 ## API 與路由
@@ -54,14 +54,18 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | --- | --- | --- |
 | `GET /api/session` | `{local}` | 是否從本機來（決定要不要顯示「Claude 授權」） |
 | `GET /api/heartbeat` | `{ok}` | 連線偵測，不讀檔、不寫入（見 [ui/README.md](../web-ui/README.md)「PWA」） |
-| `GET /api/today` | `{date, latest, report, marks}` | 當日晨報；還沒產出時 `report` 是 null |
+| `GET /api/today` | `{date, latest, report, marks, run}`（有晨報時另有 `prev, next`） | 當日晨報；還沒產出時 `report` 是 null。`run` 是當天的 `state/last_run.json`（`trigger, started_at, finished_at, exit_code, step`），今天還沒跑是 null |
 | `GET /api/reports` | `{reports: [{date, headline}]}` | 歷史列表，新到舊 |
-| `GET /api/reports/<date>` | `{date, report, marks}` | `report` 是 `report_data.parse_report()` 的結構 |
+| `GET /api/feedback-stats` | `{total, groups: {source, topic, keyword: [{name, pos, neg}]}}` | `newsletter-feedback --stats` 的網頁版；每則只算最後一筆、取消的不算，則數多的在前 |
+| `GET /api/search?q=` | `{q, results: [{date, text}], truncated}` | 所有晨報裡含 `q` 的行（不分大小寫，去掉 Markdown 與 mark；空白分開的多個詞要都有），新到舊最多 50 筆；`q` 最多 100 字 |
+| `GET /api/reports/<date>` | `{date, report, marks, prev, next}` | `report` 是 `report_data.parse_report()` 的結構；`prev`／`next` 是前一份（更舊）／下一份（更新）的日期，沒有是 null |
 | `GET /api/feedback/<uid>` | `{uid, date, title, mark}` | email 確認頁用，只讀 |
 | `POST /api/feedback` | `{uid, mark}` | 有用／沒用 |
 | `GET /api/auth-health` | `{state, kind, checked_at}` | 認證健康狀態，所有人可讀 |
 | `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理，只限本機 |
 
+- `GET /api/today`、`/api/reports`、`/api/reports/<date>` 回 `ETag`（對最後的 JSON 取雜湊，所以標記變了也會變）；`If-None-Match` 相符時回 `304`、沒有 body。
+  比對時忽略 `W/`（Cloudflare 可能把強 ETag 改成弱的）。`Cache-Control` 照舊是 `no-store`：條件請求由前端的離線副本同步自己帶，不靠瀏覽器的 HTTP cache。
 - 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。
 - `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../../packages/notify/README.md)。
 
@@ -71,4 +75,4 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 uv run --project apps/web-server newsletter-web --selftest
 ```
 
-涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、`/auth` 的本機限制、定時驗證與 `/api/auth-health`，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](../web-ui/README.md)。
+涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、`/auth` 的本機限制、`auth_health.json` 的讀寫與 `/api/auth-health`，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](../web-ui/README.md)。

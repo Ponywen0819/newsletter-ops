@@ -1,9 +1,10 @@
 {
-  "debug": false,
+  "debug": true,
   "timezone": "Asia/Taipei",
   "lookback_hours": 24,
   "max_items_per_source": 40,
   "max_items_in_report": 40,
+  "raw_retention_days": 30,
   "request": {
     "timeout": 25,
     "user_agent": "newsletter-ops/1.0 (+personal research digest)",
@@ -70,7 +71,9 @@
       "literature mining"
     ],
     "boost_low": [
-      "vision",
+      "computer vision",
+      "vision-language",
+      "vision model",
       "gpu",
       "open source",
       "open-source",
@@ -110,6 +113,8 @@
     ]
   },
   "min_relevance": 0.8,
+  "same_story_topics": ["world"],
+  "max_per_source": 2,
   "default_quota": 5,
   "quota": {
     "ai-research": 8,

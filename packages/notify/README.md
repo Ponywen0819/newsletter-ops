@@ -5,7 +5,7 @@
 
 ```
 src/newsletter_notify/
-  render_email.py        email 層：報告結構 → inline-CSS HTML（reports/<date>.html）（newsletter-render）
+  render_email.py        email 層：報告結構 → inline-CSS HTML（reports/<date>.html）與純文字版（reports/<date>.txt）（newsletter-render）
   send_email.py          寄信層：Gmail SMTP 寄出 email HTML，不依賴 Claude 的 Gmail connector（newsletter-send）
 ```
 
@@ -23,7 +23,8 @@ uv run --project packages/notify newsletter-render | uv run --project packages/n
 ## 版型
 
 email 與網頁吃 shared 的 `report_data.py` 解出的同一份結構，由 `render_email.py` 排成 inline-CSS HTML；
-兩邊版型各自維護（網頁在 [apps/web-ui](../../apps/web-ui/README.md)）。哪些條目可以投票由 `report_data.py` 的 `votable` 決定，兩邊一致。
+兩邊版型各自維護（網頁在 [apps/web-ui](../../apps/web-ui/README.md)）。
+信件的 text/plain 部分是同內容的純文字版（`reports/<date>.txt`：連結只留標題、網址集中在最後的資料來源、沒有回饋連結），給只顯示純文字的信箱與通知預覽。哪些條目可以投票由 `report_data.py` 的 `votable` 決定，兩邊一致。
 
 ## email 裡的「有用／沒用」連結
 
@@ -35,7 +36,8 @@ email 的連結文字帶 emoji（「👍 有用／👎 沒用」；網頁上的�
 - **連結不會一點就寫入**：信箱的安全掃描會自動開連結，所以 GET 只顯示「確認標為 有用」的頁面（`apps/web-ui/src/pages/FeedbackPage.tsx`，
   資料來自 `GET /api/feedback/<uid>`，純讀取），按了確認才 `POST /api/feedback`。已經是同一個標記就只顯示「已記下」；
   標記不同則說明會覆蓋。
-- 沒設 `NEWSLETTER_BASE_URL`（本機測試）就不加按鈕；格式不對會在 stderr 警告並不加。
+- 有設 `NEWSLETTER_BASE_URL` 時，信尾（HTML 與純文字版）也放網頁版這一天的連結（`/reports/<date>`）。
+- 沒設 `NEWSLETTER_BASE_URL`（本機測試）就不加按鈕與連結；格式不對會在 stderr 警告並不加。
 - 網址要是 Tunnel + Access 保護的那個網域：點連結時 Access 會先要求登入，掃描器看到的只是登入頁。
 - Docker 部署在 `.env` 設；systemd 部署在 `~/.config/newsletter-ops/env` 設（見 [deploy/README.md](../deploy/README.md)）。
 

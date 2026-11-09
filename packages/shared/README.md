@@ -4,13 +4,14 @@
 
 ```
 src/newsletter_shared/
-  __init__.py            資料根目錄 ROOT：環境變數 NEWSLETTER_ROOT，沒設就是工作目錄；其他模組一律從這裡取
+  __init__.py            資料根目錄 ROOT（環境變數 NEWSLETTER_ROOT，沒設就是工作目錄）與報告日期 tz()／today()（config.json 的 timezone）；其他模組一律從這裡取
   report_data.py         報告 Markdown → 結構化資料：報告格式（SKILL.md 規定的子集）唯一的解析與驗證者，網頁與 email 共用
                          （newsletter-report-check 用它驗證 reports/<date>.md）
   lock.py                跨程序檔案鎖 locked(path, timeout)：多個服務讀寫同一個檔案時一律從這裡排隊
   feedback.py            回饋標記格式、從報告收集人工標記（newsletter-feedback）
   metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量（newsletter-metrics）
   auth_store.py          OAuth token 的儲存與來源解析，llm 與 web 共用
+  auth_health.py         最近一次認證驗證的結果（state/auth_health.json）與驗證子程序，worker 與 web 共用
 ```
 
 ## 檔案鎖（`lock.py`）
@@ -37,6 +38,7 @@ with lock.locked(path, timeout=0):    # 搶不到就丟 lock.LockBusy；給「�
   | --- | --- | --- |
   | `state/feedback.jsonl` | web、`newsletter-feedback` | `locked`（讀＋append） |
   | `state/oauth_token.json` | web（存／刪）、llm（讀） | `locked`（存／刪）；讀不鎖，靠原子替換 |
+  | `state/auth_health.json` | worker、web（寫）、web（讀） | 沒有（整檔原子替換，最後寫的算數） |
   | `state/seen.json` | `newsletter-collect` | 沒有（只有一個寫入者，原子寫入） |
 
 ```bash
@@ -66,14 +68,18 @@ uv run --project packages/shared python -m newsletter_shared.report_data --selft
 跑 `uv run --project packages/shared newsletter-feedback` 收集到 `state/feedback.jsonl`，重複標記以最新為準。
 報告裡的標記只匯入 `feedback.jsonl` 還沒有紀錄的那一則；已有紀錄的（含網頁標的）以 jsonl 為準，不會被覆蓋。
 
+`newsletter-feedback --stats` 依來源、主題、命中的關鍵字列出正面（`+`／`++`）與負面（`-`／`--`）的則數與正面比例，
+每則只算最後一次標記、取消的不算。只是給調 `config/` 與 `interests.md` 時參考，不改任何設定。
+
 網頁（[web-server/README.md](../../apps/web-server/README.md)）與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊（見[檔案鎖](#檔案鎖lockpy)）。
 `uv run --project packages/shared newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
 
 ## 量測（debug）
 
 `config.json` 設 `"debug": true`（或臨時用 `NEWSLETTER_DEBUG=1 uv run --project packages/collect newsletter-collect ...`），每個階段會寫一行到
-`logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`search`、`enrich`、`render`，
-以及 news-digest 跑完後由 `uv run --project packages/shared newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計的 token 與工具耗時。
+`logs/metrics/<date>.jsonl`：`fetch_source`（每個來源的耗時／則數／錯誤）、`fetch`、`curate`、`search`、`enrich`、`claude`（writer 的用量）、
+`coverage`（報告漏掉幾則、寫進幾則 near_misses）、`render`，最後是 worker 的 `pipeline`（觸發方式、從哪一步開始、總耗時、exit code、失敗的那一步）。
+在對話裡跑 news-digest 時，`claude` 改由 `uv run --project packages/shared newsletter-metrics claude`（skill 內呼叫）從 Claude Code session 紀錄統計。
 
 ```bash
 uv run --project packages/shared newsletter-metrics summary 14         # 最近 14 天，每次正式執行一行
@@ -83,6 +89,8 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run --project packages/collect n
 
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
 - 每遇到一筆 `fetch` 就算新的一次執行，之後的 curate／render／claude 歸到這一次。
+- summary 的 `usd` 是 writer 加搜尋的估算；`miss`／`nm` 是 coverage；`result` 是 `ok` 或 `<步驟>:<exit code>`。
+- selftest 不記（nx 的 selftest 與 `worker --selftest` 都設 `NEWSLETTER_DEBUG=0`）。
 - token 只含主 session 的 API 回合；工具內部用的小模型不在紀錄裡，所以不計。
 - `non_tool_seconds` 是總時間扣掉工具時間，含模型生成、串流與排隊。
 - 用 SDK 跑時（writer、搜尋）的用量紀錄見 [llm/README.md](../llm/README.md)「用量與成本」。

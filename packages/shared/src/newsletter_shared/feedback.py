@@ -3,6 +3,7 @@
 報告每則末尾有 `<!-- mark:  uid=... -->`，在 `mark:` 後填 + / - / ++ / --，再跑 `uv run --project packages/shared newsletter-feedback`。
 網頁的 👍／👎 寫同一個檔；兩邊都只 append、共用同一把鎖。
 報告裡的標記只匯入 jsonl 還沒有紀錄的那一則，已有紀錄的以 jsonl 為準。
+`newsletter-feedback --stats` 依來源／主題／關鍵字統計，給調 config 與 interests.md 參考。
 """
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ def load_curated_index(curated_dir: Path) -> dict[str, dict]:
         except json.JSONDecodeError:
             print(f"! 跳過損壞的 {path.name}", file=sys.stderr)
             continue
-        for item in payload.get("items", []):
+        for item in [*payload.get("near_misses", []), *payload.get("items", [])]:  # writer 可能撈回 near_misses
             index[item["uid"]] = item
     return index
 
@@ -138,6 +139,33 @@ def collect(root: Path = ROOT) -> int:
     return 0
 
 
+def stats(rows: dict[str, dict]) -> dict[str, dict[str, list[int]]]:
+    """分組 → 名稱 → [正面, 負面]。每個 uid 只算最後一筆，取消的不算；缺欄位的歸到「未知」。"""
+    out: dict[str, dict[str, list[int]]] = {"source": {}, "topic": {}, "keyword": {}}
+    for row in rows.values():
+        mark = row.get("mark", "")
+        if mark not in VALID_MARKS:
+            continue
+        side = 0 if mark.startswith("+") else 1
+        for group, names in (("source", [row.get("source")]), ("topic", [row.get("topic")]),
+                             ("keyword", row.get("matched_keywords") or [None])):
+            for name in names:
+                out[group].setdefault(name or "未知", [0, 0])[side] += 1
+    return out
+
+
+def print_stats(path: Path) -> int:
+    rows = read_feedback(path)
+    labels = {"source": "來源", "topic": "主題", "keyword": "關鍵字"}
+    for group, counts in stats(rows).items():
+        print(f"\n{labels[group]}（+ / -）")
+        for name, (pos, neg) in sorted(counts.items(), key=lambda kv: (-sum(kv[1]), kv[0])):
+            print(f"  {name:<32} {pos:>3} / {neg:<3} {pos / (pos + neg):>4.0%}")
+    if not rows:
+        print("還沒有任何回饋。")
+    return 0
+
+
 def selftest() -> None:
     import contextlib
     import io
@@ -220,6 +248,15 @@ def selftest() -> None:
         assert len(lines) == base + workers * per, (len(lines), base)
         rows = [json.loads(ln) for ln in lines]
         assert len({r["uid"] for r in rows}) == len(read_feedback(out)) and len(read_feedback(out)) >= workers * per
+
+    # 統計：只算最後一筆、取消的不算、++ 算正面、缺欄位歸「未知」
+    item = {"source": "BBC", "topic": "world", "matched_keywords": ["npu", "edge ai"]}
+    rows_in = [build_row(u1, "-", "r", item), build_row(u1, "++", "r", item), build_row(u2, "--", "r", item),
+               build_row(u3, "", "r", item), build_row("4" * 16, "+", "r", {})]
+    got = stats({r["uid"]: r for r in rows_in})
+    assert got["source"] == {"BBC": [1, 1], "未知": [1, 0]}, got
+    assert got["topic"] == {"world": [1, 1], "未知": [1, 0]}, got
+    assert got["keyword"] == {"npu": [1, 1], "edge ai": [1, 1], "未知": [1, 0]}, got
     print("ok")
 
 
@@ -227,6 +264,8 @@ def main() -> int:
     if "--selftest" in sys.argv[1:]:
         selftest()
         return 0
+    if "--stats" in sys.argv[1:]:
+        return print_stats(ROOT / "state" / "feedback.jsonl")
     return collect()
 
 

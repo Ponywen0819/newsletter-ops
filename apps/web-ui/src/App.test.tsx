@@ -20,7 +20,7 @@ describe('路由', () => {
   it('/ 有當日晨報：畫出來，標題帶日期，標記來自伺服器', async () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-09-28', latest: '2026-09-28', report, marks: { [UID_A]: '+' } } }) })
     expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
-    expect(document.title).toBe('每日晨間簡報 2026-09-28')
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-28')) // 標題在 effect 裡設
     expect(document.querySelectorAll('[aria-pressed="true"]')).toHaveLength(1)
   })
 
@@ -28,6 +28,77 @@ describe('路由', () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {} } }) })
     expect(await screen.findByRole('heading', { name: '2026-10-03 的晨報還沒產出' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '2026-10-02' })).toHaveAttribute('href', '/reports/2026-10-02')
+  })
+
+  it.each([
+    [{ finished_at: null, exit_code: null, step: null }, '2026-10-03 的晨報正在產生', '完成後重新整理'],
+    [{ finished_at: 'b', exit_code: 3, step: 'collect' }, '2026-10-03 的晨報產生失敗', '在「蒐集新聞」這步失敗（exit 3），30 分鐘後會自動重跑一次'],
+    [{ finished_at: 'b', exit_code: 3, step: 'collect', trigger: 'retry' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
+    [{ finished_at: 'b', exit_code: 5, step: 'write' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
+  ])('/ 當日沒有晨報、有執行紀錄：說明狀態 %#', async (run, title, text) => {
+    const rec = { trigger: 'schedule', started_at: 'a', ...run }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run: rec } }) })
+    expect(await screen.findByRole('heading', { name: title })).toBeInTheDocument()
+    expect(screen.getByText(text, { exact: false })).toBeInTheDocument()
+  })
+
+  it('/ 當日跑成功但還沒有晨報檔：照一般的還沒產出', async () => {
+    const run = { trigger: 'schedule', started_at: 'a', finished_at: 'b', exit_code: 0, step: null }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run } }) })
+    expect(await screen.findByRole('heading', { name: '2026-10-03 的晨報還沒產出' })).toBeInTheDocument()
+  })
+
+  it('/reports/<date>：內文最後有前一份／下一份；今日頁只有前一份', async () => {
+    open('/reports/2026-09-28', {
+      'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {}, prev: '2026-09-27', next: '2026-09-29' } }),
+    })
+    const adjacent = within(await screen.findByRole('navigation', { name: '前後的晨報' }))
+    expect(adjacent.getByRole('link', { name: '← 前一份 2026-09-27' })).toHaveAttribute('href', '/reports/2026-09-27')
+    expect(adjacent.getByRole('link', { name: '下一份 2026-09-29 →' })).toHaveAttribute('href', '/reports/2026-09-29')
+    cleanup()
+
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-09-28', latest: '2026-09-28', report, marks: {}, prev: '2026-09-27', next: null } }) })
+    const today = within(await screen.findByRole('navigation', { name: '前後的晨報' }))
+    expect(today.getAllByRole('link').map((a) => a.textContent)).toEqual(['← 前一份 2026-09-27'])
+    cleanup()
+
+    // [ ／ ] 換到前一份／下一份
+    open('/reports/2026-09-28', {
+      'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {}, prev: '2026-09-27', next: null } }),
+      'GET /api/reports/2026-09-27': () => ({ json: { date: '2026-09-27', report, marks: {}, prev: null, next: '2026-09-28' } }),
+    })
+    await screen.findByRole('navigation', { name: '前後的晨報' })
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-28'))
+    await userEvent.keyboard(']') // 沒有下一份：不動
+    expect(document.title).toBe('每日晨間簡報 2026-09-28')
+    await userEvent.keyboard('[[') // user-event 裡 [ 要寫兩個
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-09-27'))
+    cleanup()
+
+    open('/reports/2026-09-28', { 'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {} } }) }) // 舊副本沒有這兩欄
+    await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })
+    expect(screen.queryByRole('navigation', { name: '前後的晨報' })).toBeNull()
+  })
+
+  it('/stats：從歷史晨報的左欄連過去', async () => {
+    open('/reports', { 'GET /api/reports': () => ({ json: { reports: [] } }) })
+    expect(within(document.querySelector('.reader-side') as HTMLElement).getByRole('link', { name: '回饋統計 →' })).toHaveAttribute('href', '/stats')
+  })
+
+  it('/stats：三組表格（則數多的在前、比例）；沒有回饋時說明', async () => {
+    open('/stats', {
+      'GET /api/feedback-stats': () => ({
+        json: { total: 3, groups: { source: [{ name: 'BBC', pos: 2, neg: 1 }], topic: [{ name: 'world', pos: 2, neg: 1 }], keyword: [] } },
+      }),
+    })
+    expect(await screen.findByRole('heading', { level: 1, name: '回饋統計' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '來源' })).toBeInTheDocument()
+    expect(within(screen.getByRole('table', { name: '來源' })).getByRole('row', { name: 'BBC 2 1 67%' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '命中的關鍵字' })).toBeNull() // 空的組不顯示
+    cleanup()
+
+    open('/stats', { 'GET /api/feedback-stats': () => ({ json: { total: 0, groups: { source: [], topic: [], keyword: [] } } }) })
+    expect(await screen.findByText(/還沒有任何回饋/)).toBeInTheDocument()
   })
 
   it('/ 一份晨報都沒有', async () => {
@@ -142,7 +213,7 @@ describe('版面由路由決定', () => {
     const body = () => document.querySelector('.reader-body')
     open('/reports', { 'GET /api/reports': never })
     expect(body()).toHaveTextContent('載入中…')
-    expect(side()).toBeEmptyDOMElement()
+    expect(side()).toContainElement(screen.getByRole('searchbox', { name: '搜尋歷史晨報' })) // 載入中也能搜尋
     cleanup()
 
     open('/reports', { 'GET /api/reports': () => ({ status: 500, json: { error: '壞了' } }) })
@@ -154,6 +225,53 @@ describe('版面由路由決定', () => {
     const link = await screen.findByRole('link', { name: '2026-09-28' })
     expect(side()).toContainElement(screen.getByRole('heading', { level: 1, name: '歷史晨報' }))
     expect(body()).toContainElement(link)
+  })
+
+  it('/reports?q=：列出含字詞的行、標出字詞、連到那一天', async () => {
+    open('/reports?q=nvidia', {
+      'GET /api/search?q=nvidia': () => ({
+        json: { q: 'nvidia', results: [{ date: '2026-09-28', text: 'NVIDIA 發表新晶片，Nvidia 股價上漲' }], truncated: false },
+      }),
+    })
+    expect(await screen.findByText('找到 1 筆')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '2026-09-28' })).toHaveAttribute('href', '/reports/2026-09-28')
+    expect([...document.querySelectorAll('.reports mark')].map((m) => m.textContent)).toEqual(['NVIDIA', 'Nvidia'])
+    expect(screen.getByRole('searchbox')).toHaveValue('nvidia')
+    await waitFor(() => expect(document.title).toBe('搜尋「nvidia」— 歷史晨報'))
+    cleanup()
+
+    // 多個詞：每個都標
+    open('/reports?q=nvidia%20%E8%82%A1%E5%83%B9', {
+      'GET /api/search?q=nvidia%20%E8%82%A1%E5%83%B9': () => ({
+        json: { q: 'nvidia 股價', results: [{ date: '2026-09-28', text: 'Nvidia 股價上漲（a.b）' }], truncated: false },
+      }),
+    })
+    await screen.findByText('找到 1 筆')
+    expect([...document.querySelectorAll('.reports mark')].map((m) => m.textContent)).toEqual(['Nvidia', '股價'])
+  })
+
+  it('/reports 搜尋：送出就查；沒有結果、太多結果、失敗各有說明；清空回列表', async () => {
+    open('/reports', {
+      'GET /api/reports': () => ({ json: { reports: [{ date: '2026-09-28', headline: '某事發生' }] } }),
+      'GET /api/search?q=%E6%B2%92%E6%9C%89': () => ({ json: { q: '沒有', results: [], truncated: false } }),
+      'GET /api/search?q=a': () => ({ json: { q: 'a', results: [{ date: '2026-09-28', text: 'a' }], truncated: true } }),
+      'GET /api/search?q=x': () => ({ status: 500, json: { error: '壞了' } }),
+    })
+    await userEvent.type(await screen.findByRole('searchbox'), '沒有') // 列表還在載入時就開始打字
+    await screen.findByRole('link', { name: '2026-09-28' })
+    expect(screen.getByRole('searchbox')).toHaveValue('沒有') // 資料到了，搜尋框沒被換掉
+    await userEvent.type(screen.getByRole('searchbox'), '{Enter}')
+    expect(await screen.findByText('沒有找到「沒有」')).toBeInTheDocument()
+    await userEvent.clear(screen.getByRole('searchbox'))
+    await userEvent.type(screen.getByRole('searchbox'), 'a{Enter}')
+    expect(await screen.findByText('找到 1+ 筆')).toBeInTheDocument()
+    expect(screen.getByText(/只列出最新的 1 筆/)).toBeInTheDocument()
+    await userEvent.clear(screen.getByRole('searchbox'))
+    await userEvent.type(screen.getByRole('searchbox'), 'x{Enter}')
+    expect(await screen.findByRole('heading', { name: '搜尋失敗' })).toBeInTheDocument()
+    await userEvent.clear(screen.getByRole('searchbox'))
+    await userEvent.type(screen.getByRole('searchbox'), '{Enter}')
+    expect(await screen.findByRole('link', { name: '2026-09-28' })).toBeInTheDocument()
   })
 
   it('站內切換首頁 → 歷史 → 單日，外框一直是 reader；點到 single 的頁面才換', async () => {

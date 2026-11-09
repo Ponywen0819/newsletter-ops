@@ -75,6 +75,11 @@ describe('sw.js', () => {
     expect(source()).not.toMatch(/url:\s*"sw\.js"|"url":\s*"sw\.js"/)
   })
 
+  it('背景定時同步：聽 periodicsync，tag 和頁面註冊的一樣', () => {
+    expect(source()).toContain('periodicsync')
+    expect(source()).toContain('offline-copy')
+  })
+
   it('只快取讀取用的 API（today／reports）', () => {
     expect(source()).toContain('api/(today|reports(/')
   })

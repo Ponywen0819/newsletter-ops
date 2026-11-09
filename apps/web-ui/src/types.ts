@@ -45,24 +45,61 @@ export interface FeedbackTarget {
 /** uid → 目前的標記；沒標或已取消的不在裡面 */
 export type Marks = Record<string, Mark>
 
-export interface ReportPayload {
+/** 前一份（更舊）／下一份（更新）的日期；沒有是 null。舊的離線副本沒有這兩欄 */
+export interface Adjacent {
+  prev?: string | null
+  next?: string | null
+}
+
+export interface ReportPayload extends Adjacent {
   date: string
   report: Report
   marks: Marks
 }
 
-export interface TodayPayload {
+export interface TodayPayload extends Adjacent {
   date: string
   /** 當日晨報還沒產出時是 null */
   report: Report | null
   marks: Marks
   /** 最新一份晨報的日期；一份都沒有時是 null */
   latest: string | null
+  /** 當天的執行紀錄（worker 的 state/last_run.json）；今天還沒跑是 null。舊的副本沒有這欄 */
+  run?: RunRecord | null
+}
+
+export interface RunRecord {
+  trigger: string
+  started_at: string
+  /** 還在跑時是 null */
+  finished_at: string | null
+  exit_code: number | null
+  /** 失敗的那一步：collect / write / render / send */
+  step: string | null
 }
 
 export interface ReportSummary {
   date: string
   headline: string
+}
+
+export interface StatRow {
+  name: string
+  pos: number
+  neg: number
+}
+
+/** GET /api/feedback-stats：依來源／主題／關鍵字的正負面則數，則數多的在前 */
+export interface FeedbackStats {
+  total: number
+  groups: { source: StatRow[]; topic: StatRow[]; keyword: StatRow[] }
+}
+
+/** GET /api/search?q=：含 q 的行（純文字），新到舊；超過上限時 truncated */
+export interface SearchResult {
+  q: string
+  results: { date: string; text: string }[]
+  truncated: boolean
 }
 
 export interface Session {
@@ -81,7 +118,7 @@ export type AuthStatus =
       days_left: number
     }
 
-/** 後端定時驗證的最近結果（GET /api/auth-health，所有人都讀得到，所以不含驗證訊息） */
+/** 最近一次驗證的結果（GET /api/auth-health，所有人都讀得到，所以不含驗證訊息） */
 export interface AuthHealth {
   /** state 的意思見 apps/web-server/README.md */
   state: 'ok' | 'expiring' | 'missing' | 'invalid' | 'unknown'

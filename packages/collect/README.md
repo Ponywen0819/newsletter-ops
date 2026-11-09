@@ -122,6 +122,34 @@ weight，錯誤訊息會指出是哪個檔的哪個來源，程式以 exit code 
 `config.json` 的 `quota` 決定每個主題最多收幾則，沒列到的用 `default_quota`。
 高產量來源（TechNews 一天 40 則）會把研究類主題整個擠掉，不是因為更相關，只是因為量大。
 
+主題內另有 `max_per_source`（目前 2）：每個來源先最多收 2 則，名額沒用完再照 rank 補回（只有一個來源有東西時照樣收滿）。避免同一家佔滿一個主題（ScienceDaily 佔滿科學、經濟日報 4/5）。
+
+### 略過影片等不適合的項目
+
+feed 可以設 `skip`（正規表示式），標題或網址命中就不收。BBC World 設了 `^Watch:|/videos/`，擋掉影片新聞。
+
+### 跨來源的同一則新聞
+
+標題相似度（0.88）合併不了各家寫法不同的標題。`config.json` 的 `same_story_topics`（目前 `["world"]`）裡的主題另外比對標題＋摘要的專有名詞：
+不同來源、共有 3 個以上、Jaccard ≥ 0.4 就當同一則，留 rank 高的，其他來源記進 `also_in`。
+
+不論哪種方式併的，`also_in` 每多一家 rank +0.5、最多 +1.0：多家同時報導是重要性的訊號（arXiv 的跨類別不算）。
+
+### 停更的 feed
+
+第三方 feed（例如 Anthropic News 用的社群 feed）停更時不會報錯，只會不再有新東西。抓得到、但最新一則超過 21 天（來源可設 `stale_days`）的，
+會在 curated 的 `errors` 多一句「最新一則是 N 天前，feed 可能停更」，writer 照例寫進「本期備註」。
+
+### 差一點過門檻的候選（near_misses）
+
+配額沒滿的主題（週末的 tech-industry 常常 0、1 則），collect 另外附上沒過門檻但有一點分數的前 3 則（命中關鍵字的優先，arXiv 不附），放在 curated JSON 頂層的 `near_misses`。
+writer 依 `interests.md` 決定要不要寫進報告；寫了一樣帶 mark，沒寫不算漏（writer 的 uid 比對、回饋的標題查詢都認得它）。不記進 `seen.json`。
+
+### feed 順序加分
+
+國際新聞沒有關鍵字可評分，排序原本只剩來源權重與新鮮度。編輯排過的 feed 可以設 `order_boost`：前 10 則依序加 rank（第一則加滿，往後線性遞減），只影響排序、不影響是否過門檻。
+BBC World 設 1.0（它的頭條在 feed 最前面）。
+
 ### 來源保底分
 
 `baseline_relevance` 寫在主題檔，給「則則值得看但標題常沒有技術關鍵字」的來源。

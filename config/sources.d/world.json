@@ -11,19 +11,23 @@
       "name": "BBC World",
       "type": "rss",
       "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
-      "weight": 1.3
+      "weight": 1.3,
+      "skip": "^Watch:|/videos/",
+      "order_boost": 1.0
     },
     {
       "name": "The Guardian World",
       "type": "rss",
       "url": "https://www.theguardian.com/world/rss",
-      "weight": 0.6
+      "weight": 0.6,
+      "skip": "theguardian\\.com/(film|books|music|culture|media|lifeandstyle|fashion|food|travel|sport|football|games|tv-and-radio|stage|artanddesign)/"
     },
     {
       "name": "Al Jazeera",
       "type": "rss",
       "url": "https://www.aljazeera.com/xml/rss/all.xml",
-      "weight": 1.0
+      "weight": 1.0,
+      "skip": "aljazeera\\.com/(sports|video)/"
     },
     {
       "name": "NPR World",

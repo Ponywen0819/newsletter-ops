@@ -16,3 +16,30 @@
   }
 }
 
+
+/* /stats 回饋統計：窄螢幕表格可以橫向捲動，不撐破卡片 */
+.stats-group {
+  margin-top: 24px;
+  overflow-x: auto;
+}
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-list);
+}
+.stats-table th,
+.stats-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--rule);
+  text-align: right;
+  white-space: nowrap;
+}
+.stats-table th:first-child {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.stats-note {
+  color: var(--muted);
+  font-size: var(--fs-list);
+}

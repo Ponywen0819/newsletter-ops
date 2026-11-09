@@ -18,7 +18,8 @@ export function mockFetch(routes: Record<string, Handler>) {
     calls.push({ method, path, body, headers: (init?.headers ?? {}) as Record<string, string> })
     const handler = routes[`${method} ${path}`]
     const { status = 200, json } = handler ? await handler(body) : { status: 404, json: { error: 'not found' } }
-    return new Response(JSON.stringify(json), { status, headers: { 'Content-Type': 'application/json' } })
+    const payload = status === 204 || status === 304 ? null : JSON.stringify(json) // 這兩個狀態碼不能有 body
+    return new Response(payload, { status, headers: { 'Content-Type': 'application/json' } })
   })
   vi.stubGlobal('fetch', fn)
   return { calls, fn }

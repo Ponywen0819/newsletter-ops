@@ -62,14 +62,15 @@ ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json
 
 # 執行期生成物（都不進版控；位置都在 repo 根，Docker 裡是 volume）
-data/raw/<date>.jsonl          當日原始抓取（append，供回溯）
+data/raw/<date>.jsonl          當日原始抓取（append，供回溯；只留 raw_retention_days 天）
 data/search/<date>.json        搜尋補充的稽核紀錄：缺口、query、LLM 原始回覆、收下與退回（含原因）
 data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入
 reports/<date>.md              最終報告
-reports/<date>.html            email 版（newsletter-render 產生）
+reports/<date>.html            email 版（newsletter-render 產生；.txt 是信件的純文字部分）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
+state/auth_health.json         最近一次 Claude 認證驗證的結果（worker 每天寫、web 讀來顯示橫幅）
 state/last_run.json            上次每日流程的開始、結束與 exit code（worker 據此判斷今天跑過沒）
 state/pipeline.lock            每日流程的防重疊鎖（空檔，只是鎖的載體）
 logs/<YYYY-MM>.log             排程執行紀錄
@@ -127,6 +128,7 @@ npx nx run worker:start                                 # 常駐排程服務（�
 (cd apps/web-ui && npm install && npm run build)        # 第一次（以及改了前端之後）：建置網頁前端
 uv run --project apps/web-server newsletter-web                 # 晨報網頁，預設 http://127.0.0.1:8787
 uv run --project packages/shared newsletter-feedback            # 收集報告裡填的標記
+uv run --project packages/shared newsletter-feedback --stats    # 依來源／主題／關鍵字統計回饋
 ```
 
 各指令的選項與細節：蒐集 → [collect/README.md](packages/collect/README.md)；寫報告 → [writer/README.md](packages/writer/README.md)；認證與用量 → [llm/README.md](packages/llm/README.md)；email 與寄信 → [notify/README.md](packages/notify/README.md)；網頁 → [web-server/README.md](apps/web-server/README.md)。
@@ -137,7 +139,10 @@ uv run --project packages/shared newsletter-feedback            # 收集報告�
 每天 08:00（`NEWSLETTER_RUN_AT` 可改）跑一次，輸出進 `logs/<YYYY-MM>.log`；停機錯過了，啟動後補跑（同一天內；失敗的不重跑，要重跑用 `POST /run`）。
 手動的 `worker --once` 和它進同一個 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/worker/README.md](apps/worker/README.md)，所以混用是安全的。
 
-**規劃中**：認證的定時驗證從 web 搬到 worker 見 [#39](https://github.com/Ponywen0819/newsletter-ops/issues/39)。
+每天 07:30（`NEWSLETTER_AUTH_CHECK_AT` 可改）worker 也會驗一次 Claude 認證，結果寫進 `state/auth_health.json`；失效的話網頁在晨報跑之前就會出現橫幅。
+
+失敗時：暫時性的失敗 30 分鐘後從失敗的那一步自動重跑一次（寄信失敗不會重寫報告）；每一步有時限，卡住的會被停掉。今天不會再重跑時（重跑也失敗、授權失效、額度用完）
+worker 寄一封純文字的失敗通知，網頁的今日頁也會顯示哪一步失敗。
 
 ## 讓它跟著你的研究重心走
 
@@ -153,7 +158,8 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-c
 或在網頁（[web-server/README.md](apps/web-server/README.md)）、email 連結（[notify/README.md](packages/notify/README.md)）按按鈕，都累積到 `state/feedback.jsonl`。
 
 累積兩三個月後可以看出：收錄很多卻從未拿到 `+` 的關鍵字該降權、`+` 項目裡反覆出現卻
-不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。
+不在 boost 清單的詞該加進去、長期沒命中的關鍵字該移除。`uv run --project packages/shared newsletter-feedback --stats`
+依來源、主題、關鍵字列出 +／- 的則數與比例。
 
 **建議由人確認，不自動套用。** 會自己調參數的系統，出錯時你查不出它為什麼開始推垃圾。
 

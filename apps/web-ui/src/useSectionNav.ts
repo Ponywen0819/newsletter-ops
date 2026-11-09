@@ -5,10 +5,13 @@ export const isWide = () => window.matchMedia?.('(min-width: 1100px)').matches ?
 
 /** 左欄目錄與右欄內文的連動（目前項、點擊捲動、#hash、scroll-spy）。右欄每項要帶 `data-unit="<id>"`。 */
 export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | null>, navRef: RefObject<HTMLElement | null>) {
-  const [activeId, setActiveId] = useState(() => {
+  const initial = () => {
     const fromHash = window.location.hash.slice(1)
     return ids.includes(fromHash) ? fromHash : (ids[0] ?? '')
-  })
+  }
+  const [chosen, setActiveId] = useState(initial)
+  // ids 晚到（資料還在載入時就掛上）或換了一批：選的那項不在裡面就照 hash／第一項算，不必多等一輪 effect
+  const activeId = ids.includes(chosen) ? chosen : initial()
   // 點目錄／按 j／k 之後的捲動動畫期間，不讓 scroll-spy 把剛選的那一則改掉
   const lockUntil = useRef(0)
 
@@ -45,7 +48,11 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
     [goTo],
   )
 
+  // 開頁時的 #hash 只捲一次：恢復連線重抓資料（ids 換成新的陣列）時不要把讀者拉回去
+  const openedAt = useRef(false)
   useEffect(() => {
+    if (openedAt.current || !ids.length) return
+    openedAt.current = true
     const id = window.location.hash.slice(1)
     if (ids.includes(id)) scrollToUnit(id, true)
   }, [ids, scrollToUnit])

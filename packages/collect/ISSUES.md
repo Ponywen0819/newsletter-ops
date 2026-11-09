@@ -1,6 +1,6 @@
 # collect 已知問題
 
-最後更新：2026-09-28。每則格式：現象 → 原因 → 建議。解決後移到文末「已解決」並寫日期。編號沿用原本根目錄 `ISSUES.md` 的，不重排。
+最後更新：2026-11-08。每則格式：現象 → 原因 → 建議。解決後移到文末「已解決」並寫日期。編號沿用原本根目錄 `ISSUES.md` 的，不重排。
 
 ## 未解決
 
@@ -12,26 +12,29 @@
   - 國際新聞沒有關鍵字可評分，每則都只有保底分 1.5，排序只剩來源權重加新鮮度。
   - BBC 的 feed 混了影片（URL 含 `/videos/`、標題以 `Watch:` 開頭）。
   - 各家標題寫法不同，`dedupe` 的標題相似度（門檻 0.88）幾乎合併不了，所以「多家同時報導」這個訊號拿不到。
+- 已做（2026-11-08）：BBC World 設 `skip: "^Watch:|/videos/"`，影片新聞直接不收；設 `order_boost: 1.0`，feed 前 10 則依序加 rank（BBC 的頭條是編輯排過的）。
+- 已做（2026-11-08）：`same_story_topics`（目前只有 world）的跨來源去重另外比對標題＋摘要的專有名詞（共有 3 個以上、Jaccard ≥ 0.4）。2026-11-08 的 100 則國際新聞多併掉 10 則，都是同一事件的各家報導（Eisenkot 組閣、巴拉圭前總統、教宗出訪、肯亞邪教）；併掉的來源記在 `also_in`。
 - 建議：
-  - 先把 `/videos/` 的 URL 和 `Watch:` 開頭的標題降分。
-  - 再考慮用 feed 內的排列順序加分（BBC 的頭條是編輯排過的）。
-  - 或改用關鍵名詞重疊做跨來源比對。
+  - 觀察幾天有沒有誤併。`also_in` 已經當「多家同時報導」的訊號：每多一家 rank +0.5，最多 +1.0（arXiv 跨類別不算）。
 
 **5. Tech-industry 常常 0 則，科技段偏單薄**（處理中）
 - 現象：tech-industry 只收有命中關鍵字的新聞，週末或關鍵字沒對上的日子會整段空掉。這個主題沒有後手：沒過門檻的新聞不會進 curated JSON，Claude 看不到；搜尋補充只在整個主題 0 則時才觸發。
 - 已做（2026-09-28）：修了複數比對；Ars Technica、IEEE Spectrum 保底 0.5，命中任一關鍵字就過門檻。IEEE 試過 0.8（無條件收錄），五則裡三則是無關雜項，所以沒採用。
-- 觀察：跑幾天看 tech-industry 的則數。仍然太少的話，下一步是把每個主題「差一點過門檻」的前幾則附進 curated JSON，讓 Claude 決定要不要撈回來。
-- 另外：`vision` 命中了〈Poetry for Engineers: The UI Designer's Dream〉，這個 boost_low 關鍵字太泛，可考慮改成 `computer vision`。
+- 已做（2026-11-08）：配額沒滿的主題，把差一點過門檻（0 < relevance < min_relevance）的前 3 則附進 curated 的 `near_misses`，命中關鍵字的優先；writer 依興趣決定要不要寫進報告。2026-11-08 附了 The Verge〈US let Nvidia sell chips to an empty office in China〉這類只命中低權重關鍵字的新聞。
+- 觀察：跑幾天看 writer 撈回多少、tech-industry 的則數。writer 撈回的則數記在 metrics 的 `coverage.near_misses_used`（2026-11-09 起）。
+- 已做（2026-11-08）：boost_low 的 `vision` 太泛（命中〈Poetry for Engineers: The UI Designer's Dream〉），改成 `computer vision`、`vision-language`、`vision model`。
 
 **6. 「其餘收錄」塞了不相關的新聞**
 - 現象：VMAs 紅毯、沉船影片也出現在 email 裡。
 - 原因：skill 規定 curated JSON 的每一則都要出現在報告裡（為了 feedback 標記）；world 和 science 靠保底分過門檻，配額內的都會被收錄。
+- 已做（2026-11-08）：Al Jazeera 的 feed 是全站的，`skip` 掉 `/sports/`、`/video/`；The Guardian World 混了影評、書評、媒體版，`skip` 掉藝文、生活、體育的路徑。2026-11-08 的 world 候選因此少了 14 則（體育 6、影片 5、藝文 3）。
 - 建議：第 4 點改善後會自然減少；或者讓 skill 對 world、science 的低價值項目只保留 mark 註解、不寫可見文字。
 
 **7. 科學段被 ScienceDaily 佔滿**
 - 現象：2026-09-28 收錄的 4 則科學新聞全部來自 ScienceDaily。
 - 原因：Nature 的 RSS 日期只到「日」（時間是 00:00），新鮮度分數吃虧；Nature 的 feed 也混了論文和 Briefing。
-- 建議：調高 Nature、Science 的 `weight`，或降低 ScienceDaily 的權重（目前 0.8）。
+- 已做（2026-11-08）：`max_per_source: 2`，同一來源在一個主題裡先最多 2 則，有別的來源就讓位。
+- 建議：仍不夠的話再調 Nature、Science 的 `weight`，或降低 ScienceDaily 的權重（目前 0.8）。
 
 **8. 24 小時時間窗和仍在發展中的事件衝突**
 - 現象：荷莫茲海峽的事件發生在 9/26，超過 24 小時窗，但 9/28 仍是最重要的國際新聞。
@@ -40,20 +43,22 @@
 ### 低：已知限制，先記錄
 
 **9. arXiv 會議判斷的誤判情境**（`curate.venue_of`）
-- 「rejected from ICLR」會被判成主會議。
+- 「rejected from ICLR」：名稱前 30 字內有 reject／not accepted／declined 就不算（2026-11-08）。
 - 「以前在某 workshop 發表過，現被主會議接受」會被降成非主會議。
-- 會議名稱是大小寫敏感比對，「neurips 2026」這種全小寫寫法抓不到。
+- 會議名稱先大小寫敏感比對；沒命中時，大小寫寫錯但後面接年份的（「neurips 2026」）也算（2026-11-08）。期刊不放寬。
 - arXiv API 不提供作者機構，由 enrich 抓 arXiv HTML 版存進 `fulltext`，writer 從裡面判斷。
 - 遇到新的寫法就加進 `config.json` 的 `arxiv_venues`，並補一條自我檢查。
 
 **10. Anthropic News 依賴第三方 feed**
 - 目前用社群專案 [Olshansk/rss-feeds](https://github.com/Olshansk/rss-feeds) 的 feed，因為官網沒有 RSS。
 - 它停止更新時，改抓 `https://www.anthropic.com/sitemap.xml`（裡面有 260 篇以上的 `/news/` 網址），但需要另外寫解析。
+- 偵測（2026-11-08）：最新一則超過 21 天，curated 的 `errors` 會出現「feed 可能停更」，報告的本期備註看得到。
 
-**11. 抓取還有約 5 秒可以省**
-- 現象：請求本身合計約 18 秒，但整體抓取花了 23.7 秒。
-- 原因：5 個 arXiv 來源穿插之後，仍有 4 個排在清單最後、彼此相連，每兩個之間要等 3 秒。
-- 建議：把 arXiv 平均分散到整個清單，或讓不同網域並行抓取。目前效益不大。
+## 已解決（2026-11-08）
+
+- **經濟段被選股文佔掉**：CNBC Markets 的 feed 幾乎都是個股推薦（〈Three consumer stocks to buy…〉〈Here are Thursday's biggest analyst calls〉），和 `penalize` 不要股價、法說的方向相反。換成 CNBC Economy（就業、利率、GDP、央行）。（2026-11-09）
+
+- **抓取還有約 5 秒可以省**（原第 11 點）：不同網域改成並行（最多 8 個），同一網域照舊依序、守間隔（arXiv 3 秒）。30 個來源從 30.5 秒降到 14.8 秒，剩下的主要是 arXiv 5 個來源依序等待。
 
 ## 已解決（2026-09-28）
 

@@ -2,7 +2,7 @@
 
 評分拆成兩個值：
   relevance  來源保底分 + 關鍵字命中。是門檻，低於 min_relevance 不收。
-  rank       relevance × 來源權重 + 新鮮度。只決定排序。
+  rank       relevance × 來源權重 + 新鮮度（+ feed 順序、多家報導的加分）。只決定排序。
 拆開是為了讓「夠新」無法把不相關的東西帶進來。
 
 arXiv 論文另看 Comments / Journal-Ref 裡的會議或期刊（config.json 的 arxiv_venues）加分，結果寫進 item["venue"]。
@@ -23,6 +23,7 @@ STATE = ROOT / "state" / "seen.json"
 STOP = re.compile(r"[^\w一-鿿]+")
 _ASCII_KW = re.compile(r"^[\x00-\x7f]+$")
 _PATTERN_CACHE: dict[str, re.Pattern | None] = {}
+_REJECTED = re.compile(r"reject|not accepted|declined", re.I)
 _SUBMITTED = re.compile(r"submitted|under review|in submission|under submission", re.I)
 # 「DocInsights at EMNLP 2026」＝掛在會議底下的 workshop；這些字接 at 則是主會議本身
 _MAIN_BEFORE_AT = {"accepted", "published", "presented", "appear", "appears", "appearing",
@@ -95,18 +96,32 @@ def _find(names: list[str], note: str, flags: int = 0) -> tuple[int, str, str] |
     return best
 
 
+def _find_lower(names: list[str], note: str) -> tuple[int, str, str] | None:
+    """大小寫寫錯的會議名（neurips 2026）：一定要接年份才算，否則 www.example.com 會命中 WWW。
+    名稱換回清單的寫法。"""
+    best = None
+    for name in names:
+        m = re.search(r"(?<![A-Za-z])" + re.escape(name) + r"\s*('?\d{2,4})(?![A-Za-z0-9])", note, re.I)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), f"{name} {m.group(1)}", name)
+    return best
+
+
 def venue_of(note: str, venues: dict) -> dict | None:
     """用固定清單判斷 arXiv Comments 裡的會議/期刊，回傳
     {"status": main|minor|submitted, "kind": conference|journal, "name", "track", "label"} 或 None。
 
     大小寫敏感：'Nature' 不該命中 'the nature of'。
-    ponytail: 清單＋正規表示式，「rejected from ICLR」會誤判成 main、「以前曾在某 workshop 發表」
-    會把主會議降成 minor；兩者都少見，遇到再把寫法加進清單或規則。
+    名稱前面 30 字內有 reject 之類的字（「Rejected from ICLR」）不算那一個。
+    ponytail: 清單＋正規表示式，「以前曾在某 workshop 發表」會把主會議降成 minor；少見，遇到再把寫法加進清單或規則。
     """
     if not note:
         return None
     hits = [(h, kind) for kind in ("conference", "journal")
             if (h := _find(venues.get(kind, []), note))]
+    if not hits and (h := _find_lower(venues.get("conference", []), note)):
+        hits = [(h, "conference")]  # 期刊不放寬：Nature 不該命中 the nature of
+    hits = [(h, kind) for h, kind in hits if not _REJECTED.search(note[max(0, h[0] - 30):h[0]])]
     if not hits:
         return None
     (pos, name, _), kind = min(hits, key=lambda x: x[0][0])
@@ -145,6 +160,14 @@ def _freshness(published: str) -> float:
     return 1.5 * math.exp(-max(age_h, 0) / 12)
 
 
+ORDER_TOP = 10  # feed 前幾則拿 order_boost：第一則全拿，往後線性遞減，第 ORDER_TOP 則起沒有
+
+
+def _order_bonus(item: dict) -> float:
+    """編輯排過的 feed（BBC 的頭條在最前面）：國際新聞沒有關鍵字可評分，順序是少數的訊號。"""
+    return float(item.get("order_boost", 0.0)) * max(0.0, 1 - item.get("position", 0) / ORDER_TOP)
+
+
 def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float, float, list[str]]:
     """回傳 (relevance, rank, 命中的關鍵字)。"""
     text = f"{item['title']} {item['summary']}".lower()
@@ -165,14 +188,63 @@ def score(item: dict, keywords: dict, venues: dict | None = None) -> tuple[float
         item["venue"] = venue
         relevance += VENUE_BOOST[venue["status"]]
 
-    rank = relevance * float(item.get("weight", 1.0))
+    rank = relevance * float(item.get("weight", 1.0)) + _order_bonus(item)
     if item.get("published"):
         rank += _freshness(item["published"])
     return round(relevance, 2), round(rank, 2), sorted(set(hits))
 
 
-def dedupe(items: list[dict], threshold: float = 0.88) -> list[dict]:
-    """先以 uid/url 去重，再用標題相似度合併跨來源重複報導。"""
+_NAME = re.compile(r"[A-Z][\w'’.-]*[A-Za-z0-9]")
+# 句首常見的大寫字，不是專有名詞
+_NOT_NAMES = {"the", "a", "an", "how", "why", "what", "who", "when", "where", "watch", "new", "after", "before",
+              "as", "in", "on", "at", "for", "with", "from", "is", "are", "was", "will", "can", "this", "that",
+              "live", "breaking", "exclusive", "analysis", "opinion", "video", "says", "said"}
+COVERAGE_BOOST, COVERAGE_MAX = 0.5, 2  # 每多一家報導同一則加多少 rank、最多算幾家（arXiv 的跨類別不算）
+SAME_STORY_SHARED, SAME_STORY_JACCARD = 3, 0.4  # 用 2026-11-08 的國際新聞調的：同一則的各家報導都在 0.4 以上
+
+
+def _names(title: str) -> set[str]:
+    """標題裡的專有名詞（大寫開頭的字，去掉所有格與句首常見字），小寫。"""
+    words = (re.sub(r"['’]s$", "", w).lower() for w in _NAME.findall(title))
+    return {w for w in words if len(w) >= 3 and w not in _NOT_NAMES}
+
+
+def same_story(a: set[str], b: set[str]) -> bool:
+    """標題＋摘要裡的專有名詞夠重疊才算同一則：只共有 Trump、Iran 這種一兩個名字的不算。
+    ponytail: 只看名字重疊；同一個人物的兩件不同事件、名字又多半相同時會誤併，遇到再調門檻。"""
+    shared = a & b
+    return len(shared) >= SAME_STORY_SHARED and len(shared) / len(a | b) >= SAME_STORY_JACCARD
+
+
+def dedupe(items: list[dict], threshold: float = 0.88, name_topics: frozenset[str] = frozenset()) -> list[dict]:
+    """先以 uid/url 去重，再用標題相似度合併跨來源重複報導。
+    name_topics 裡的主題（國際新聞）另外用專有名詞比對：各家標題寫法不同，相似度幾乎合併不了。"""
+    unique = _dedupe_urls(items)
+    names = {id(i): _names(f"{i['title']}. {i.get('summary', '')}") for i in unique if i["topic"] in name_topics}
+
+    def matches(item: dict, k: dict, norm: str) -> bool:
+        if SequenceMatcher(None, norm, _norm_title(k["title"])).ratio() >= threshold:
+            return True
+        return (item["topic"] in name_topics and item["topic"] == k["topic"] and item["source"] != k["source"]
+                and same_story(names[id(item)], names[id(k)]))
+
+    kept: list[dict] = []
+    for item in sorted(unique, key=lambda i: i.get("rank", 0), reverse=True):
+        norm = _norm_title(item["title"])
+        match = next((k for k in kept if matches(item, k, norm)), None)
+        if match:
+            match.setdefault("also_in", []).append(item["source"])
+        else:
+            kept.append(item)
+    for item in kept:
+        item["also_in"] = sorted({s for s in item.get("also_in", []) if s != item["source"]})
+        if item["also_in"] and not item["source"].startswith("arXiv"):
+            item["rank"] = round(item.get("rank", 0) + COVERAGE_BOOST * min(len(item["also_in"]), COVERAGE_MAX), 2)
+    return kept
+
+
+def _dedupe_urls(items: list[dict]) -> list[dict]:
+    """同一個網址（或 uid）只留 rank 最高的，其他來源記進 also_in。"""
     by_key: dict[str, dict] = {}
     for item in items:
         key = item["url"] or item["uid"]
@@ -184,21 +256,22 @@ def dedupe(items: list[dict], threshold: float = 0.88) -> list[dict]:
             by_key[key] = item
         else:
             existing.setdefault("also_in", []).append(item["source"])
+    return list(by_key.values())
 
-    kept: list[dict] = []
-    for item in sorted(by_key.values(), key=lambda i: i.get("rank", 0), reverse=True):
-        norm = _norm_title(item["title"])
-        match = next(
-            (k for k in kept if SequenceMatcher(None, norm, _norm_title(k["title"])).ratio() >= threshold),
-            None,
-        )
-        if match:
-            match.setdefault("also_in", []).append(item["source"])
-        else:
-            kept.append(item)
-    for item in kept:
-        item["also_in"] = sorted({s for s in item.get("also_in", []) if s != item["source"]})
-    return kept
+
+def _pick(bucket: list[dict], limit: int, per_source: int | None) -> list[dict]:
+    """依 rank 取 limit 則；每個來源先最多 per_source 則，名額沒用完再照 rank 補回其他的（只有一個來源時不會少收）。"""
+    if not per_source:
+        return bucket[:limit]
+    count: dict[str, int] = {}
+    first, rest = [], []
+    for item in bucket:
+        n = count.get(item["source"], 0)
+        (first if n < per_source else rest).append(item)
+        count[item["source"]] = n + 1
+    chosen = first[:limit]
+    chosen += rest[:limit - len(chosen)]
+    return sorted(chosen, key=lambda i: i["rank"], reverse=True)
 
 
 def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
@@ -215,9 +288,10 @@ def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
 
     kept: list[dict] = []
     dropped: dict[str, int] = {}
+    per_source = config.get("max_per_source")
     for topic, bucket in by_topic.items():
         limit = quota.get(topic, default_quota)
-        kept.extend(bucket[:limit])
+        kept.extend(_pick(bucket, limit, per_source))
         if len(bucket) > limit:
             dropped[topic] = len(bucket) - limit
 
@@ -226,6 +300,29 @@ def apply_quota(items: list[dict], config: dict) -> tuple[list[dict], dict]:
     if len(kept) > hard_cap:
         kept = kept[:hard_cap]
     return kept, dropped
+
+
+NEAR_MISS = 3  # 配額沒滿的主題，附幾則差一點過門檻的候選給 writer
+
+
+def near_misses(fresh: list[dict], ranked: list[dict], config: dict) -> list[dict]:
+    """配額沒滿的主題（週末的 tech-industry 常常 0、1 則），附上沒過門檻、但有一點分數的前幾則，讓 writer 決定要不要撈回來。
+    命中關鍵字的排前面，其次看 rank。arXiv 不附（量大，靠配額就夠）。不記進 seen：沒寫進報告的明天還能再出現。"""
+    quota, default_quota = config.get("quota", {}), config.get("default_quota", 5)
+    min_relevance = config.get("min_relevance", 1.0)
+    have: dict[str, int] = {}
+    for item in ranked:
+        have[item["topic"]] = have.get(item["topic"], 0) + 1
+    urls = {i["url"] for i in ranked}
+    pool = sorted((i for i in fresh if 0 < i["relevance"] < min_relevance and i["url"] not in urls
+                   and not i["source"].startswith("arXiv")),
+                  key=lambda i: (bool(i["matched_keywords"]), i["rank"]), reverse=True)
+    out: list[dict] = []
+    for item in pool:
+        topic = item["topic"]
+        if have.get(topic, 0) < quota.get(topic, default_quota) and sum(i["topic"] == topic for i in out) < NEAR_MISS:
+            out.append(item)
+    return out
 
 
 def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], dict]:
@@ -242,7 +339,7 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
 
     min_relevance = config.get("min_relevance", 1.0)
     relevant = [i for i in fresh if i["relevance"] >= min_relevance]
-    ranked, dropped_by_quota = apply_quota(dedupe(relevant), config)
+    ranked, dropped_by_quota = apply_quota(dedupe(relevant, name_topics=frozenset(config.get("same_story_topics", []))), config)
 
     now = datetime.now(timezone.utc).isoformat()
     for item in ranked:
@@ -256,6 +353,7 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
         "after_dedupe_and_quota": len(ranked),
         "by_topic": {},
         "dropped_by_quota": dropped_by_quota,
+        "near_misses": near_misses(fresh, ranked, config),  # run.py 會搬到 curated JSON 的頂層
     }
     for item in ranked:
         stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1
@@ -282,6 +380,13 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert venue_of("Published in TMLR", V)["label"] == "已被 TMLR 接受（期刊）"
     assert st("Accepted at COLM 2026. Project website: https://x") == ("main", "COLM 2026", "")
     assert st("12 pages; on the nature of attention") is None
+    assert st("accepted at neurips 2026") == ("main", "NeurIPS 2026", ""), st("accepted at neurips 2026")
+    assert venue_of("to appear in iclr 2027", V)["label"] == "已被 ICLR 2027 接受（主會議）"
+    assert st("Project page: https://www.example.com/acl") is None  # 小寫沒有年份不算
+    assert st("12 pages, nature 2026 style") is None  # 期刊不放寬
+    assert st("Rejected from ICLR 2026") is None
+    assert st("Rejected from ICLR 2026; published in TMLR") == ("main", "TMLR", "")
+    assert st("Accepted at NeurIPS 2026. Previously rejected elsewhere") == ("main", "NeurIPS 2026", "")
     assert st("ACLU report analysis") is None
     assert st("") is None
     assert _hits("openai agents tried to bruteforce", "agent") and _hits("new gpus", "gpu")
@@ -289,6 +394,28 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert not _hits("agentic workflows", "agent") and not _hits("agentsx", "agent")
     item = {"title": "x", "summary": "", "venue_note": "ICLR 2026 camera-ready"}
     assert score(item, {}, V)[0] == 2.0 and item["venue"]["status"] == "main"
+    base = {"title": "x", "summary": "", "baseline_relevance": 1.5}
+    assert score({**base, "order_boost": 1.0, "position": 0}, {})[1] == 2.5    # 只加 rank，不加 relevance
+    assert score({**base, "order_boost": 1.0, "position": 0}, {})[0] == 1.5
+    assert score({**base, "order_boost": 1.0, "position": 5}, {})[1] == 2.0
+    assert score({**base, "order_boost": 1.0, "position": 12}, {})[1] == 1.5
+    assert score({**base, "position": 0}, {})[1] == 1.5                        # 沒設 order_boost 不加
+
+    # 同一則新聞、標題寫法不同：標題＋摘要的名字夠重疊才合併；只共有 Trump、Iran 不合併；不在 name_topics 不合併
+    assert _names("Israel's president tasks opposition leader Eisenkot with forming government") == {"israel", "eisenkot"}
+    def w(uid, source, title, summary, rank):
+        return {"uid": uid, "url": f"https://{uid}", "source": source, "topic": "world", "title": title,
+                "summary": summary, "rank": rank}
+    batch = [w("b1", "BBC", "Israel's president tasks opposition leader Eisenkot with forming government",
+               "Isaac Herzog asked Gadi Eisenkot to form a government after Netanyahu failed.", 3),
+             w("a1", "AJ", "Eisenkot chosen over Netanyahu to form Israel’s next government",
+               "President Isaac Herzog picked Gadi Eisenkot, sidelining Benjamin Netanyahu.", 2),
+             w("b2", "BBC", "Trump to visit Iran border region", "Donald Trump will tour Iraq's Kurdistan.", 2.5),
+             w("a2", "AJ", "Iran oil exports fall as Trump tariffs bite", "Tehran's sales to China dropped in October.", 1.5)]
+    got = dedupe([dict(i) for i in batch], name_topics=frozenset({"world"}))
+    assert [i["uid"] for i in got] == ["b1", "b2", "a2"], [i["uid"] for i in got]
+    assert got[0]["also_in"] == ["AJ"] and got[0]["rank"] == 3.5  # 多一家報導，rank 加 0.5
+    assert len(dedupe([dict(i) for i in batch])) == 4  # 沒開就照舊
 
     # 同日重跑：沒有 redo 時第二次拿到第二梯隊；帶上次的 uid 就拿回同一批
     import tempfile
@@ -308,6 +435,24 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert uids(first) == {"u3", "u2"}
     assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
     assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的：沒帶 redo 才會往下一梯隊走
+
+    # 每個來源的上限：有別的來源時讓位，沒有就補回來
+    def src_item(uid, source, rank):
+        return {"uid": uid, "source": source, "rank": rank, "topic": "sci"}
+    sci = [src_item("d1", "SD", 9), src_item("d2", "SD", 8), src_item("d3", "SD", 7), src_item("n1", "Nature", 1)]
+    assert [i["uid"] for i in _pick(sci, 3, 2)] == ["d1", "d2", "n1"]
+    assert [i["uid"] for i in _pick(sci[:3], 3, 2)] == ["d1", "d2", "d3"]  # 只有一個來源：照樣收滿
+    assert [i["uid"] for i in _pick(sci, 3, None)] == ["d1", "d2", "d3"]
+
+    # 差一點過門檻：配額沒滿的主題才附；命中關鍵字的優先；0 分與 arXiv 不附
+    def near(uid, topic, rel, rank, **kw):
+        return {"uid": uid, "url": uid, "topic": topic, "relevance": rel, "rank": rank,
+                "matched_keywords": kw.get("hits", []), "source": kw.get("source", "s")}
+    fresh = [near("n1", "tech", 0.5, 0.9), near("n2", "tech", 0.4, 0.5, hits=["ai chip"]), near("n3", "tech", 0.5, 0.4),
+             near("n4", "tech", 0.5, 0.3), near("z", "tech", 0.0, 2.0), near("ax", "tech", 0.5, 3.0, source="arXiv cs.LG"),
+             near("f1", "full", 0.5, 1.0), near("k", "full", 2.0, 1.0)]
+    got = near_misses(fresh, [fresh[-1]], {"min_relevance": 0.8, "quota": {"full": 1}, "default_quota": 5})
+    assert [i["uid"] for i in got] == ["n2", "n1", "n3"], [i["uid"] for i in got]
 
     # 寫入中斷：舊的 seen.json 要完好、不留暫存檔
     save_seen({"old": now})

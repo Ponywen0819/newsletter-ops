@@ -37,6 +37,8 @@ uv run --project packages/writer newsletter-write --max-turns 80   # 預設 60 �
 | 5 | **授權失敗**：token 無效或已過期，到 `/auth` 重新貼上新的 token |
 | 6 | **額度用完**：訂閱的使用額度或帳務問題；不會改用別的認證，等額度恢復再跑 |
 
+成功之後還會比對 uid：curated 有但報告漏掉的（收不到回饋）、報告有但 curated 沒有的，都印警告到 stderr、記進 metrics 的 `coverage`，不影響 exit code。
+
 ## 自我檢查
 
 ```bash

@@ -9,14 +9,18 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from typing import Callable
 from xml.etree import ElementTree as ET
 
 from newsletter_shared import metrics
 
 ARXIV_API = "https://export.arxiv.org/api/query"
+PARALLEL_HOSTS = 8  # 同時抓幾個網域；同一網域永遠依序
+STALE_DAYS = 21  # 抓得到、但最新一則比這還舊：feed 可能停更（第三方 feed 不會報錯，只會不再更新）
 NS = {
     "atom": "http://www.w3.org/2005/Atom",
     "dc": "http://purl.org/dc/elements/1.1/",
@@ -39,6 +43,8 @@ class Item:
     lookback_hours: int | None = None  # 來源自訂的時間窗，None 表示用全域預設
     baseline_relevance: float = 0.0     # 高信噪比來源的保底相關性分數
     venue_note: str = ""                # arXiv 的 Comments + Journal-Ref，會議/期刊接受資訊在這裡
+    position: int = 0                   # 在 feed 裡的順序（0 起）
+    order_boost: float = 0.0            # 來源設定：feed 的排列是編輯排過的，前面的加分（curate 用）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -56,7 +62,8 @@ def _http_get(url: str, cfg: dict) -> bytes:
         },
     )
     last = None
-    for attempt in range(cfg.get("retries", 2) + 1):
+    attempts = cfg.get("retries", 2) + 1
+    for attempt in range(attempts):
         try:
             with urllib.request.urlopen(req, timeout=cfg.get("timeout", 25)) as resp:
                 raw = resp.read()
@@ -65,8 +72,15 @@ def _http_get(url: str, cfg: dict) -> bytes:
                 return raw
         except Exception as exc:
             last = exc
+            if not retryable(exc) or attempt == attempts - 1:
+                break
             time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"GET failed: {url}: {last}")
+
+
+def retryable(exc: Exception) -> bool:
+    """4xx（429 除外）重試也一樣，直接放棄；連線、逾時、5xx 才重試。"""
+    return not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
 
 
 def _clean(text: str | None, limit: int = 1200) -> str:
@@ -124,8 +138,9 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
     # ponytail: RSS 1.0（RDF，如 Nature / Science）去掉預設 namespace 後欄位跟 RSS 2.0 相同，直接共用解析
     root = ET.fromstring(raw.replace(b'xmlns="http://purl.org/rss/1.0/"', b"", 1))
     items: list[Item] = []
+    skip = re.compile(src["skip"]) if src.get("skip") else None
     entries = root.findall(".//item") or root.findall(".//atom:entry", NS)
-    for node in entries[:limit]:
+    for position, node in enumerate(entries[:limit]):
         if node.tag.endswith("entry"):  # Atom
             title = _clean(node.findtext("atom:title", default="", namespaces=NS), 300)
             link = ""
@@ -158,6 +173,8 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
             venue_note = ""
         if not title or not link:
             continue
+        if skip and (skip.search(title) or skip.search(link)):
+            continue  # 來源設定的 skip：例如 BBC 的影片（/videos/、Watch:）
         items.append(Item(
             uid=make_uid(link, title), title=title, url=canonical_url(link),
             source=src["name"], topic=src.get("topic", "general"),
@@ -165,7 +182,7 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
             summary=summary, authors=[a for a in authors if a],
             lookback_hours=src.get("lookback_hours"),
             baseline_relevance=float(src.get("baseline_relevance", 0.0)),
-            venue_note=venue_note,
+            venue_note=venue_note, position=position, order_boost=float(src.get("order_boost", 0.0)),
         ))
     return items
 
@@ -203,36 +220,52 @@ def wait_seconds(host: str, last_hit: dict[str, float], cfg: dict, now: float) -
     return max(0.0, last_hit[host] + delay - now)
 
 
-def interleave(sources: list[dict]) -> list[dict]:
-    """同網域的來源輪流排開（a1 b1 c1 a2 a3 ...），同網域的等待就被其他請求的時間吸收。
-    順序不影響結果，curate 會重新排序。"""
-    queues: dict[str, list[dict]] = {}
+def stale_warning(src: dict, items: list[Item], now: datetime | None = None) -> str | None:
+    """最新一則超過來源的 stale_days（預設 STALE_DAYS）天就回一句提醒；沒有日期或沒有項目不判斷。"""
+    dates = [i.published for i in items if i.published]
+    if not dates:
+        return None
+    age = ((now or datetime.now(timezone.utc)) - datetime.fromisoformat(max(dates))).days
+    if age <= src.get("stale_days", STALE_DAYS):
+        return None
+    return f"{src['name']}: 最新一則是 {age} 天前（{max(dates)[:10]}），feed 可能停更"
+
+
+def by_host(sources: list[dict]) -> dict[str, list[dict]]:
+    groups: dict[str, list[dict]] = {}
     for src in sources:
-        queues.setdefault(source_host(src), []).append(src)
-    ordered: list[dict] = []
-    while queues:
-        for host in list(queues):
-            ordered.append(queues[host].pop(0))
-            if not queues[host]:
-                del queues[host]
-    return ordered
+        groups.setdefault(source_host(src), []).append(src)
+    return groups
 
 
-def fetch_all(config: dict) -> tuple[list[Item], list[str]]:
+def fetch_all(config: dict, fetch: Callable[[dict, dict, int], tuple[list[Item], str | None]] | None = None,
+              ) -> tuple[list[Item], list[str]]:
+    """不同網域並行、同一網域依序並守 wait_seconds 的間隔。結果照設定裡的來源順序排，和並行的先後無關。"""
     cfg = config.get("request", {})
     limit = config.get("max_items_per_source", 40)
+    fetch = fetch or fetch_source
+    results: dict[int, tuple[list[Item], str | None]] = {}
+
+    def run_host(srcs: list[dict]) -> None:
+        last_hit: dict[str, float] = {}
+        for src in srcs:
+            host = source_host(src)
+            time.sleep(wait_seconds(host, last_hit, cfg, time.monotonic()))
+            with metrics.timed("fetch_source", source=src["name"], topic=src.get("topic")) as m:
+                got, err = fetch(src, cfg, limit)
+                m.update(items=len(got), error=err)
+            last_hit[host] = time.monotonic()  # 以請求結束時間起算，失敗重試也算在內
+            results[id(src)] = (got, err)
+
+    groups = by_host(config["sources"])
+    with ThreadPoolExecutor(max_workers=max(1, min(PARALLEL_HOSTS, len(groups)))) as pool:
+        list(pool.map(run_host, groups.values()))
     items: list[Item] = []
     errors: list[str] = []
-    last_hit: dict[str, float] = {}
-    for src in interleave(config["sources"]):
-        host = source_host(src)
-        time.sleep(wait_seconds(host, last_hit, cfg, time.monotonic()))
-        with metrics.timed("fetch_source", source=src["name"], topic=src.get("topic")) as m:
-            got, err = fetch_source(src, cfg, limit)
-            m.update(items=len(got), error=err)
-        last_hit[host] = time.monotonic()  # 以請求結束時間起算，失敗重試也算在內
+    for src in config["sources"]:
+        got, err = results[id(src)]
         items.extend(got)
-        if err:
+        if err or (err := stale_warning(src, got)):
             errors.append(err)
     return items, errors
 
@@ -246,7 +279,56 @@ if __name__ == "__main__":  # 自我檢查：uv run --project packages/collect p
     assert wait_seconds("a.com", {"a.com": 99.5}, cfg, 100.0) == 0.5            # 同網域補足 1 秒
     assert wait_seconds("a.com", {"a.com": 90.0}, cfg, 100.0) == 0.0            # 早就超過間隔
     assert wait_seconds("export.arxiv.org", {"export.arxiv.org": 99.0}, cfg, 100.0) == 2.0  # arXiv 3 秒
-    order = [s["url"] for s in interleave([{"url": u} for u in
-             ["https://a/1", "https://a/2", "https://a/3", "https://b/1", "https://c/1"]])]
-    assert order == ["https://a/1", "https://b/1", "https://c/1", "https://a/2", "https://a/3"], order
+    def http_error(code: int) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError("https://x", code, "x", {}, None)  # type: ignore[arg-type]
+    assert not retryable(http_error(404)) and not retryable(http_error(403))
+    assert retryable(http_error(429)) and retryable(http_error(503)) and retryable(TimeoutError())
+    calls = []
+    real_urlopen, real_sleep = urllib.request.urlopen, time.sleep
+    urllib.request.urlopen = lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(http_error(404))
+    time.sleep = calls.append
+    try:
+        _http_get("https://x/feed", {"retries": 2})
+    except RuntimeError as exc:
+        assert "404" in str(exc)
+    finally:
+        urllib.request.urlopen, time.sleep = real_urlopen, real_sleep
+    assert calls == [1], calls  # 404 只請求一次、不等
+    def dated(day: str) -> Item:
+        return Item(uid=day, title="t", url="u", source="s", topic="t", weight=1.0, published=f"{day}T00:00:00+00:00",
+                    summary="", authors=[])
+    ref = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    assert stale_warning({"name": "A"}, [dated("2026-10-01"), dated("2026-10-10")], ref) == \
+        "A: 最新一則是 29 天前（2026-10-10），feed 可能停更"
+    assert stale_warning({"name": "A"}, [dated("2026-10-20")], ref) is None
+    assert stale_warning({"name": "A", "stale_days": 7}, [dated("2026-10-20")], ref) is not None
+    assert stale_warning({"name": "A"}, [], ref) is None
+
+    # 並行：同網域依序且守間隔、不同網域同時；結果照設定順序
+    srcs = [{"name": n, "type": "rss", "url": f"https://{h}/{n}"} for n, h in
+            (("a1", "a.x"), ("b1", "b.x"), ("a2", "a.x"), ("c1", "c.x"))]
+    hits: list[tuple[str, float]] = []
+
+    def fake(src: dict, _cfg: dict, _limit: int):
+        hits.append((src["name"], time.monotonic()))
+        time.sleep(0.2)
+        return [Item(uid=src["name"], title=src["name"], url=src["url"], source=src["name"], topic="t",
+                     weight=1.0, published=None, summary="", authors=[])], \
+            (f"{src['name']}: boom" if src["name"] == "b1" else None)
+
+    t0 = time.monotonic()
+    got, errs = fetch_all({"sources": srcs, "request": {"delay_seconds": 0.3}}, fake)
+    assert [i.uid for i in got] == ["a1", "b1", "a2", "c1"] and errs == ["b1: boom"], (got, errs)
+    at = dict(hits)
+    assert at["a2"] - at["a1"] >= 0.2 + 0.3 - 0.01, at  # a.x 第二個要等第一個做完再隔 0.3 秒
+    assert abs(at["b1"] - at["a1"]) < 0.15 and abs(at["c1"] - at["a1"]) < 0.15, at  # 不同網域同時開始
+    assert time.monotonic() - t0 < 1.0
+    rss = (b"<rss><channel>"
+           b"<item><title>Real news</title><link>https://x/news/1</link></item>"
+           b"<item><title>Watch: a ship sinks</title><link>https://x/news/2</link></item>"
+           b"<item><title>Red carpet</title><link>https://x/news/videos/3</link></item>"
+           b"</channel></rss>")
+    skip_src = {"name": "s", "skip": r"^Watch:|/videos/"}
+    assert [i.title for i in parse_feed(rss, skip_src, 10)] == ["Real news"]
+    assert len(parse_feed(rss, {"name": "s"}, 10)) == 3
     print("ok")

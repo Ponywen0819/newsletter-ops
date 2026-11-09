@@ -3,15 +3,13 @@ from __future__ import annotations
 
 import json
 import os
-import threading
-import traceback
 from datetime import datetime
 from pathlib import Path
 
-from newsletter_shared import ROOT, auth_store, feedback
+from newsletter_shared import auth_health, auth_store, feedback
 
 from . import server
-from .auth import CHECK_TIMEOUT, run_auth_check
+from .auth import STALE_AFTER
 from .server import IMMUTABLE, MAX_BODY, Site, is_local_request, served
 
 
@@ -70,6 +68,7 @@ def selftest() -> None:
             _selftest_reports(req, site, root, uid_a)
             _selftest_static(req, shell)
             _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
+            _selftest_etag(req, uid_a)
 
         # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
         bare = root / "bare"
@@ -78,10 +77,33 @@ def selftest() -> None:
             status, _, body = req("GET", "/")
             assert status == 503 and "npm run build" in body
             status, _, body = req("GET", "/api/today")
-            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "latest": None}
+            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "latest": None,
+                                                     "run": None}
             assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
     print("ok")
+
+
+def _selftest_etag(req, uid_a: str) -> None:
+    """離線副本的條件請求：沒變回 304（沒有 body），標記或晨報變了 ETag 跟著變。"""
+    path = "/api/reports/2026-09-28"
+    status, headers, _ = req("GET", path)
+    etag = headers["etag"]
+    assert status == 200 and etag.startswith('"') and headers["cache-control"] == "no-store", headers
+    for sent in (etag, f"W/{etag}", f'"x", {etag}', "*"):  # Cloudflare 可能改成弱 ETag
+        status, headers, again = req("GET", path, {"If-None-Match": sent})
+        assert status == 304 and again == "" and headers["etag"] == etag, (sent, status)
+    assert req("GET", path, {"If-None-Match": '"nope"'})[0] == 200
+    for p in (path, "/", "/api/nope"):  # HEAD：狀態與標頭同 GET，沒有 body
+        got, head = req("GET", p), req("HEAD", p)
+        assert head[0] == got[0] and head[2] == "" and head[1]["content-length"] == got[1]["content-length"], (p, head)
+    assert req("GET", "/api/reports")[1].get("etag") and req("GET", "/api/today")[1].get("etag")
+    assert "etag" not in req("GET", "/api/session")[1]  # 只有同步的對象有
+    req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": "+"})
+    status, headers, _ = req("GET", path, {"If-None-Match": etag})
+    assert status == 200 and headers["etag"] != etag  # 標記變了
+    req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": ""})
+    assert req("GET", path, {"If-None-Match": etag})[0] == 304  # 改回去就和原本一樣
 
 
 def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
@@ -92,6 +114,9 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     # 晨報：回結構，不是 HTML；巢狀子項目不帶 mark，mark 掛在最外層的項目上（與 email 版型一致）
     status, data = get("/api/reports/2026-09-28")
     assert status == 200 and data["date"] == "2026-09-28" and data["marks"] == {}, data
+    assert (data["prev"], data["next"]) == ("2026-09-27", None), data  # 前一份＝更舊的，下一份＝更新的
+    older = get("/api/reports/2026-09-27")[1]
+    assert (older["prev"], older["next"]) == (None, "2026-09-28"), older
     report = data["report"]
     assert report["headline"] == "某事發生，見 來源。" and report["subject"] == "測試頭條"
     assert [b["type"] for b in report["blocks"]] == ["title", "callout", "heading", "paragraph", "list",
@@ -105,10 +130,45 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     assert "重點 <標題>" in raw and "mark:" not in raw and "<div" not in raw
 
     # 當日：有就給整份，沒有就給最新一份的日期
-    assert get("/api/today") == (200, {**data, "latest": "2026-09-28"})
+    assert get("/api/today") == (200, {**data, "latest": "2026-09-28", "run": None})
     site.reports.today = lambda: "2026-10-05"
-    assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28"})
+    assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28",
+                                       "run": None})
+
+    # 當天的執行紀錄（worker 寫的 last_run.json）：只給當天的，壞掉當沒有
+    record = root / "state" / "last_run.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"date": "2026-10-05", "trigger": "schedule", "started_at": "a", "finished_at": "b", "exit_code": 3,
+           "step": "collect"}
+    record.write_text(json.dumps(rec), encoding="utf-8")
+    assert get("/api/today")[1]["run"] == {k: v for k, v in rec.items() if k != "date"}
+    record.write_text(json.dumps({**rec, "date": "2026-10-04"}), encoding="utf-8")
+    assert get("/api/today")[1]["run"] is None
+    record.write_text("{", encoding="utf-8")
+    assert get("/api/today")[1]["run"] is None
+    record.unlink()
     site.reports.today = lambda: "2026-09-28"
+
+    # 搜尋：不分大小寫、去掉語法與 mark、新到舊；空字串沒有結果；太長 400；超過上限截斷
+    status, data = get("/api/search?q=%E7%B4%B0%E7%AF%80")  # 細節
+    assert status == 200 and data["results"][0] == {"date": "2026-09-28", "text": "細節"}, data
+    assert [r["date"] for r in data["results"]] == sorted((r["date"] for r in data["results"]), reverse=True)
+    status, data = get("/api/search?q=" + "%E6%A8%99%E9%A1%8C")  # 標題
+    assert status == 200 and data["results"] and all("mark:" not in r["text"] and "**" not in r["text"]
+                                                      for r in data["results"]), data
+    assert get("/api/search?q=")[1] == {"q": "", "results": [], "truncated": False}
+    both = get("/api/search?q=%E7%B4%B0+%E7%AF%80")[1]["results"]  # 細 節：兩個詞都要有
+    assert both and all("細" in r["text"] and "節" in r["text"] for r in both), both
+    assert get("/api/search?q=%E7%B4%B0%E7%AF%80+zzzz")[1]["results"] == []
+    assert get("/api/search")[1]["results"] == []
+    assert get("/api/search?q=" + "x" * 101)[0] == 400
+    import newsletter_web_server.reports as reports_mod
+    saved_limit, reports_mod.SEARCH_LIMIT = reports_mod.SEARCH_LIMIT, 1
+    try:
+        data = get("/api/search?q=a")[1]
+        assert len(data["results"]) == 1 and data["truncated"], data
+    finally:
+        reports_mod.SEARCH_LIMIT = saved_limit
 
     # 歷史列表：新到舊、略過非日期檔名、顯示頭條
     status, data = get("/api/reports")
@@ -135,14 +195,15 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
 
 def _selftest_static(req, shell: str) -> None:
     # 前端：路由一律回 index.html（含 CSP）；沒有行內腳本與樣式
-    for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth"):
+    for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth", "/stats",
+                 "/feedback/0123456789abcdef", "/feedback/0123456789abcdef,1111111111111111"):
         status, headers, body = req("GET", path)
         assert status == 200 and body == shell, (path, status)
         assert headers["content-type"] == "text/html; charset=utf-8" and headers["cache-control"] == "no-cache"
         assert "default-src 'self'" in headers["content-security-policy"] and "frame-ancestors 'none'" in headers["content-security-policy"]
     assert "<style" not in shell and "<script>" not in shell
     # 不認得的路徑：同一份 index.html，但狀態碼是 404（前端畫「找不到頁面」）
-    for path in ("/nope", "/reports/abc", "/api", "/reports/2026-09-28/x"):
+    for path in ("/nope", "/reports/abc", "/api", "/reports/2026-09-28/x", "/feedback/0123456789abcdef,"):
         status, _, body = req("GET", path)
         assert status == 404 and body == shell, (path, status)
     # 靜態檔：assets 帶 hash 長期快取，其他每次確認；類型照副檔名
@@ -217,6 +278,11 @@ def _selftest_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str,
         fh.write(json.dumps(feedback.build_row("f" * 16, "+", "2026-08-01.md", {})) + "\n")
     assert marks() == {uid_b: "-", uid_c: "+"}
 
+    # 統計：每個 uid 只算最後一筆、取消的不算；uid_c 最後是 ++、f… 是 +、uid_b 是 -
+    stats = get("/api/feedback-stats")[1]
+    assert stats["total"] == 3, stats
+    assert stats["groups"]["topic"][0] == {"name": "未知", "pos": 2, "neg": 1}, stats
+
     # email 連結的確認頁：GET 只讀，絕不寫入；標題來自 curated，沒有就空字串；mark 是目前的標記
     before = site.reports.feedback_path.read_text(encoding="utf-8")
     assert get(f"/api/feedback/{uid_a}") == (200, {"uid": uid_a, "date": "2026-09-28", "title": "重點", "mark": ""})
@@ -246,7 +312,6 @@ def _selftest_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str,
 def selftest_auth() -> None:
     secret = "sk-ant-oat01-" + "Kp4" * 14
     _selftest_is_local()
-    _selftest_run_auth_check(secret)
     _selftest_auth_http(secret)
 
 
@@ -278,47 +343,6 @@ def _selftest_is_local() -> None:
                   ("172.18.0.1", {**ok_host, "Origin": "https://evil.example"})):
         assert not is_local_request(ip, h, admin=True), (ip, h)
     assert not is_local_request("172.18.0.1", ok_host)
-
-
-def _selftest_run_auth_check(secret: str) -> None:
-    import subprocess as sp
-    from unittest import mock
-
-    # --- run_auth_check：子程序的呼叫方式與輸出解析（假的 subprocess.run）---
-
-    def fake_run(stdout="", code=0, raises=None):
-        calls = []
-
-        def run(cmd, **kw):
-            calls.append((cmd, kw))
-            if raises:
-                raise raises
-            return sp.CompletedProcess(cmd, code, stdout, "")
-        return run, calls
-
-    run, calls = fake_run('[agent] 雜訊\n{"ok": false, "kind": "auth", "message": "bad ' + secret + '", "source": "env-token"}\n', 5)
-    with mock.patch.object(sp, "run", run):
-        res = run_auth_check(secret)
-    assert res == {"ok": False, "kind": "auth", "message": "bad ***"}, res
-    cmd, kw = calls[0]
-    assert secret not in " ".join(cmd) and "--auth-check" in cmd and "--token-from-env" in cmd
-    assert cmd[1:3] == ["-m", "newsletter_llm.runner"] and kw["cwd"] == ROOT, cmd
-    assert kw["env"][auth_store.TOKEN_ENV] == secret and kw["timeout"] == CHECK_TIMEOUT and kw["stdin"] == sp.DEVNULL
-    run, _ = fake_run('{"ok": true, "kind": "ok", "message": "驗證通過", "source": "env-token"}\n')
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["ok"] is True
-    run, _ = fake_run("", 2)
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["kind"] == "env"
-    run, _ = fake_run("garbage", 1)
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret) == {"ok": False, "kind": "other", "message": "驗證程序異常結束（exit 1）"}
-    run, _ = fake_run(raises=sp.TimeoutExpired("x", CHECK_TIMEOUT))
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["kind"] == "timeout"
-    run, _ = fake_run(raises=FileNotFoundError(2, "No such file"))
-    with mock.patch.object(sp, "run", run):
-        assert run_auth_check(secret)["kind"] == "env"
 
 
 def _selftest_auth_http(secret: str) -> None:
@@ -503,7 +527,7 @@ def _selftest_auth_lifecycle(t) -> None:
     from datetime import timedelta, timezone
     from unittest import mock
 
-    site, get, post, secret, checked, missing = t.site, t.get, t.post, t.secret, t.checked, t.missing
+    site, get, post, secret, missing = t.site, t.get, t.post, t.secret, t.missing
 
     # 即將到期的提醒（以儲存時間推算）
     auth_store.save(secret, site.auth.token_path, datetime.now(timezone.utc) - timedelta(days=345))
@@ -523,40 +547,22 @@ def _selftest_auth_lifecycle(t) -> None:
     assert post("/api/auth/test", {})[0] == 404
     assert get("/api/auth-health")[1] == missing
 
-    # 定時驗證：用儲存的 token 驗一次；沒有就不呼叫。環境變數裡的 OAuth token 不算來源
-    n = len(checked)
-    env_token = "env-" + "e" * 20
-    with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: env_token}):
-        site.auth.check_now()
-        assert len(checked) == n and site.auth.last_check is None
-        assert get("/api/auth-health")[1] == missing and get("/api/auth") == (200, {"state": "missing"})
+    # 最近的驗證結果來自 state/auth_health.json（worker 定時寫）：web 重啟不會丟，太久沒更新就不能再說正常
     auth_store.save(secret, site.auth.token_path)
-    assert get("/api/auth-health")[1]["kind"] == "unchecked"
-    site.auth.check_now()
-    assert checked[-1] == secret and get("/api/auth-health")[1]["state"] == "ok"
-    n = len(checked)
-    assert site.auth._check_lock.acquire(blocking=False)
-    try:
-        site.auth.check_now()
-    finally:
-        site.auth._check_lock.release()
-    assert len(checked) == n
-
-    # 迴圈：先驗一次、之後每隔一段時間；某一輪丟例外也不會停
-    stop, calls = threading.Event(), []
-
-    def flaky(token: str) -> dict:
-        calls.append(token)
-        if len(calls) == 1:
-            raise RuntimeError("boom")
-        if len(calls) >= 3:
-            stop.set()
-        return {"ok": True, "kind": "ok", "message": ""}
-
-    site.auth.checker = flaky
-    with mock.patch.object(traceback, "print_exc"):
-        t = threading.Thread(target=site.auth.monitor, args=(0.01, stop))
-        t.start()
-        t.join(10)
-    assert not t.is_alive() and calls == [secret] * 3
+    assert get("/api/auth-health")[1] == {"state": "unknown", "kind": "unchecked", "checked_at": None}
+    at = datetime.now(timezone.utc).replace(microsecond=0)
+    auth_health.write(True, "ok", site.auth.health_path, at)
+    assert get("/api/auth-health")[1] == {"state": "ok", "kind": "ok", "checked_at": at.isoformat()}
+    assert Site(site.auth.health_path.parent.parent, checker=lambda _: {}).auth.health()["state"] == "ok"  # 新的 web 程序讀得到
+    auth_health.write(False, "auth", site.auth.health_path, at)
+    assert get("/api/auth-health")[1]["state"] == "invalid"
+    late = at + STALE_AFTER + timedelta(seconds=1)
+    assert site.auth.health(late) == {"state": "unknown", "kind": "stale", "checked_at": at.isoformat()}
+    assert site.auth.health(at + STALE_AFTER)["state"] == "invalid"
+    with mock.patch.dict(os.environ, {auth_store.TOKEN_ENV: "env-" + "e" * 20}):  # 環境變數裡的 token 不算來源
+        auth_store.delete(site.auth.token_path)
+        assert get("/api/auth-health")[1] == missing
+        auth_store.save(secret, site.auth.token_path)
+    assert post("/api/auth/revoke", {})[0] == 200 and not site.auth.health_path.exists()  # 刪 token 連結果一起清
+    assert not hasattr(site.auth, "monitor") and not hasattr(site.auth, "check_now")  # 定時驗證在 worker
     auth_store.delete(site.auth.token_path)

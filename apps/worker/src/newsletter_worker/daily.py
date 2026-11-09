@@ -3,8 +3,10 @@
 
 入口在 service.py：worker --once 跑一次、worker 常駐排程，都進 run_pipeline()。
 
-任一步失敗就停，exit code 是該步的；被訊號殺掉是 128+訊號；鎖被占用是 75（EX_TEMPFAIL）。
-拿到鎖才算執行：開始與結束都寫進 state/last_run.json（排程服務用它判斷今天跑過沒）。
+任一步失敗就停，exit code 是該步的；被訊號殺掉是 128+訊號；鎖被占用是 75（EX_TEMPFAIL）；
+超過 TIMEOUTS 的時限是 124（和 timeout(1) 一樣），免得卡住的步驟一直握著鎖、之後每天都跑不了。
+拿到鎖才算執行：開始與結束都寫進 state/last_run.json（排程服務用它判斷今天跑過沒、web 用它顯示失敗）；
+失敗時 step 是哪一步（collect / write / render / send）。
 """
 from __future__ import annotations
 
@@ -19,29 +21,24 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, Iterator
-from zoneinfo import ZoneInfo
 
-from newsletter_shared import ROOT, atomic, lock
+from newsletter_shared import ROOT, atomic, lock, metrics, today, tz
 
+TZ = tz()  # log 的時間跟 config 的 timezone，不跟容器的 TZ
 EXIT_BUSY = 75
 EXIT_STOPPED = 128 + signal.SIGTERM
+EXIT_TIMEOUT = 124
+KILL_AFTER = 30  # 秒；送 SIGTERM 後還不結束就 SIGKILL
+TIMEOUTS = {"collect": 30 * 60, "write": 60 * 60, "render": 5 * 60, "send": 5 * 60}  # 秒，平常遠低於此
 LOCK = ROOT / "state" / "pipeline"  # 實際鎖的是 state/pipeline.lock
 RECORD = ROOT / "state" / "last_run.json"
+STEPS = ("collect", "write", "render", "send")
 MODULES = {
     "collect": "newsletter_collect.run",
     "write": "newsletter_writer.write",
     "render": "newsletter_notify.render_email",
     "send": "newsletter_notify.send_email",
 }
-
-
-def tz() -> ZoneInfo:
-    """報告日期的時區，和 newsletter-collect 同一個來源。"""
-    try:
-        name = json.loads((ROOT / "config" / "config.json").read_text(encoding="utf-8")).get("timezone")
-    except (OSError, ValueError):
-        name = None
-    return ZoneInfo(name or "Asia/Taipei")
 
 
 def now_iso() -> str:
@@ -57,56 +54,88 @@ def read_record() -> dict | None:
 
 
 def say(log: IO[str], message: str) -> None:
-    print(f"=== {datetime.now():%Y-%m-%d %H:%M:%S} === {message}", file=log, flush=True)
+    print(f"=== {datetime.now(TZ):%Y-%m-%d %H:%M:%S} === {message}", file=log, flush=True)
 
 
-def step(log: IO[str], module: str, *args: str, input: str | None = None, capture: bool = False,
+def step(log: IO[str], key: str, *args: str, input: str | None = None, capture: bool = False,
          stop: threading.Event | None = None) -> tuple[int, str]:
-    """跑一步，回傳 (exit code, stdout)。stdout 只有 capture 時才收；否則和 stderr 一起進 log。
-    stop 被設起來就對子程序送 SIGTERM、等它結束。"""
+    """跑 MODULES[key] 一步，回傳 (exit code, stdout)。stdout 只有 capture 時才收；否則和 stderr 一起進 log。
+    stop 被設起來、或跑超過 TIMEOUTS[key] 秒，就對子程序送 SIGTERM；KILL_AFTER 秒後還在就 SIGKILL。超時回 EXIT_TIMEOUT。"""
+    module, limit = MODULES[key], TIMEOUTS.get(key)
     proc = subprocess.Popen([sys.executable, "-m", module, *args], cwd=ROOT, encoding="utf-8",
                             stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
                             stdout=subprocess.PIPE if capture else log, stderr=log)
-    out, sent = "", False
+    out, sent, t0 = "", False, time.monotonic()
+    timed_out, termed_at = False, None
     while True:
         try:
             out = proc.communicate(None if sent else input, timeout=0.5)[0] or ""
             break
         except subprocess.TimeoutExpired:
             sent = True  # communicate 重試時不能再給 input，已送出的不會遺失
-            if stop is not None and stop.is_set() and proc.poll() is None:
+            now = time.monotonic()
+            if termed_at is None and limit is not None and now - t0 > limit:
+                timed_out = True
+                say(log, f"超過 {limit:.0f} 秒，停止：{module}")
+            if termed_at is None and (timed_out or (stop is not None and stop.is_set())):
                 proc.terminate()
+                termed_at = now
+            elif termed_at is not None and now - termed_at > KILL_AFTER:
+                proc.kill()
+    if timed_out:
+        return EXIT_TIMEOUT, out
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
     return code, out
 
 
-def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", stop: threading.Event | None = None) -> int:
-    """trigger：schedule / catchup / manual / cli，只是寫進紀錄。"""
+def resume_from(failed: str | None) -> str:
+    """重跑時從哪一步開始：失敗的那步（前面的產出今天已經有了）；send 要 render 的 stdout，所以從 render。"""
+    if failed == "send":
+        return "render"
+    return failed if failed in STEPS else "collect"
+
+
+def run_pipeline(collect_args: list[str], log: IO[str], trigger: str = "cli", stop: threading.Event | None = None,
+                 start: str = "collect") -> int:
+    """trigger：schedule / catchup / retry / manual / cli，寫進紀錄；排程服務靠 retry 判斷重跑過沒。"""
     try:
         with lock.locked(LOCK, timeout=0):
-            rec = {"date": f"{datetime.now(tz()):%Y-%m-%d}", "trigger": trigger, "started_at": now_iso(),
-                   "finished_at": None, "exit_code": None}
+            rec = {"date": today(), "trigger": trigger, "started_at": now_iso(),
+                   "finished_at": None, "exit_code": None, "step": None}
             atomic.write_text(RECORD, json.dumps(rec))
-            code = 1  # _run 丟例外時記成失敗
+            code, failed, t0 = 1, [], time.monotonic()  # _run 丟例外時記成失敗
             try:
-                code = _run(collect_args, log, stop)
+                code = _run(collect_args, log, stop, failed, start)
                 return code
             finally:
-                atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code}))
+                step_ = failed[-1] if failed else None
+                atomic.write_text(RECORD, json.dumps({**rec, "finished_at": now_iso(), "exit_code": code, "step": step_}))
+                metrics.record("pipeline", seconds=round(time.monotonic() - t0, 1), trigger=trigger, start=start,
+                               exit_code=code, step=step_)
     except lock.LockBusy:
         say(log, "已有另一條 pipeline 在跑（state/pipeline.lock 被占用），這次不執行")
         return EXIT_BUSY
 
 
-def _run(collect_args: list[str], log: IO[str], stop: threading.Event | None = None) -> int:
+def _run(collect_args: list[str], log: IO[str], stop: threading.Event | None = None,
+         failed: list[str] | None = None, start: str = "collect") -> int:
+    """failed：失敗（或被停止）的那一步會 append 進去。start 之前的步驟不跑（重跑時沿用今天的產出）。"""
+    failed = [] if failed is None else failed
+    skip = set(STEPS[:STEPS.index(start)])
+
     def go(label: str, key: str, *args: str, input: str | None = None, capture: bool = False) -> tuple[int, str]:
+        if key in skip:
+            say(log, f"沿用今天的產出，不重跑：{label}")
+            return 0, ""
         if stop is not None and stop.is_set():
             say(log, f"收到停止，不執行：{label}")
+            failed.append(key)
             return EXIT_STOPPED, ""
         say(log, label)
-        code, out = step(log, MODULES[key], *args, input=input, capture=capture, stop=stop)
+        code, out = step(log, key, *args, input=input, capture=capture, stop=stop)
         if code:
             say(log, f"失敗，exit {code}：{label}")
+            failed.append(key)
         return code, out
 
     code, _ = go(" ".join(["newsletter-collect", *collect_args]), "collect", *collect_args)
@@ -140,6 +169,10 @@ if fail[0] == name:
         os.kill(os.getpid(), 9)
     if fail[1] == "hang":
         time.sleep(60)
+    if fail[1] == "stubborn":  # 不理 SIGTERM
+        import signal
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        time.sleep(60)
     sys.exit(int(fail[1]))
 '''
 
@@ -147,17 +180,18 @@ if fail[0] == name:
 @contextlib.contextmanager
 def fake_steps(tmp: Path) -> Iterator[None]:
     """四步換成假步驟，鎖與紀錄放進 tmp；service 的自我檢查也用。"""
-    global MODULES, LOCK, RECORD  # noqa: PLW0603
-    saved, env = (MODULES, LOCK, RECORD), dict(os.environ)
+    global MODULES, LOCK, RECORD, TIMEOUTS  # noqa: PLW0603
+    saved, env = (MODULES, LOCK, RECORD, TIMEOUTS), dict(os.environ)
     for name in saved[0]:
         (tmp / f"fake_{name}.py").write_text(FAKE_STEP.replace("NAME", name), encoding="utf-8")
     os.environ.update(FAKE_OUT=str(tmp), PYTHONPATH=str(tmp), FAKE_FAIL="")
     MODULES = {name: f"fake_{name}" for name in saved[0]}
     LOCK, RECORD = tmp / "state" / "pipeline", tmp / "state" / "last_run.json"
+    TIMEOUTS = dict(saved[3])
     try:
         yield
     finally:
-        MODULES, LOCK, RECORD = saved
+        MODULES, LOCK, RECORD, TIMEOUTS = saved
         os.environ.clear()
         os.environ.update(env)
 
@@ -189,17 +223,19 @@ def selftest() -> None:
         assert '"subject"' not in text
         rec = read_record()
         assert rec is not None and rec["trigger"] == "schedule" and rec["exit_code"] == 0 and rec["finished_at"], rec
-        assert rec["date"] == f"{datetime.now(tz()):%Y-%m-%d}" and rec["started_at"] <= rec["finished_at"], rec
+        assert rec["date"] == today() and rec["started_at"] <= rec["finished_at"], rec
+        assert rec["step"] is None, rec
 
         # 任一步失敗：後面的不跑、exit code 是該步的、log 一行說明、紀錄記下 exit code；失敗也會放鎖
         code, text = run(fail="write:5")
         assert code == 5 and ran("collect") and ran("write") and not ran("render") and not ran("send")
         assert "失敗，exit 5：newsletter-write" in text and "完成" not in text
-        assert read_record()["exit_code"] == 5 and read_record()["trigger"] == "cli"
+        assert read_record()["exit_code"] == 5 and read_record()["trigger"] == "cli" and read_record()["step"] == "write"
         code, text = run(fail="collect:3")
         assert code == 3 and ran("collect") and not ran("write")
         code, text = run(fail="render:kill")
         assert code == 128 + 9 and ran("render") and not ran("send") and read_record()["exit_code"] == 128 + 9
+        assert read_record()["step"] == "render"
 
         # stop：對執行中的子程序送 SIGTERM、後面的不跑；紀錄有 finished_at 與 143
         stop, t0 = threading.Event(), time.monotonic()
@@ -210,6 +246,26 @@ def selftest() -> None:
         assert rec["exit_code"] == EXIT_STOPPED and rec["finished_at"], rec
         code, _ = run(stop=stop)  # 已經要停：一步都不跑
         assert code == EXIT_STOPPED and not ran("collect")
+
+        # 超時：SIGTERM 停下、exit 124、紀錄的 step 是那一步；不理 SIGTERM 的 KILL_AFTER 後 SIGKILL
+        global KILL_AFTER  # noqa: PLW0603
+        TIMEOUTS["write"], t0 = 1, time.monotonic()
+        code, text = run(fail="write:hang")
+        assert code == EXIT_TIMEOUT and not ran("render") and time.monotonic() - t0 < 10, (code, text)
+        assert "超過 1 秒" in text and read_record()["step"] == "write" and read_record()["exit_code"] == EXIT_TIMEOUT
+        saved_kill, KILL_AFTER, t0 = KILL_AFTER, 1, time.monotonic()
+        code, _ = run(fail="write:stubborn")
+        assert code == EXIT_TIMEOUT and time.monotonic() - t0 < 10, code
+        KILL_AFTER = saved_kill
+        TIMEOUTS["write"] = 60
+
+        # 從中間開始：前面的不跑；send 失敗要從 render 重來（send 吃 render 的 stdout）
+        code, text = run(start=resume_from("send"))
+        assert code == 0 and not ran("collect") and not ran("write") and ran("render"), text
+        assert (tmp / "send").read_text() == '|{"subject": "s"}\n' and "沿用今天的產出，不重跑：newsletter-write" in text
+        code, _ = run(start=resume_from("write"))
+        assert code == 0 and not ran("collect") and ran("write")
+        assert resume_from(None) == resume_from("bogus") == "collect"
 
         # 別的執行緒（等同別的程序）拿著鎖：這次不執行，一步都不跑、不寫紀錄；放掉之後恢復正常
         holding, release = threading.Event(), threading.Event()

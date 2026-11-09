@@ -11,7 +11,7 @@ interface AuthHealthValue {
 
 const AuthHealthContext = createContext<AuthHealthValue>({ health: null, refresh: () => {} })
 
-/** 後端定時驗證的最近結果。載入時問一次，之後每次回到這個分頁／PWA 再問一次（後端每小時才驗一次，不必輪詢）。 */
+/** 最近一次驗證的結果（worker 每天驗一次）。載入時問一次，之後每次回到這個分頁／PWA 再問一次，不必輪詢。 */
 export function AuthHealthProvider({ children }: { children: ReactNode }) {
   const [health, setHealth] = useState<AuthHealth | null>(null)
   const refresh = useCallback(() => {

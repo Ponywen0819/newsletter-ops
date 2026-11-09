@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import ipaddress
 import json
 import re
@@ -11,7 +12,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from newsletter_shared import ROOT
 
@@ -23,7 +24,15 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 MAX_BODY = 4096
 # 與 apps/web-ui/src/App.tsx 的路由同步
-SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}|/auth")
+SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/stats|/auth")
+# 離線副本同步的對象：回 ETag，If-None-Match 相符回 304（前端自己帶，所以照舊 no-store）
+ETAG_PATHS = re.compile(r"/api/today|/api/reports|/api/reports/\d{4}-\d{2}-\d{2}")
+
+
+def etag_matches(header: str, etag: str) -> bool:
+    """If-None-Match 可能是逗號分隔的清單、*、或被代理（Cloudflare）改成弱 ETag 的 W/"..."。"""
+    tags = {t.strip().removeprefix("W/") for t in header.split(",")}
+    return "*" in tags or etag in tags
 BUILD_COMMAND = "cd apps/web-ui && npm install && npm run build"
 STATIC_TYPES = {  # 副檔名白名單
     ".html": "text/html; charset=utf-8",
@@ -111,6 +120,7 @@ class Site:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "newsletter-web"
+    head_only = False  # HEAD：同 GET，但不送 body（監控服務常用 HEAD）
 
     @property
     def site(self) -> Site:
@@ -134,7 +144,8 @@ class Handler(BaseHTTPRequestHandler):
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(data)
+        if not self.head_only:
+            self.wfile.write(data)
 
     def _send_json(self, status: int, payload: dict) -> None:
         self._send(status, json.dumps(payload, ensure_ascii=False), "application/json; charset=utf-8")
@@ -148,6 +159,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.SERVICE_UNAVAILABLE, hint, "text/html; charset=utf-8")
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
+
+    def do_HEAD(self) -> None:
+        self.head_only = True
+        self.do_GET()
 
     def do_GET(self) -> None:
         path = urlsplit(self.path).path.rstrip("/") or "/"
@@ -170,6 +185,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/today": self.site.reports.today_payload,
             "/api/reports": self.site.reports.list_payload,
             "/api/auth-health": self.site.auth.health,
+            "/api/feedback-stats": self.site.reports.feedback_stats,
         }
         if path in fixed:
             return fixed[path]()
@@ -177,13 +193,28 @@ class Handler(BaseHTTPRequestHandler):
             return self.site.reports.report_payload(m[1])
         if m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
             return self.site.reports.feedback_target(m[1])
+        if path == "/api/search":
+            return self.site.reports.search(parse_qs(urlsplit(self.path).query).get("q", [""])[0])
         if path == "/api/auth" and self._local():
             return self.site.auth.status()
         raise NotFound(path)
 
     def _get_api(self, path: str) -> None:
         try:
-            self._send_json(200, self._api_payload(path))
+            payload = self._api_payload(path)
+            if not ETAG_PATHS.fullmatch(path):
+                self._send_json(200, payload)
+                return
+            # 晨報內容＋標記都在 payload 裡，對最後的 JSON 取雜湊才不會漏掉標記變動
+            body = json.dumps(payload, ensure_ascii=False)
+            etag = '"' + hashlib.sha256(body.encode("utf-8")).hexdigest()[:32] + '"'
+            if etag_matches(self.headers.get("If-None-Match", ""), etag):
+                self.send_response(HTTPStatus.NOT_MODIFIED)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
+            self._send(200, body, "application/json; charset=utf-8", headers={"ETag": etag})
         except NotFound:
             self._send_json(404, {"error": "not found"})
         except ApiError as exc:
