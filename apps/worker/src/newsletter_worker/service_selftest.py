@@ -31,6 +31,8 @@ def service_for(tmp: Path, at: time, check_at: time = CHECK_AT) -> Service:
     service.checker = lambda: service.checks.append(1) or {"ok": True, "kind": "ok", "message": ""}  # type: ignore[attr-defined]
     service.notices = []  # type: ignore[attr-defined]
     service.notifier = service.notices.append  # type: ignore[attr-defined]
+    service.beats = []  # type: ignore[attr-defined]
+    service.beat = service.beats.append  # type: ignore[attr-defined]
     service.token_status = lambda: {"state": "ok", "days_left": 200}
     return service
 
@@ -39,7 +41,24 @@ def tpe(s: str) -> datetime:
     return datetime.fromisoformat(s).replace(tzinfo=TPE)
 
 
+def _selftest_heartbeat() -> None:
+    from unittest import mock
+
+    from . import service as svc
+    hits: list[str] = []
+    with mock.patch.object(svc.urllib.request, "urlopen", lambda url, timeout: hits.append(url) or mock.MagicMock()):
+        with mock.patch.dict(os.environ, {svc.HEARTBEAT_ENV: ""}):
+            svc.heartbeat(True)
+        with mock.patch.dict(os.environ, {svc.HEARTBEAT_ENV: "https://hc.example/abc/"}):
+            svc.heartbeat(True)
+            svc.heartbeat(False)
+    assert hits == ["https://hc.example/abc", "https://hc.example/abc/fail"], hits
+    with mock.patch.dict(os.environ, {svc.HEARTBEAT_ENV: "http://127.0.0.1:9/x"}):
+        svc.heartbeat(True)  # 連不到：只記 log，不丟例外
+
+
 def selftest() -> None:
+    _selftest_heartbeat()
     _selftest_clock()
     _selftest_due()
     _selftest_check_due()
@@ -287,6 +306,8 @@ def _selftest_tick(tmp: Path) -> None:
     os.environ["FAKE_FAIL"] = ""
     assert daily.read_record()["trigger"] == "retry" and "已經自動重跑過一次" in service.notices[-1]["text"]  # type: ignore[attr-defined]
     assert len(service.notices) == 3  # type: ignore[attr-defined]
+    # heartbeat：成功一次一個 True；寄失敗通知時（最終失敗）一個 False；之後還會重跑的不送
+    assert service.beats == [True, False, False, True, False], service.beats  # type: ignore[attr-defined]
 
 
 # 真的程序收 SIGTERM：子程序被終止、紀錄寫好、期限內離開

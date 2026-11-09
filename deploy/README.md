@@ -86,6 +86,9 @@ docker compose ps        # web 要是 healthy、cloudflared 是 Up；PORTS 欄�
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、用掉訂閱額度）。
 Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理頁面重新登入即可。
 
+**外部監控（建議）**：失敗通知是 worker 自己寄的，整台掛掉時不會有信。到 [healthchecks.io](https://healthchecks.io) 開一個 check
+（週期 1 天、寬限 1～2 小時），把 ping 網址寫進 `.env` 的 `NEWSLETTER_HEARTBEAT_URL`，`docker compose up -d` 生效。說明見 [worker/README.md](../apps/worker/README.md)「heartbeat」。
+
 **5. 日常操作**
 
 ```bash

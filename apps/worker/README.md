@@ -66,6 +66,10 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 **失敗通知**：今天不會再自動重跑時（重跑也失敗，或是 exit 5／6），寄一封純文字信給 `NEWSLETTER_MAIL_TO`：哪一步、exit code、該怎麼處理、log 最後 20 行。
 用 `newsletter-send --notice` 寄（同一組 Gmail 設定）；寄信本身壞掉時通知多半也寄不出去，只會留在 worker 的 log。`worker --once` 不寄（人就在終端機前）。
 
+**heartbeat**：設了 `NEWSLETTER_HEARTBEAT_URL`（例如 [healthchecks.io](https://healthchecks.io) 免費方案的 ping 網址）時，每次成功跑完 GET 這個網址，
+寄失敗通知時 GET `<url>/fail`。樹莓派斷電、斷網、worker 卡死或寄信壞掉，失敗通知都寄不出來；這時外部服務等不到 ping，會自己寄信。
+在 healthchecks.io 把週期設 1 天、寬限 1～2 小時。沒設就不做事；ping 不到只記 log。
+
 **token 到期提醒**：`/auth` 存的 token 依儲存時間推算剩 30、14、7、3、1、0 天，以及過期後第一天，在 `NEWSLETTER_AUTH_CHECK_AT` 之後寄一封提醒，說明怎麼換新。
 
 **認證驗證**：同一個時鐘，每天 `NEWSLETTER_AUTH_CHECK_AT`（預設 07:30）跑一次 `newsletter-llm --auth-check`（一次極小的 Claude 呼叫），

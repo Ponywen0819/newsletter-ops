@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import threading
+import urllib.request
 from datetime import datetime, time, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -142,6 +143,21 @@ def send_notice(notice: dict) -> None:
     say("已寄失敗通知" if ok else f"失敗通知寄不出去：{' '.join(detail)}")
 
 
+HEARTBEAT_ENV = "NEWSLETTER_HEARTBEAT_URL"
+
+
+def heartbeat(ok: bool) -> None:
+    """外部監控（例如 healthchecks.io）：成功 GET <url>，最終失敗 GET <url>/fail；太久沒 ping 由對方通知。
+    沒設就不做事；ping 不到只記 log。"""
+    url = os.environ.get(HEARTBEAT_ENV, "").rstrip("/")
+    if not url:
+        return
+    try:
+        urllib.request.urlopen(url if ok else f"{url}/fail", timeout=10).close()
+    except Exception as exc:
+        say(f"heartbeat 送不出去：{exc}")
+
+
 class Service:
     def __init__(self, at: time, tz: ZoneInfo, check_at: time, log_dir: Path = ROOT / "logs",
                  health: Path | None = None):
@@ -149,6 +165,7 @@ class Service:
         self.health = health or auth_health.health_path()
         self.checker = auth_health.run_check
         self.notifier = send_notice
+        self.beat = heartbeat
         self.token_status = lambda: auth_store.status(auth_store.token_path())
         self.reminded: str | None = None  # 今天檢查過到期提醒了沒（日期）；重啟後同一天可能再寄一次
         self.stop = threading.Event()
@@ -184,8 +201,11 @@ class Service:
                 auth_health.write(False, AUTH_EXIT[code], self.health)
             if code not in (0, daily.EXIT_BUSY):
                 print("\n".join(tail), flush=True)
-            if code not in (0, daily.EXIT_BUSY, daily.EXIT_STOPPED) and (trigger == "retry" or code in NO_RETRY):
+            if code == 0:
+                self.beat(True)
+            elif code not in (daily.EXIT_BUSY, daily.EXIT_STOPPED) and (trigger == "retry" or code in NO_RETRY):
                 self.notifier(failure_notice(code, daily.read_record(), tail, retried=trigger == "retry"))
+                self.beat(False)
         finally:
             with self._mu:
                 self.current = None
