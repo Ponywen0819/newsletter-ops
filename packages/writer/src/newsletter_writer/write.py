@@ -25,8 +25,24 @@ from newsletter_shared.report_data import parse_report, uids_of
 
 TOOLS = ["Skill", "Read", "Write", "Edit"]
 CHECK_TOOL = "mcp__newsletter__report_check"
-ALLOW = ["Skill", "Edit(./reports/**)", CHECK_TOOL]  # Edit 規則涵蓋 Write；cwd 內的 Read 預設放行
-DENY = ["Read(./state/**)", "Read(./.env)"]  # state/ 有 OAuth token
+
+
+def scoped(tool: str, rel: str, root: Path) -> list[str]:
+    """`./rel/**` 加上解析 symlink 後的絕對路徑：容器裡 data/、reports/、state/ 連到 volume，
+    在 cwd 之外，只寫相對規則對不上（cwd 外的讀寫預設拒絕）。"""
+    rules = [f"{tool}(./{rel}/**)"]
+    real = (root / rel).resolve()
+    if real != root.resolve() / rel:
+        rules.append(f"{tool}(/{real}/**)")  # 規則裡 // 開頭是絕對路徑
+    return rules
+
+
+def permissions(root: Path) -> tuple[list[str], list[str]]:
+    """(allow, deny)。Edit 規則涵蓋 Write；config/、.claude/ 在 cwd 內，讀取預設放行。"""
+    allow = ["Skill", CHECK_TOOL, *scoped("Edit", "reports", root), *scoped("Read", "reports", root),
+             *scoped("Read", "data/curated", root)]
+    deny = [*scoped("Read", "state", root), "Read(./.env)"]  # state/ 有 OAuth token
+    return allow, deny
 DEFAULT_MAX_TURNS = 60  # 還沒量過實際回合數；跑幾天看 metrics 的 turns 再調
 
 PROMPT = """請使用 news-digest skill，產出今天（{stamp}）的晨間簡報。專案根目錄 ROOT 就是目前的工作目錄（{root}）。
@@ -115,7 +131,8 @@ def main(argv: list[str] | None = None) -> int:
 
     stamp = f"{datetime.now(metrics.TZ):%Y-%m-%d}"
     started = time.time()
-    usage, sdk_error, wall = runner.run(PROMPT.format(stamp=stamp, root=ROOT), tools=TOOLS, allowed_tools=ALLOW, disallowed_tools=DENY,
+    allow, deny = permissions(ROOT)
+    usage, sdk_error, wall = runner.run(PROMPT.format(stamp=stamp, root=ROOT), tools=TOOLS, allowed_tools=allow, disallowed_tools=deny,
                                         mcp_servers={"newsletter": report_check_server(stamp)},
                                         max_turns=args.max_turns, token=auth.token, tag="writer")
     code, status, reason = judge(usage, sdk_error, stamp, started)
@@ -163,7 +180,22 @@ def selftest() -> None:
                           f"- 二\n<!-- mark:    uid={c} -->\n- 三\n<!-- mark:    uid={'d' * 16} -->\n")
         assert coverage(root, stamp) == ([b], [c], ["d" * 16]), coverage(root, stamp)
     assert not {"WebSearch", "WebFetch", "Bash"} & set(TOOLS)  # 上網是 collect 的事；原文不受信任，不給 Bash
-    assert not any(a.split("(")[0] in ("Read", "Write", "Bash") for a in ALLOW), ALLOW  # 不帶範圍的 Read 會放行 cwd 外
+    with tempfile.TemporaryDirectory() as d:  # 容器的樣子：data、reports、state 是連到 volume 的 symlink
+        root, vol = Path(d) / "app", Path(d) / "vol"
+        for sub in ("data/curated", "reports", "state"):
+            (vol / sub).mkdir(parents=True)
+        root.mkdir()
+        for sub in ("data", "reports", "state"):
+            (root / sub).symlink_to(vol / sub)
+        allow, deny = permissions(root)
+        real = vol.resolve()
+        assert f"Edit(/{real}/reports/**)" in allow and f"Read(/{real}/data/curated/**)" in allow, allow
+        assert "Edit(./reports/**)" in allow and f"Read(/{real}/state/**)" in deny and "Read(./state/**)" in deny, deny
+        assert not {"Read", "Write", "Edit", "Bash"} & set(allow)  # 不帶範圍的規則會放行 cwd 外
+        plain = Path(d) / "plain"
+        (plain / "reports").mkdir(parents=True)
+        assert permissions(plain)[0] == ["Skill", CHECK_TOOL, "Edit(./reports/**)", "Read(./reports/**)",
+                                         "Read(./data/curated/**)"]
     selftest_main()
     print("ok")
 
@@ -195,7 +227,7 @@ def selftest_main() -> None:
         def run(written: str | None) -> tuple[int, str, str]:
             def fake_run(prompt, *, tools, max_turns, token, tag, **options):  # 取代真正呼叫 SDK 的那一步
                 assert tools == TOOLS and token == secret and set(options) == {"allowed_tools", "disallowed_tools", "mcp_servers"}
-                assert options["allowed_tools"] == ALLOW and options["disallowed_tools"] == DENY
+                assert (options["allowed_tools"], options["disallowed_tools"]) == permissions(root)
                 if written is not None:
                     report.write_text(written, encoding="utf-8")
                 usage = runner.Usage()
