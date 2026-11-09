@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -69,6 +70,7 @@ def selftest() -> None:
             _selftest_static(req, shell)
             _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
             _selftest_etag(req, uid_a)
+        _selftest_timeout(site)
 
         # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
         bare = root / "bare"
@@ -82,6 +84,26 @@ def selftest() -> None:
             assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
     print("ok")
+
+
+def _selftest_timeout(site: Site) -> None:
+    """只送一半的請求：逾時後伺服器關掉連線，不會一直佔著 thread。"""
+    import socket
+    import time
+    from unittest import mock
+
+    from .server import Handler, make_server
+    with mock.patch.object(Handler, "timeout", 0.5):
+        server = make_server(site, "127.0.0.1", 0, quiet=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with socket.create_connection(server.server_address, timeout=5) as sock:
+                sock.sendall(b"GET /api/session HTTP/1.1\r\nHost: x\r\n")  # 標頭沒送完
+                t0 = time.monotonic()
+                assert sock.recv(1024) == b"" and time.monotonic() - t0 < 4  # 被關掉，不是等到 client 自己逾時
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 def _selftest_etag(req, uid_a: str) -> None:
@@ -99,6 +121,8 @@ def _selftest_etag(req, uid_a: str) -> None:
         assert head[0] == got[0] and head[2] == "" and head[1]["content-length"] == got[1]["content-length"], (p, head)
     assert req("GET", "/api/reports")[1].get("etag") and req("GET", "/api/today")[1].get("etag")
     assert "etag" not in req("GET", "/api/session")[1]  # 只有同步的對象有
+    for p in ("/", "/api/session", "/api/nope", "/assets/app-abc123.js"):
+        assert req("GET", p)[1]["referrer-policy"] == "no-referrer", p
     req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": "+"})
     status, headers, _ = req("GET", path, {"If-None-Match": etag})
     assert status == 200 and headers["etag"] != etag  # 標記變了
