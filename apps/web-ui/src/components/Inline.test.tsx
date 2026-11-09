@@ -14,6 +14,8 @@ describe('Inline', () => {
     const link = screen.getByRole('link', { name: '<b>標題</b>' })
     expect(link).toHaveAttribute('href', 'https://a.example/1?a=1&b=2') // 網址的 & 沒有被重複跳脫
     expect(link.parentElement?.tagName).toBe('STRONG')
+    expect(link).toHaveAttribute('target', '_blank') // 外部原文開新分頁
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
     expect(container.querySelector('b')).toBeNull()
     expect(screen.getByText('x').tagName).toBe('CODE')
   })

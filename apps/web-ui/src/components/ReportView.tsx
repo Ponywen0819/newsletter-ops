@@ -4,7 +4,7 @@ import { groupReport, type Unit } from '../reportUnits'
 import type { Adjacent, Block, ListItem, Mark, Marks, Report } from '../types'
 import { isWide, useSectionNav } from '../useSectionNav'
 import { FeedbackButtons } from './FeedbackButtons'
-import { Inline } from './Inline'
+import { EXTERNAL, Inline } from './Inline'
 import { ReaderShell } from './ReaderShell'
 
 type OnMark = (uid: string, mark: Mark) => void
@@ -73,7 +73,9 @@ function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Repor
           <ol className="sources">
             {sources.map((source) => (
               <li key={source.url}>
-                <a href={source.url}>{source.title}</a>
+                <a href={source.url} {...EXTERNAL}>
+                  {source.title}
+                </a>
               </li>
             ))}
           </ol>
