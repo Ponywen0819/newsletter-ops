@@ -45,10 +45,10 @@ uv run --project packages/llm newsletter-llm --selftest
   若帳號開了「額外用量」（[extra usage](https://support.claude.com/en/articles/12429409-extra-usage-for-paid-claude-plans)）
   之類的自動付費設定，額度用完後仍可能產生費用，請到帳號設定確認。
 - **token 保護**：token 傳給驗證子程序時走環境變數、不上命令列，不回傳給瀏覽器（最多顯示尾 4 碼）、不寫進 log。
-  注意 token 在 agent（claude CLI）的環境裡，agent 用 Bash 跑的指令讀得到它；
+  注意 token 在 agent（claude CLI）的環境裡，agent 用 Bash 跑的指令讀得到它，所以 writer 不開 Bash；
   Claude Code 有 `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` 可以擋，但它要求系統有 bubblewrap，沒有就整個 CLI 啟動失敗，
   所以預設沒開；要用請先裝 bubblewrap 再自己在環境設這個變數。
-- **工具範圍**：`run()` 只開呼叫端指定的工具（`tools` 與 `allowed_tools` 同一份），其他工具 agent 看不到也用不了，
+- **工具範圍**：`run()` 只開呼叫端指定的工具（`allowed_tools` 預設同 `tools`，可另給帶範圍的 `allowed_tools`／`disallowed_tools`；注意 cwd 內的讀取預設放行，要擋得用 `disallowed_tools`），其他工具 agent 看不到也用不了，
   沒預先允許的一律拒絕（`permission_mode="dontAsk"`，不會卡在沒人回答的提示）。有 Skill 才載入專案設定
   （`setting_sources=["project"]`，不吃使用者層級的同名 skill），否則什麼設定都不載入。
 
