@@ -109,6 +109,7 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
   手動跑的也算「今天跑過」，所以 08:00 前手動跑完，08:00 就不會再寄一次。`docker stop` 會等執行中的步驟收尾（最多 2 分鐘）。
 - 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT`）worker 驗一次 Claude 認證（一次極小的呼叫），結果寫 `state/auth_health.json`，網頁的授權橫幅讀它。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
+- 三個容器都以唯讀根目錄、`cap_drop: [ALL]`、`no-new-privileges` 執行；web／worker 只有 volume、`/tmp`、`/home/app`（tmpfs，claude CLI 的設定與 session 紀錄，重啟就清掉）可寫。要在容器裡臨時寫檔請寫 `/tmp`。
 - `cloudflared` 映像固定版本（compose 裡的 tag），timer 不會換它；要升級就改 tag、發行，看 `docker compose logs cloudflared` 有沒有 `Registered tunnel connection`。
 
 **6. 自動部署（GHCR）**
