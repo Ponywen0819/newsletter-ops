@@ -168,11 +168,12 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-c
 pipeline 與 web 跑在家裡一台 host，經 Cloudflare Tunnel + Access 對外；本機只當測試區。`web` 沒有登入，**唯一的防線是 Access**。
 做法（Docker 與 systemd 兩種）、自動部署、Cloudflare 設定與驗收清單見 [deploy/README.md](deploy/README.md)。
 
-## 資料保存：不保存
+## 資料保存：只備份回饋
 
-生成物——`reports/`、`data/`、`state/`（含 `state/feedback.jsonl`）、`logs/`——不備份、不進版控（Docker 部署時放在 volume `newsletter-data`，見 [deploy/README.md](deploy/README.md)），
-壞了就重來：抓取結果可以重跑，`seen.json` 沒了或壞了（讀不了時當作空的）只會讓時間窗內已報過的新聞再出現一次，
-`feedback.jsonl` 只是改 `config/interests.md` 時參考的中間產物（本 repo 是 public，標記含標題與來源，更不該推上來）。
+生成物——`reports/`、`data/`、`state/`、`logs/`——不進版控（Docker 部署時放在 volume `newsletter-data`，見 [deploy/README.md](deploy/README.md)），
+壞了就重來：抓取結果可以重跑，`seen.json` 沒了或壞了（讀不了時當作空的）只會讓時間窗內已報過的新聞再出現一次。
+例外是 `state/feedback.jsonl`：一則一則按出來的，丟了無法重來，worker 每週日把它寄給自己當備份（[worker/README.md](apps/worker/README.md)「回饋備份」）。
+本 repo 是 public，標記含標題與來源，不推上來。
 
 版控裡只有程式、設定與 `interests.md`；這些是唯一需要「持續更新」的內容，`git pull` 後重 build 即可。
 要新增被追蹤的檔案就加進 `.gitignore` 的白名單（`.dockerignore` 也是白名單，要進映像的話一併加）。

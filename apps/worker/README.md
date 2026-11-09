@@ -70,6 +70,9 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 寄失敗通知時 GET `<url>/fail`。樹莓派斷電、斷網、worker 卡死或寄信壞掉，失敗通知都寄不出來；這時外部服務等不到 ping，會自己寄信。
 在 healthchecks.io 把週期設 1 天、寬限 1～2 小時。沒設就不做事；ping 不到只記 log。
 
+**回饋備份**：每週日 `NEWSLETTER_AUTH_CHECK_AT` 之後，把 `state/feedback.jsonl` 在鎖內複製一份，當附件寄到 `NEWSLETTER_MAIL_TO`。
+寄出的 ISO 週記在 `state/backup_week`，重啟後同一週不重寄；寄不出去等下週。還原就是把附件放回 `state/feedback.jsonl`。
+
 **token 到期提醒**：`/auth` 存的 token 依儲存時間推算剩 30、14、7、3、1、0 天，以及過期後第一天，在 `NEWSLETTER_AUTH_CHECK_AT` 之後寄一封提醒，說明怎麼換新。
 
 **認證驗證**：同一個時鐘，每天 `NEWSLETTER_AUTH_CHECK_AT`（預設 07:30）跑一次 `newsletter-llm --auth-check`（一次極小的 Claude 呼叫），
