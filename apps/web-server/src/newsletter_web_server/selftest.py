@@ -80,7 +80,7 @@ def selftest() -> None:
             status, _, body = req("GET", "/")
             assert status == 503 and "npm run build" in body
             status, _, body = req("GET", "/api/today")
-            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "latest": None,
+            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "flags": {}, "latest": None,
                                                      "run": None}
             assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
     selftest_auth()
@@ -168,6 +168,17 @@ def _selftest_etag(req, uid_a: str) -> None:
     req("POST", "/api/feedback", {"Content-Type": "application/json"}, {"uid": uid_a, "mark": ""})
     assert req("GET", path, {"If-None-Match": etag})[0] == 304  # 改回去就和原本一樣
 
+    # 事實有誤：寫 kg_flags.jsonl，報告的 payload 帶回 flags
+    json_h = {"Content-Type": "application/json"}
+    status, _, text = req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": "wrong"})
+    assert status == 200 and json.loads(text) == {"uid": uid_a, "flag": "wrong"}, text
+    assert json.loads(req("GET", path)[2])["flags"] == {uid_a: "wrong"}
+    assert req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": "trusted"})[0] == 400  # 網頁只能標有誤或取消
+    assert req("POST", "/api/kg-flag", json_h, {"uid": "e" * 16, "flag": "wrong"})[0] == 404
+    assert req("POST", "/api/kg-flag", json_h, {"uid": uid_a})[0] == 400
+    req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": ""})
+    assert json.loads(req("GET", path)[2])["flags"] == {}
+
 
 def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     def get(path: str, headers=None) -> tuple[int, dict]:
@@ -195,7 +206,7 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     # 當日：有就給整份，沒有就給最新一份的日期與整份（fallback）
     assert get("/api/today") == (200, {**data, "latest": "2026-09-28", "run": None})
     site.reports.today = lambda: "2026-10-05"
-    assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "latest": "2026-09-28",
+    assert get("/api/today") == (200, {"date": "2026-10-05", "report": None, "marks": {}, "flags": {}, "latest": "2026-09-28",
                                        "fallback": data, "run": None})
 
     # 當天的執行紀錄（worker 寫的 last_run.json）：只給當天的，壞掉當沒有

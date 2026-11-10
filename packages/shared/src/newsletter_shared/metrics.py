@@ -202,8 +202,9 @@ def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
     tok = c.get("tokens", {})
     top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
     via = c.get("runner", "chat") if c else "-"  # sdk＝newsletter-write；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
-    costs = [r["total_cost_usd"] for r in (c, run.get("search", {})) if r.get("total_cost_usd") is not None]
-    usd = f"{sum(costs):.2f}" if costs else "-"  # writer＋搜尋；只有 sdk 路線拿得到
+    costs = [r["total_cost_usd"] for r in (c, *(run.get(s, {}) for s in ("search", "kg_extract", "kg_relate")))
+             if r.get("total_cost_usd") is not None]
+    usd = f"{sum(costs):.2f}" if costs else "-"  # writer＋搜尋＋KG；只有 sdk 路線拿得到
     result = "-" if p is None else "ok" if not p["exit_code"] else f"{p['step']}:{p['exit_code']}"
     secs = " ".join(f"{run[s]['seconds']:>6.1f}" if "seconds" in run.get(s, {}) else f"{'-':>6}" for s in stages)
     return (f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} {secs} "
@@ -255,11 +256,12 @@ def selftest() -> None:
            "claude": {"ts": "x", "seconds": 300.0, "runner": "sdk", "total_cost_usd": 1.5, "api_turns": 9,
                       "tokens": {"input": 1, "cache_read": 2, "output": 3}},
            "search": {"ts": "x", "seconds": 60.0, "total_cost_usd": 0.25},
+           "kg_extract": {"ts": "x", "total_cost_usd": 0.01}, "kg_relate": {"ts": "x", "total_cost_usd": 0.01},
            "coverage": {"ts": "x", "missing": 2, "near_misses_used": 1},
            "search_yield": {"ts": "x", "accepted": 0},
            "pipeline": {"ts": "x", "seconds": 400.0, "exit_code": 6, "step": "write"}}
     line = summary_line("2026-01-01", run, ("fetch", "search", "enrich", "pipeline"))
-    assert line.split()[4:14] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.75", "0", "2"], line
+    assert line.split()[4:14] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.77", "0", "2"], line
     assert "write:6" in line, line
     print("ok")
 

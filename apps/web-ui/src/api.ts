@@ -68,6 +68,8 @@ export const api = {
   feedbackTarget: (uid: string) => request<FeedbackTarget>(`/api/feedback/${encodeURIComponent(uid)}`),
   /** mark '' ＝ 取消。回傳伺服器實際記下的 mark。 */
   feedback,
+  /** 「事實有誤」：flag '' ＝ 取消。不排隊，連不上就是失敗。 */
+  kgFlag: (uid: string, flag: 'wrong' | '') => request<{ uid: string; flag: 'wrong' | '' }>('/api/kg-flag', { uid, flag }),
   /** 對每個 uid 各送一次。成功的不會收回，畫面要以 saved 為準。 */
   feedbackAll: async (uids: string[], mark: Mark) => {
     const results = await Promise.allSettled(uids.map((uid) => feedback(uid, mark)))

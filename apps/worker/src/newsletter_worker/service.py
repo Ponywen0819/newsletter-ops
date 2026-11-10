@@ -260,6 +260,12 @@ class Service:
             if marker.read_text(encoding="utf-8").strip() == week:
                 return
         notice = backup_notice(self.state / "feedback.jsonl", self.state / "feedback-backup.jsonl", f"{local:%Y-%m-%d}")
+        flags = self.state / "kg_flags.jsonl"  # 「事實有誤」也是一則一則按出來的
+        if notice is not None and flags.exists():
+            with lock.locked(flags):
+                atomic.write_text(copy := self.state / "kg_flags-backup.jsonl", flags.read_text(encoding="utf-8"))
+            notice["attachments"].append({"path": str(copy), "filename": f"kg_flags-{local:%Y-%m-%d}.jsonl"})
+            notice["text"] += "另一個附件是 state/kg_flags.jsonl（事實有誤的標記），還原方式相同。\n"
         if notice is not None and self.notifier(notice) is not False:
             atomic.write_text(marker, week)
 

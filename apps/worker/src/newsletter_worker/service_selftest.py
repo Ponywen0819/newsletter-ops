@@ -66,6 +66,7 @@ def _selftest_backup(tmp: Path) -> None:
     assert service.notices == [] and not (service.state / "backup_week").exists()  # type: ignore[attr-defined]  # 沒有回饋
     service.backed_up = None
     fb.write_text('{"uid": "a"}\n{"uid": "b"}\n')
+    (service.state / "kg_flags.jsonl").write_text('{"uid": "a", "flag": "wrong"}\n')
     service.backup(tpe("2026-11-08 07:00"))  # 週日但還沒到 check_at
     service.backup(monday)
     assert service.notices == []  # type: ignore[attr-defined]
@@ -73,6 +74,7 @@ def _selftest_backup(tmp: Path) -> None:
     n = service.notices[-1]  # type: ignore[attr-defined]
     assert "2 列" in n["subject"] and n["attachments"][0]["filename"] == "feedback-2026-11-08.jsonl", n
     assert Path(n["attachments"][0]["path"]).read_text() == fb.read_text()
+    assert n["attachments"][1]["filename"] == "kg_flags-2026-11-08.jsonl" and "flag" in Path(n["attachments"][1]["path"]).read_text()
     assert (service.state / "backup_week").read_text() == "2026-W45"
     service.backup(tpe("2026-11-08 09:00"))
     again = service_for(tmp, time(23, 59), time(7, 30))  # 重啟：讀 backup_week，同週不重寄

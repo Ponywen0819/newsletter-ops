@@ -7,7 +7,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Callable
 
-from newsletter_shared import feedback, lock, report_data
+from newsletter_shared import feedback, kg_flags, lock, report_data
 from newsletter_shared import today as shared_today
 
 from .errors import ApiError, NotFound
@@ -31,6 +31,7 @@ class Reports:
         self.root = root
         self.today = today or (lambda: shared_today(root))
         self.feedback_path = root / "state" / "feedback.jsonl"
+        self.flags_path = root / "state" / "kg_flags.jsonl"
 
 
     def report_dates(self) -> list[str]:
@@ -61,7 +62,9 @@ class Reports:
         shown = set(report_data.uids_of(report))
         dates = self.report_dates()  # 新到舊
         i = dates.index(date)
+        flags = kg_flags.read(self.flags_path)
         return {"date": date, "report": report, "marks": {u: m for u, m in self.marks().items() if u in shown},
+                "flags": {u: f for u, f in flags.items() if u in shown and f == "wrong"},
                 "prev": dates[i + 1] if i + 1 < len(dates) else None, "next": dates[i - 1] if i else None}
 
     def run_record(self, date: str) -> dict | None:
@@ -81,7 +84,7 @@ class Reports:
             payload = self.report_payload(date)
         except NotFound:
             # 今天的還沒產出：附上最新一份，首頁直接顯示，不用再點一次
-            payload = {"date": date, "report": None, "marks": {}}
+            payload = {"date": date, "report": None, "marks": {}, "flags": {}}
             if latest:
                 payload["fallback"] = self.report_payload(latest[0])
         return {**payload, "latest": latest[0] if latest else None, "run": self.run_record(date)}
@@ -162,3 +165,13 @@ class Reports:
         with lock.locked(self.feedback_path):
             feedback.append_rows(self.feedback_path, [row])
         return row
+
+    def record_flag(self, uid: str, flag: str) -> dict:
+        """「事實有誤」：flag 'wrong'，'' ＝ 取消。只收報告裡出現過的 uid。"""
+        if flag not in ("wrong", ""):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "flag 只能是 wrong 或空字串（取消）")
+        if not UID_RE.fullmatch(uid):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "uid 格式不符")
+        if self._find_report(uid) is None:
+            raise ApiError(HTTPStatus.NOT_FOUND, "任何一份報告裡都找不到這個 uid")
+        return kg_flags.append(uid, flag, self.flags_path)

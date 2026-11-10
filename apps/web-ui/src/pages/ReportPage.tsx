@@ -30,5 +30,5 @@ export function ReportPage() {
         <Loading />
       </ReaderShell>
     )
-  return <ReportPanel key={data.date} report={data.report} marks={data.marks} adjacent={{ prev: data.prev, next: data.next }} />
+  return <ReportPanel key={data.date} report={data.report} marks={data.marks} flags={data.flags} adjacent={{ prev: data.prev, next: data.next }} />
 }
