@@ -43,6 +43,7 @@ npm run typecheck
   只有 Chromium 系、**已安裝**的 PWA 支援，觸發頻率由瀏覽器依使用情況決定、不保證；iOS Safari、Firefox 不支援。沒權限或不支援時靜默略過，行為和沒有這功能一樣。
   背景喚醒時離線、連不上或 Access 逾時（列表被轉址）都不寫入任何東西，也不通知。service worker 沒有 `localStorage`，所以同步紀錄同時寫進 `api` cache 的 `/__offline-sync`，頁面啟動時比 `localStorage` 新就搬過去。
 - **離線**：有網路時永遠先拿最新的（標記狀態、新產出的晨報不會被舊快取蓋住）。
+- **事實有誤**（`src/components/FactFlagButton.tsx`）：和有用／沒用同一排，送 `POST /api/kg-flag`。**不排隊**：離線或連不上時直接顯示做不到，不改畫面。狀態來自 payload 的 `flags`（舊的離線副本沒有，當作沒標）。
 - **離線時的標記**（`src/feedbackQueue.ts`）：離線或連不上時按「有用／沒用」不送出，先排進 `localStorage` 的 `feedback-queue`（`{uid: {mark, before, at, tries}}`，`before` 是第一次按下前畫面上的標記），
   畫面立刻更新、按鈕旁標「待同步」，本機副本（today、單日晨報）的 `marks` 也一起改寫（保留 `ETag`），離線重開仍看得到。同一則只留最後一次；改回 `before` 就整筆拿掉。
   App 啟動與恢復連線時先補送、再同步副本。補送每一筆前先 `GET /api/feedback/<uid>`：伺服器的標記還是 `before` 才送；不是（離線期間在 email 連結等別處改過）就以伺服器為準、丟掉這筆，

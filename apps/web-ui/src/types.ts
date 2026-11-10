@@ -45,6 +45,9 @@ export interface FeedbackTarget {
 /** uid → 目前的標記；沒標或已取消的不在裡面 */
 export type Marks = Record<string, Mark>
 
+/** uid → 'wrong'（使用者標了「事實有誤」）；沒標的不在裡面 */
+export type Flags = Record<string, 'wrong'>
+
 /** 前一份（更舊）／下一份（更新）的日期；沒有是 null。舊的離線副本沒有這兩欄 */
 export interface Adjacent {
   prev?: string | null
@@ -55,6 +58,8 @@ export interface ReportPayload extends Adjacent {
   date: string
   report: Report
   marks: Marks
+  /** 舊的離線副本沒有這欄 */
+  flags?: Flags
 }
 
 export interface TodayPayload extends Adjacent {
@@ -62,6 +67,7 @@ export interface TodayPayload extends Adjacent {
   /** 當日晨報還沒產出時是 null */
   report: Report | null
   marks: Marks
+  flags?: Flags
   /** 最新一份晨報的日期；一份都沒有時是 null */
   latest: string | null
   /** 當天的執行紀錄（worker 的 state/last_run.json）；今天還沒跑是 null。舊的副本沒有這欄 */

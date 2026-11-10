@@ -49,6 +49,7 @@ export function TodayPage() {
           key={fb.date}
           report={fb.report}
           marks={fb.marks}
+          flags={fb.flags}
           adjacent={{ prev: fb.prev }}
           banner={
             <p className="report-banner" role="status">
@@ -78,5 +79,5 @@ export function TodayPage() {
       </ReaderShell>
     )
   }
-  return <ReportPanel key={data.date} report={data.report} marks={data.marks} adjacent={{ prev: data.prev }} />
+  return <ReportPanel key={data.date} report={data.report} marks={data.marks} flags={data.flags} adjacent={{ prev: data.prev }} />
 }

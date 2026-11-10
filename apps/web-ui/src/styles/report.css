@@ -154,3 +154,12 @@
     min-height: 44px;
   }
 }
+/* 事實有誤：和有用／沒用同一排，按下是警示色 */
+.fb-flag {
+  font-size: 12px;
+}
+.fb-flag[aria-pressed='true'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}

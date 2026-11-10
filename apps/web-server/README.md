@@ -31,12 +31,14 @@ uv run --project apps/web-server newsletter-web --selftest    # API、靜態檔�
   併了多篇文章的新聞（報告裡連著好幾行 mark，每篇一個 uid）只有一組按鈕，按下去對每篇各記一筆。
 - 頁面的標記狀態只看 `feedback.jsonl`；還留在 Markdown 裡、尚未用 `newsletter-feedback` 收集的標記不會顯示，先跑一次 `newsletter-feedback` 匯入即可。
 - 網頁與 `newsletter-feedback` 可以同時跑，見 [shared/README.md](../../packages/shared/README.md)「回饋標記」。
+- 同一排還有「事實有誤」：append 一行到 `state/kg_flags.jsonl`（`{uid, flag: "wrong" | "", at}`），之後寫晨報時這則萃取出的事件不再當背景，
+  它對別則的否認也不算（見 [writer/README.md](../../packages/writer/README.md)「知識圖譜」）。再按一次＝取消。不排隊：離線時直接告知做不到。
 
 ## 安全邊界
 
 - **沒有登入**：預設只 bind `127.0.0.1`，要對外請放在 Cloudflare Tunnel + Access 後面，不要改 `--host`（Docker 部署例外：容器內綁 `0.0.0.0`，主 port 不 publish，只有管理 port 以 `127.0.0.1:8788` publish，見 [deploy/README.md](../../deploy/README.md)）。
 - **Access JWT（選用）**：設了 `NEWSLETTER_ACCESS_TEAM`、`NEWSLETTER_ACCESS_AUD` 時，非本機的請求都要帶有效的 `Cf-Access-Jwt-Assertion`（RS256，驗 aud／iss／exp，公鑰從 `<team>.cloudflareaccess.com/cdn-cgi/access/certs` 取並快取），否則 403；取不到公鑰也拒絕。Access 政策被誤刪時不會整站公開（`access.py`）。
-- `POST /api/feedback` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`。
+- `POST /api/feedback`、`POST /api/kg-flag` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`／`{"uid": "...", "flag": "wrong" | ""}`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），前端的限制見 [ui/README.md](../web-ui/README.md)。
 - **`/auth`（貼 OAuth token）只能從本機開**：要同時符合來源是 loopback、`Host` 是本機、沒有 `Cf-*`／`X-Forwarded-*` 等代理標頭、`Origin`（若有）是本機，否則 404。
   cloudflared 也是從 `127.0.0.1` 連進來，所以光看來源位址不夠。遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>`。
@@ -55,13 +57,14 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | --- | --- | --- |
 | `GET /api/session` | `{local}` | 是否從本機來（決定要不要顯示「Claude 授權」） |
 | `GET /api/heartbeat` | `{ok}` | 連線偵測，不讀檔、不寫入（見 [ui/README.md](../web-ui/README.md)「PWA」） |
-| `GET /api/today` | `{date, latest, report, marks, run}`（有晨報時另有 `prev, next`） | 當日晨報；還沒產出時 `report` 是 null，有舊晨報時另附 `fallback`（最新一份，格式同 `/api/reports/<date>`），首頁直接顯示它。`run` 是當天的 `state/last_run.json`（`trigger, started_at, finished_at, exit_code, step`），今天還沒跑是 null |
+| `GET /api/today` | `{date, latest, report, marks, flags, run}`（有晨報時另有 `prev, next`） | 當日晨報；還沒產出時 `report` 是 null，有舊晨報時另附 `fallback`（最新一份，格式同 `/api/reports/<date>`），首頁直接顯示它。`run` 是當天的 `state/last_run.json`（`trigger, started_at, finished_at, exit_code, step`），今天還沒跑是 null |
 | `GET /api/reports` | `{reports: [{date, headline}]}` | 歷史列表，新到舊 |
 | `GET /api/feedback-stats` | `{total, groups: {source, topic, keyword: [{name, pos, neg}]}}` | `newsletter-feedback --stats` 的網頁版；每則只算最後一筆、取消的不算，則數多的在前 |
 | `GET /api/search?q=` | `{q, results: [{date, text}], truncated}` | 所有晨報裡含 `q` 的行（不分大小寫，去掉 Markdown 與 mark；空白分開的多個詞要都有），新到舊最多 50 筆；`q` 最多 100 字 |
-| `GET /api/reports/<date>` | `{date, report, marks, prev, next}` | `report` 是 `report_data.parse_report()` 的結構；`prev`／`next` 是前一份（更舊）／下一份（更新）的日期，沒有是 null |
+| `GET /api/reports/<date>` | `{date, report, marks, flags, prev, next}` | `report` 是 `report_data.parse_report()` 的結構；`flags` 是標了事實有誤的 uid（`{uid: "wrong"}`）；`prev`／`next` 是前一份（更舊）／下一份（更新）的日期，沒有是 null |
 | `GET /api/feedback/<uid>` | `{uid, date, title, mark}` | email 確認頁用，只讀 |
 | `POST /api/feedback` | `{uid, mark}` | 有用／沒用 |
+| `POST /api/kg-flag` | `{uid, flag}` | 事實有誤（`wrong`）或取消（`""`）；只收出現在某份晨報裡的 uid |
 | `GET /api/auth-health` | `{state, kind, checked_at}` | 認證健康狀態，所有人可讀 |
 | `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理，只限本機 |
 

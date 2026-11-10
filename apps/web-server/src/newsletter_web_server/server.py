@@ -53,7 +53,7 @@ IMMUTABLE = "public, max-age=31536000, immutable"
 CSP = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 # POST 路由 → 是否只限本機
-POST_ROUTES = {"/api/feedback": False, "/api/auth/token": True, "/api/auth/test": True, "/api/auth/revoke": True}
+POST_ROUTES = {"/api/feedback": False, "/api/kg-flag": False, "/api/auth/token": True, "/api/auth/test": True, "/api/auth/revoke": True}
 LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
 PROXY_HEADERS = {"x-real-ip", "forwarded", "via", "cdn-loop"}  # 另外 cf-*、x-forwarded-* 開頭的也算
 
@@ -252,6 +252,22 @@ class Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise ApiError(HTTPStatus.BAD_REQUEST, "body 不是合法的 JSON") from None
 
+    def _post_payload(self, path: str, data) -> dict:
+        if path in ("/api/feedback", "/api/kg-flag"):
+            field = "mark" if path == "/api/feedback" else "flag"
+            if not (isinstance(data, dict) and isinstance(data.get("uid"), str) and isinstance(data.get(field), str)):
+                raise ApiError(HTTPStatus.BAD_REQUEST, f"需要字串欄位 uid、{field}")
+            record = self.site.reports.record if field == "mark" else self.site.reports.record_flag
+            row = record(data["uid"], data[field])
+            return {"uid": row["uid"], field: row[field]}
+        if path == "/api/auth/token":
+            if not (isinstance(data, dict) and isinstance(data.get("token"), str)):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
+            return self.site.auth.submit_token(data["token"])
+        if path == "/api/auth/test":
+            return self.site.auth.test_token()
+        return self.site.auth.revoke_token()  # /api/auth/revoke
+
     def do_POST(self) -> None:
         if self._denied():
             return
@@ -261,20 +277,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
             return
         try:
-            data = self._read_json()
-            if path == "/api/feedback":
-                if not (isinstance(data, dict) and isinstance(data.get("uid"), str) and isinstance(data.get("mark"), str)):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 uid、mark")
-                row = self.site.reports.record(data["uid"], data["mark"])
-                self._send_json(200, {"uid": row["uid"], "mark": row["mark"]})
-            elif path == "/api/auth/token":
-                if not (isinstance(data, dict) and isinstance(data.get("token"), str)):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
-                self._send_json(200, self.site.auth.submit_token(data["token"]))
-            elif path == "/api/auth/test":
-                self._send_json(200, self.site.auth.test_token())
-            else:  # /api/auth/revoke
-                self._send_json(200, self.site.auth.revoke_token())
+            self._send_json(200, self._post_payload(path, self._read_json()))
         except ApiError as exc:
             self._send_json(exc.status, {"error": str(exc)})
         except Exception:

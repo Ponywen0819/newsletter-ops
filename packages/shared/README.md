@@ -37,6 +37,8 @@ with lock.locked(path, timeout=0):    # 搶不到就丟 lock.LockBusy；給「�
   | 檔案 | 讀寫者 | 鎖 |
   | --- | --- | --- |
   | `state/feedback.jsonl` | web、`newsletter-feedback` | `locked`（讀＋append） |
+  | `state/kg_flags.jsonl` | web、`newsletter-kg --flag`（寫）、writer 的 KG（讀） | `locked`（`kg_flags.py`） |
+  | `state/kg.sqlite` | writer 的 KG | `locked`（萃取、比對、重建整段） |
   | `state/oauth_token.json` | web（存／刪）、llm（讀） | `locked`（存／刪）；讀不鎖，靠原子替換 |
   | `state/auth_health.json` | worker、web（寫）、web（讀） | 沒有（整檔原子替換，最後寫的算數） |
   | `state/seen.json` | `newsletter-collect` | 沒有（只有一個寫入者，原子寫入） |
