@@ -279,7 +279,9 @@ def background(con: sqlite3.Connection, stamp: str, root: Path, flags: dict[str,
             f"""SELECT e.id, e.date, e.summary, i.title, i.url, i.source, GROUP_CONCAT(DISTINCT m.name), COUNT(DISTINCT m.key) AS shared
                 FROM events e JOIN mentions m ON m.event=e.id JOIN items i ON i.uid=e.uid
                 WHERE m.key IN ({','.join('?' * len(keys))}) AND e.date >= ? AND e.date < ?
-                GROUP BY e.id ORDER BY shared DESC, e.date DESC LIMIT ?""", [*keys, since, stamp, MAX_BACKGROUND]))
+                GROUP BY e.id
+                ORDER BY EXISTS(SELECT 1 FROM links l WHERE l.dst=e.id AND l.date=?) DESC, shared DESC, e.date DESC
+                LIMIT ?""", [*keys, since, stamp, stamp, MAX_BACKGROUND]))
         status = statuses(con, [r[0] for r in rows], flags)
         today_links: dict[int, list[dict]] = {}
         for dst, kind, uid in con.execute(
