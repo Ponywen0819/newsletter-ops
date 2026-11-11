@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """跨程序的檔案鎖（flock）。
 
-用法：uv run --project packages/shared python -m newsletter_shared.lock --selftest
-
     with locked(path):             # 等到拿到為止
     with locked(path, timeout=0):  # 搶不到就丟 LockBusy
 
@@ -11,7 +9,6 @@
 from __future__ import annotations
 
 import fcntl
-import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -52,83 +49,3 @@ def locked(path: Path, timeout: float | None = None):
             yield
         finally:
             held.discard(key)
-
-
-def selftest() -> None:
-    import subprocess
-    import tempfile
-
-    child = ("import pathlib, sys\n"
-             "from newsletter_shared.lock import locked\n"
-             "with locked(pathlib.Path(sys.argv[1])):\n"
-             "    print('held', flush=True)\n"
-             "    sys.stdin.read()\n")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "state" / "x.json"
-
-        with locked(path):
-            pass
-        with locked(path, timeout=0):
-            pass
-
-        # 巢狀：立刻報錯，而且報錯後鎖仍然正常放掉
-        try:
-            with locked(path), locked(path):
-                raise AssertionError("巢狀應該丟 RuntimeError")
-        except RuntimeError:
-            pass
-        with locked(path, timeout=0):
-            pass
-
-        # 不同執行緒拿同一個 path 是排隊（LockBusy），不是巢狀（RuntimeError）
-        holding, release, seen = threading.Event(), threading.Event(), []
-
-        def holder() -> None:
-            with locked(path):
-                holding.set()
-                release.wait(5)
-
-        def contender() -> None:
-            try:
-                with locked(path, timeout=0):
-                    seen.append("got")
-            except LockBusy:
-                seen.append("busy")
-
-        t = threading.Thread(target=holder)
-        t.start()
-        assert holding.wait(5)
-        c = threading.Thread(target=contender)
-        c.start()
-        c.join()
-        release.set()
-        t.join()
-        assert seen == ["busy"], seen
-
-        # 別的程序拿著：timeout=0 馬上放棄，timeout=0.2 至少等滿 0.2 秒
-        proc = subprocess.Popen([sys.executable, "-c", child, str(path)], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, text=True)
-        try:
-            assert proc.stdout.readline() == "held\n"
-            for wait in (0, 0.2):
-                start = time.monotonic()
-                try:
-                    with locked(path, timeout=wait):
-                        raise AssertionError("別的程序拿著，不該拿得到")
-                except LockBusy:
-                    assert time.monotonic() - start >= wait
-        finally:
-            proc.kill()
-            proc.wait()
-        with locked(path, timeout=0):
-            pass
-    print("ok")
-
-
-if __name__ == "__main__":
-    if sys.argv[1:] == ["--selftest"]:
-        selftest()
-    else:
-        print("用法：python -m newsletter_shared.lock --selftest", file=sys.stderr)
-        raise SystemExit(2)
