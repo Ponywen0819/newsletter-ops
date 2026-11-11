@@ -4,7 +4,6 @@
 用法：uv run --project packages/writer newsletter-kg [--date YYYY-MM-DD]   萃取當天並產生背景（newsletter-write 開始前會自己跑）
       uv run --project packages/writer newsletter-kg --rebuild             清掉重來，依日期重跑 data/curated/ 全部（回填也是這個）
       uv run --project packages/writer newsletter-kg --flag <uid> wrong|trusted|clear
-      uv run --project packages/writer newsletter-kg --selftest
 
 curated 是外部網頁的文字：模型不給任何工具，回覆由程式驗收——事件與矛盾／撤回都要附原文逐字引句，對不上就丟。
 資料庫只存結構化、限長的欄位；狀態（有爭議／失效）每次讀取時從連結與 state/kg_flags.jsonl 算，不存，重建也不會留下過期狀態。
@@ -309,11 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--date", help="預設今天")
     ap.add_argument("--rebuild", action="store_true", help="清掉 state/kg.sqlite，依日期重跑 data/curated/ 全部")
     ap.add_argument("--flag", nargs=2, metavar=("UID", "wrong|trusted|clear"), help="標記某則的事實判定")
-    ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
-    if args.selftest:
-        selftest()
-        return 0
     if args.flag:
         uid, flag = args.flag
         if not re.fullmatch(r"[0-9a-f]{16}", uid) or flag not in ("wrong", "trusted", "clear"):
@@ -330,109 +325,6 @@ def main(argv: list[str] | None = None) -> int:
         return rebuild(ROOT, model_ask(auth.token))
     prepare(args.date or f"{datetime.now(metrics.TZ):%Y-%m-%d}", auth.token)
     return 0
-
-
-def selftest() -> None:
-    import tempfile
-
-    assert norm("Open AI，Inc.") == norm("openai inc") == "openaiinc"
-    assert grounded("ＡＣＭＥ agreed to buy", "Yesterday acme agreed to buy Beta.") and not grounded("acme", "acme")
-    assert parse_json('好的\n{"a": 1}\n') == {"a": 1}
-
-    a, b, c, d = "a" * 16, "b" * 16, "c" * 16, "d" * 16
-    day1 = [{"uid": a, "title": "Acme to buy Beta", "source": "S1", "url": "https://s1/a",
-             "summary": "Acme agreed to buy Beta for $1B, people familiar said."}]
-    day2 = [{"uid": b, "title": "Beta denies deal", "source": "S2", "url": "https://s2/b",
-             "fulltext": "Beta said on Monday it is not in talks with Acme and denied the report."},
-            {"uid": c, "title": "Acme price", "source": "S3", "url": "https://s3/c",
-             "summary": "Acme valued the deal at $2B according to a filing."}]
-    replies = {
-        "2026-01-01": {"items": [{"uid": a, "events": [
-            {"summary": "Acme 同意收購 Beta", "quote": "Acme agreed to buy Beta for $1B",
-             "entities": [{"name": "Acme", "type": "org"}, {"name": "Beta", "type": "org"}]},
-            {"summary": "捏造", "quote": "this sentence is not in the article", "entities": [{"name": "Acme"}]},
-        ]}]},
-        "2026-01-02": {"items": [
-            {"uid": b, "events": [{"summary": "Beta 否認與 Acme 洽談", "quote": "it is not in talks with Acme",
-                                   "entities": [{"name": "beta", "type": "org"}, {"name": "ACME"}]}]},
-            {"uid": c, "events": [{"summary": "Acme 估值 20 億", "quote": "Acme valued the deal at $2B",
-                                   "entities": [{"name": "Acme", "type": "org"}]}]},
-            {"uid": "f" * 16, "events": []},  # 不是今天的 uid：略過
-        ]},
-    }
-    calls: list[str] = []
-
-    def fake(stamp: str) -> Ask:
-        def ask(prompt: str, stage: str) -> dict:
-            calls.append(stage)
-            if stage == "kg_extract":
-                return replies[stamp]
-            pairs = json.loads(prompt.rsplit("\n\n", 1)[1])["pairs"]
-            nb, nc = (next(p["new"] for p in pairs if p["uid"] == x) for x in (b, c))
-            return {"links": [{"new": nb, "old": 1, "kind": "retract", "quote": "denied the report"},
-                              {"new": nc, "old": 1, "kind": "contradict", "quote": "made up evidence"},  # 引句對不上
-                              {"new": nc, "old": 999, "kind": "follow"}]}  # 沒提供的候選
-        return ask
-
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "data" / "curated").mkdir(parents=True)
-        (root / "reports").mkdir()
-        for stamp, items in (("2026-01-01", day1), ("2026-01-02", day2)):
-            (root / "data" / "curated" / f"{stamp}.json").write_text(json.dumps({"items": items}), encoding="utf-8")
-        (root / "reports" / "2026-01-01.md").write_text(f"x <!-- mark:    uid={a} -->", encoding="utf-8")
-        con = connect(root / "state" / "kg.sqlite")
-
-        s1 = extract(con, "2026-01-01", day1, fake("2026-01-01"))
-        assert s1 == {"items": 1, "extracted": 1, "dropped": 1}, s1
-        assert relate(con, "2026-01-01", {}, fake("2026-01-01"))["compared"] == 0  # 沒有舊事件：不呼叫模型
-        assert extract(con, "2026-01-01", day1, fake("2026-01-01"))["items"] == 0  # 抽過的不重抽
-        assert calls == ["kg_extract"], calls
-        con.close()
-
-        flags = root / "state" / "kg_flags.jsonl"
-        stats = build(root, "2026-01-02", fake("2026-01-02"))
-        con = connect(root / "state" / "kg.sqlite")
-        assert stats["extracted"] == 2 and stats["links"] == 1 and stats["links_rejected"] == 2, stats
-        assert {r[0] for r in con.execute("SELECT key FROM mentions")} == {"acme", "beta"}  # 寫法不同算同一個實體
-        bg = json.loads((root / "data" / "kg" / "2026-01-02.json").read_text(encoding="utf-8"))
-        assert bg["events"] == [] and len(bg["corrections"]) == 1, bg  # 撤回＝失效，而且報導過 → 更正
-        assert bg["corrections"][0]["kind"] == "retract" and bg["corrections"][0]["by_uid"] == b
-
-        kg_flags.append(b, "wrong", flags)  # 使用者說否認的那則才是錯的
-        bg = background(con, "2026-01-02", root, kg_flags.read(flags))
-        assert bg["corrections"] == [] and len(bg["events"]) == 1, bg
-        ev = bg["events"][0]
-        assert ev["status"] == "active" and ev["sources"] == 1 and {"kind": "retract", "uid": b} in ev["related_today"]
-
-        kg_flags.append(b, "", flags)
-        kg_flags.append(a, "trusted", flags)
-        assert statuses(con, [1], kg_flags.read(flags)) == {1: "active"}
-        kg_flags.append(a, "wrong", flags)
-        assert statuses(con, [1], kg_flags.read(flags)) == {1: "invalid"}
-
-        # 矛盾：一個來源＝有爭議，兩個來源＝失效
-        kg_flags.append(a, "", flags)
-        with con:
-            con.execute("DELETE FROM links")
-            con.execute("INSERT INTO links VALUES ((SELECT id FROM events WHERE uid=?), 1, 'contradict', '', '2026-01-02')", (c,))
-        assert statuses(con, [1], {}) == {1: "disputed"}
-        with con:
-            con.execute("INSERT INTO items VALUES (?, '2026-01-02', 't', 'u', 'S4', ?)", (d, VERSION))
-            eid = con.execute("INSERT INTO events(uid, date, summary, quote) VALUES (?, '2026-01-02', 's', 'q')", (d,)).lastrowid
-            con.execute("INSERT INTO links VALUES (?, 1, 'contradict', '', '2026-01-02')", (eid,))
-            con.execute("INSERT INTO links VALUES (?, 1, 'same', '', '2026-01-02')", (eid,))
-        assert statuses(con, [1], {}) == {1: "invalid"}
-        assert _sources(con, 1, "S1") == 2
-        con.close()
-
-        def broken(prompt: str, stage: str) -> dict:
-            raise RuntimeError("額度用完")
-        (root / "data" / "curated" / "2026-01-03.json").write_text(json.dumps({"items": [{"uid": "e" * 16, "title": "t", "summary": "s"}]}), encoding="utf-8")
-        (root / "data" / "kg" / "2026-01-03.json").write_text("{}", encoding="utf-8")
-        prepare("2026-01-03", "token", root, broken)  # 不丟例外，也不留下舊背景
-        assert not (root / "data" / "kg" / "2026-01-03.json").exists()
-    print("kg selftest ok")
 
 
 if __name__ == "__main__":

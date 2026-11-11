@@ -77,7 +77,7 @@ npm run typecheck
 
 **測試**：`npm test` 的 `pwa.test.ts` 會建置到暫存目錄（不動 `dist/`），檢查 manifest 欄位、`crossorigin`、沒有行內 script、service worker 的路由範圍與順序、cache 名稱與保險逾時；
 `sync.test.ts`（離線副本：存哪些、清掉多的、失敗保留舊的、連不上與登入逾時不同步、間隔、同步紀錄、條件請求的 304、storage.persist 的支援／不支援／已持久／被拒絕、背景同步的註冊與不寫入）、`feedbackQueue.test.ts`（排隊、合併、補送、衝突、4xx／5xx 與次數上限、登入逾時保留、改寫副本）、`connectivity.test.ts`（判定、逾時、重用、事件、恢復計數）、`api.test.ts`（連不上讀快取、登入逾時不讀、不相關的請求不受影響）、`Layout.test.tsx`（橫幅，含副本的同步時間與份數）鎖住連線偵測；
-後端 `uv run --project apps/web-server newsletter-web --selftest` 檢查 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`，以及 heartbeat 的回應、`no-store`、不寫入任何檔案。
+後端的測試（`npx nx run web-server:test`）檢查 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`，以及 heartbeat 的回應、`no-store`、不寫入任何檔案。
 
 **正式站驗收**（Docker 與 systemd 兩種部署共用，部署步驟見 [deploy/README.md](../../deploy/README.md)；Access 的行為只有在真實網域上測得到）
 

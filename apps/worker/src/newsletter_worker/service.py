@@ -4,7 +4,6 @@
 
 用法：uv run --project apps/worker worker [--host 0.0.0.0] [--port 8790]
       uv run --project apps/worker worker --once [newsletter-collect 的參數，如 --lookback 72]
-      uv run --project apps/worker worker --selftest
 
 要不要跑只看 state/last_run.json（run_pipeline 寫的，手動跑的也算）和 pipeline 的鎖：
 今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 從失敗的那步自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
@@ -337,15 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--host", default="0.0.0.0", help="容器內綁全部介面；compose 不 publish 這個 port")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WORKER_PORT", DEFAULT_PORT)))
     ap.add_argument("--once", action="store_true", help="跑一次每日流程就結束，輸出印在終端機；其餘參數轉給 newsletter-collect")
-    ap.add_argument("--selftest", action="store_true")
     args, rest = ap.parse_known_args(argv)
-    if args.selftest:
-        os.environ["NEWSLETTER_DEBUG"] = "0"  # 假的執行不進 metrics
-        from .service_selftest import selftest
-
-        daily.selftest()
-        selftest()
-        return 0
     if args.once:
         return daily.run_pipeline(rest, sys.stderr)
     if rest:

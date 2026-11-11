@@ -1,24 +1,28 @@
-"""newsletter-web --selftest：真的 HTTP 伺服器＋暫存目錄，不呼叫 Claude。"""
+"""真的 HTTP 伺服器＋暫存目錄，不呼叫 Claude。"""
 from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import quote
+
+import pytest
 
 from newsletter_shared import auth_health, auth_store, feedback, kg_flags, kg_store
 
-from . import server
-from .auth import STALE_AFTER
-from .server import IMMUTABLE, MAX_BODY, Site, is_local_request, served
+from helpers import served
+
+from newsletter_web_server import server
+from newsletter_web_server.auth import STALE_AFTER
+from newsletter_web_server.server import IMMUTABLE, MAX_BODY, Site, is_local_request
 
 
-def selftest() -> None:
-    import tempfile
-
-    uid_a, uid_b, uid_c = "0123456789abcdef", "1111111111111111", "2222222222222222"
-    md = f"""# 每日晨間簡報 2026-09-28
+UID_A, UID_B, UID_C = "0123456789abcdef", "1111111111111111", "2222222222222222"
+MD = f"""# 每日晨間簡報 2026-09-28
 
 <!-- subject: 測試頭條 -->
 
@@ -30,72 +34,92 @@ def selftest() -> None:
 
 - 發生什麼：A
   - 細節
-<!-- mark:    uid={uid_a} -->
+<!-- mark:    uid={UID_A} -->
 
 ## 其餘收錄
 
 - **[其他](https://a.example/2)** — 半句
-<!-- mark:    uid={uid_b} -->
+<!-- mark:    uid={UID_B} -->
 - **[其他二](https://a.example/3)** — 第二則
-<!-- mark:    uid={uid_c} -->
+<!-- mark:    uid={UID_C} -->
 """
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "reports").mkdir()
-        (root / "data" / "curated").mkdir(parents=True)
-        (root / "reports" / "2026-09-28.md").write_text(md, encoding="utf-8")
-        (root / "reports" / "2026-09-27.md").write_text(md.replace("2026-09-28", "2026-09-27"), encoding="utf-8")
-        (root / "reports" / "notes.md").write_text("不是日期檔名，要被略過", encoding="utf-8")
-        (root / "data" / "curated" / "2026-09-28.json").write_text(json.dumps(
-            {"items": [{"uid": uid_a, "title": "重點", "source": "S1", "topic": "ai-industry",
-                        "matched_keywords": ["llm"]}]}, ensure_ascii=False), encoding="utf-8")
-        # 前端的建置結果（假的）；dist 之外放一個檔案，確認拿不到
-        (root / "apps" / "web-ui" / "dist" / "assets").mkdir(parents=True)
-        shell = '<!doctype html><div id="root"></div><script type="module" src="/assets/app-abc123.js"></script>'
-        (root / "apps" / "web-ui" / "dist" / "index.html").write_text(shell, encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist" / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist" / "sw.js").write_text("self.skipWaiting()", encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist" / "icons").mkdir()
-        (root / "apps" / "web-ui" / "dist" / "icons" / "icon-192.png").write_text("png", encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
-        for d in (root / "apps" / "web-ui", root / "apps", root):
-            (d / "secret.txt").write_text("dist 之外", encoding="utf-8")
-        site = Site(root, today=lambda: "2026-09-28")
-
-        with served(site) as req:
-            _selftest_reports(req, site, root, uid_a)
-            _selftest_static(req, shell)
-            _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
-            _selftest_etag(req, uid_a)
-            _selftest_kg(req, root, uid_a)
-        _selftest_timeout(site)
-        _selftest_access(root)
-
-        # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
-        bare = root / "bare"
-        (bare / "reports").mkdir(parents=True)
-        with served(Site(bare, today=lambda: "2026-09-28")) as req:
-            status, _, body = req("GET", "/")
-            assert status == 503 and "npm run build" in body
-            status, _, body = req("GET", "/api/today")
-            assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "flags": {}, "latest": None,
-                                                     "run": None}
-            assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
-    selftest_auth()
-    print("ok")
+SHELL = '<!doctype html><div id="root"></div><script type="module" src="/assets/app-abc123.js"></script>'
 
 
-def _selftest_access(root: Path) -> None:
+@pytest.fixture
+def root(tmp_path):
+    root = tmp_path
+    (root / "reports").mkdir()
+    (root / "data" / "curated").mkdir(parents=True)
+    (root / "reports" / "2026-09-28.md").write_text(MD, encoding="utf-8")
+    (root / "reports" / "2026-09-27.md").write_text(MD.replace("2026-09-28", "2026-09-27"), encoding="utf-8")
+    (root / "reports" / "notes.md").write_text("不是日期檔名，要被略過", encoding="utf-8")
+    (root / "data" / "curated" / "2026-09-28.json").write_text(json.dumps(
+        {"items": [{"uid": UID_A, "title": "重點", "source": "S1", "topic": "ai-industry",
+                    "matched_keywords": ["llm"]}]}, ensure_ascii=False), encoding="utf-8")
+    # 前端的建置結果（假的）；dist 之外放一個檔案，確認拿不到
+    (root / "apps" / "web-ui" / "dist" / "assets").mkdir(parents=True)
+    (root / "apps" / "web-ui" / "dist" / "index.html").write_text(SHELL, encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist" / "assets" / "app-abc123.js").write_text("console.log(1)", encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist" / "assets" / "app-abc123.css").write_text("body{}", encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist" / "favicon.svg").write_text("<svg/>", encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist" / "manifest.webmanifest").write_text('{"name":"x"}', encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist" / "sw.js").write_text("self.skipWaiting()", encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist" / "icons").mkdir()
+    (root / "apps" / "web-ui" / "dist" / "icons" / "icon-192.png").write_text("png", encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist" / "build.py").write_text("print('不該被提供')", encoding="utf-8")
+    for d in (root / "apps" / "web-ui", root / "apps", root):
+        (d / "secret.txt").write_text("dist 之外", encoding="utf-8")
+    return root
+
+
+@pytest.fixture
+def site(root):
+    return Site(root, today=lambda: "2026-09-28")
+
+
+@pytest.fixture
+def req(site):
+    with served(site) as r:
+        yield r
+
+
+@pytest.fixture
+def shell():
+    return SHELL
+
+
+@pytest.fixture
+def uid_a():
+    return UID_A
+
+
+@pytest.fixture
+def uids():
+    return UID_A, UID_B, UID_C
+
+
+def test_no_frontend(tmp_path):
+    # 還沒建置前端：頁面回 503 並說明怎麼建置，API 照常
+    bare = tmp_path / "bare"
+    (bare / "reports").mkdir(parents=True)
+    with served(Site(bare, today=lambda: "2026-09-28")) as req:
+        status, _, body = req("GET", "/")
+        assert status == 503 and "npm run build" in body
+        status, _, body = req("GET", "/api/today")
+        assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "flags": {}, "latest": None,
+                                                 "run": None}
+        assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
+
+
+def test_access(root: Path) -> None:
     """設了 Access：經 tunnel 來的請求（帶 cf-* 標頭）要有效的 JWT，否則 403；本機不驗。"""
     import time
 
     import jwt
     from cryptography.hazmat.primitives.asymmetric import rsa
 
-    from .access import Access, from_env
+    from newsletter_web_server.access import Access, from_env
 
     key, other = (rsa.generate_private_key(public_exponent=65537, key_size=2048) for _ in range(2))
     access = Access("https://team.cloudflareaccess.com/", "aud-1", key_for=lambda token: key.public_key())
@@ -126,13 +150,13 @@ def _selftest_access(root: Path) -> None:
         assert from_env() is None
 
 
-def _selftest_timeout(site: Site) -> None:
+def test_timeout(site: Site) -> None:
     """只送一半的請求：逾時後伺服器關掉連線，不會一直佔著 thread。"""
     import socket
     import time
     from unittest import mock
 
-    from .server import Handler, make_server
+    from newsletter_web_server.server import Handler, make_server
     with mock.patch.object(Handler, "timeout", 0.5):
         server = make_server(site, "127.0.0.1", 0, quiet=True)
         threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -146,30 +170,28 @@ def _selftest_timeout(site: Site) -> None:
             server.server_close()
 
 
-def _selftest_kg(req, root: Path, uid_a: str) -> None:
-    """知識圖譜：唯讀、狀態與 flags 一致、範圍與錯誤。uid_a 在 09-28、09-27 兩份晨報裡。"""
-    import sqlite3
-    from urllib.parse import quote
+U1, U2, U3 = "3" * 16, "4" * 16, "5" * 16
 
-    def get(path: str) -> tuple[int, dict]:
-        status, _, body = req("GET", path)
-        return status, json.loads(body)
 
-    # 還沒建過 KG：總覽說沒有，個別的 404
-    assert get("/api/kg/entities") == (200, {"q": "", "available": False, "since": "2026-08-29", "entities": []})
-    assert get(f"/api/kg/item/{uid_a}")[0] == 404
+def _get(req, path: str) -> tuple[int, dict]:
+    status, _, body = req("GET", path)
+    return status, json.loads(body)
 
-    u1, u2, u3 = "3" * 16, "4" * 16, "5" * 16
+
+@pytest.fixture
+def kg_db(root: Path) -> Path:
+    """UID_A（在 09-28、09-27 兩份晨報裡）完成收購 → 跟進 U1 的否認 → U1 與 U2 的宣布矛盾；U3 是很久以前的。"""
     db = root / "state" / "kg.sqlite"
+    db.parent.mkdir(exist_ok=True)
     con = sqlite3.connect(db)
     con.executescript(kg_store.SCHEMA)
     with con:
         con.executemany("INSERT INTO items VALUES (?, ?, ?, ?, ?, 1)", [
-            (uid_a, "2026-09-28", "Acme 完成", "https://s1/a", "S1"), (u1, "2026-09-20", "Beta 否認", "https://s2/b", "S2"),
-            (u2, "2026-09-10", "Acme 宣布", "https://s3/c", "S3"), (u3, "2026-01-01", "Acme 成立", "https://s4/d", "S4")])
+            (UID_A, "2026-09-28", "Acme 完成", "https://s1/a", "S1"), (U1, "2026-09-20", "Beta 否認", "https://s2/b", "S2"),
+            (U2, "2026-09-10", "Acme 宣布", "https://s3/c", "S3"), (U3, "2026-01-01", "Acme 成立", "https://s4/d", "S4")])
         con.executemany("INSERT INTO events(id, uid, date, summary, quote) VALUES (?, ?, ?, ?, ?)", [
-            (1, u2, "2026-09-10", "Acme 宣布收購 Beta", "q1"), (2, u1, "2026-09-20", "Beta 否認", "q2"),
-            (3, uid_a, "2026-09-28", "Acme 完成收購", "q3"), (4, u3, "2026-01-01", "Acme 成立", "q4")])
+            (1, U2, "2026-09-10", "Acme 宣布收購 Beta", "q1"), (2, U1, "2026-09-20", "Beta 否認", "q2"),
+            (3, UID_A, "2026-09-28", "Acme 完成收購", "q3"), (4, U3, "2026-01-01", "Acme 成立", "q4")])
         con.executemany("INSERT INTO mentions VALUES (?, ?, ?, ?)", [
             (1, "acme", "Acme", "org"), (1, "beta", "Beta", "org"), (2, "beta", "Beta", "org"), (2, "acme", "ACME", "org"),
             (3, "acme", "Acme", "org"), (3, "台積電", "台積電", "org"), (4, "acme", "Acme", "org")])
@@ -177,64 +199,91 @@ def _selftest_kg(req, root: Path, uid_a: str) -> None:
             (2, 1, "contradict", "not in talks", "2026-09-20"), (3, 2, "follow", "", "2026-09-28"),
             (3, 2, "follow", "", "2026-09-28")])  # 重複的連結只回一次
     con.close()
+    return db
 
-    status, one = get(f"/api/kg/item/{uid_a}")
+
+def test_kg_missing(req) -> None:
+    """還沒建過 KG：總覽說沒有，個別的 404。"""
+    assert _get(req, "/api/kg/entities") == (200, {"q": "", "available": False, "since": "2026-08-29", "entities": []})
+    assert _get(req, f"/api/kg/item/{UID_A}")[0] == 404
+    assert _get(req, "/api/kg/entity/acme")[0] == 404
+
+
+def test_kg_item(req, root: Path, kg_db: Path) -> None:
+    status, one = _get(req, f"/api/kg/item/{UID_A}")
     assert status == 200 and one["depth"] == 1 and one["seeds"] == [3], one
     assert [e["id"] for e in one["events"]] == [2, 3]  # 舊到新
     assert one["links"] == [{"src": 3, "dst": 2, "kind": "follow", "quote": "", "date": "2026-09-28"}]
-    assert one["items"] == [{"uid": uid_a, "date": "2026-09-28", "title": "Acme 完成", "url": "https://s1/a", "source": "S1",
+    assert one["items"] == [{"uid": UID_A, "date": "2026-09-28", "title": "Acme 完成", "url": "https://s1/a", "source": "S1",
                              "report": "2026-09-28"}]
     ev3 = one["events"][1]
     assert ev3["report"] == "2026-09-28" and ev3["status"] == "active" and ev3["sources"] == 1
     assert ev3["entities"] == [{"key": "acme", "name": "Acme", "type": "org"}, {"key": "台積電", "name": "台積電", "type": "org"}]
     assert one["events"][0]["report"] is None  # 沒寫進晨報的則
 
-    two = get(f"/api/kg/item/{uid_a},{u1},{uid_a}?depth=2")[1]
-    assert two["uids"] == [uid_a, u1] and [e["id"] for e in two["events"]] == [1, 2, 3] and len(two["links"]) == 2
+    two = _get(req, f"/api/kg/item/{UID_A},{U1},{UID_A}?depth=2")[1]
+    assert two["uids"] == [UID_A, U1] and [e["id"] for e in two["events"]] == [1, 2, 3] and len(two["links"]) == 2
     assert {e["id"]: e["status"] for e in two["events"]} == {1: "disputed", 2: "active", 3: "active"}
     assert two["flags"] == {}
 
-    kg_flags.append(u1, "wrong", root / "state" / "kg_flags.jsonl")  # 否認的那則才是錯的
-    two = get(f"/api/kg/item/{uid_a}?depth=2")[1]
+
+def test_kg_flags_change_status(req, root: Path, kg_db: Path) -> None:
+    """與 writer 同一套規則：否認的那則被標錯，它的矛盾就不算。"""
+    kg_flags.append(U1, "wrong", root / "state" / "kg_flags.jsonl")
+    two = _get(req, f"/api/kg/item/{UID_A}?depth=2")[1]
     assert {e["id"]: e["status"] for e in two["events"]} == {1: "active", 2: "invalid", 3: "active"}
-    assert two["flags"] == {u1: "wrong"}
-    kg_flags.append(u1, "", root / "state" / "kg_flags.jsonl")
+    assert two["flags"] == {U1: "wrong"}
 
-    for bad in (f"/api/kg/item/{uid_a}?depth=3", f"/api/kg/item/{uid_a}?depth=x", "/api/kg/item/" + ",".join([uid_a] * 2 + [
-            f"{i:016x}" for i in range(10)]), "/api/kg/entity/acme?days=0", "/api/kg/entity/acme?days=366",
-                "/api/kg/entities?q=" + "a" * 101):
-        assert get(bad)[0] == 400, bad
-    for missing in ("/api/kg/item/" + "6" * 16, "/api/kg/entity/Acme", "/api/kg/entity/nobody", "/api/kg/entity/a%2Fb"):
-        assert get(missing)[0] == 404, missing
 
-    status, acme = get("/api/kg/entity/acme")
+@pytest.mark.parametrize("path", [
+    f"/api/kg/item/{UID_A}?depth=3", f"/api/kg/item/{UID_A}?depth=x",
+    "/api/kg/item/" + ",".join([UID_A] * 2 + [f"{i:016x}" for i in range(10)]),  # 去重後還是超過 10 則
+    "/api/kg/entity/acme?days=0", "/api/kg/entity/acme?days=366", "/api/kg/entities?q=" + "a" * 101,
+])
+def test_kg_bad_request(req, kg_db: Path, path: str) -> None:
+    assert _get(req, path)[0] == 400
+
+
+@pytest.mark.parametrize("path", [
+    "/api/kg/item/" + "6" * 16, "/api/kg/entity/Acme",  # 不是正規化過的 key
+    "/api/kg/entity/nobody", "/api/kg/entity/a%2Fb",
+])
+def test_kg_not_found(req, kg_db: Path, path: str) -> None:
+    assert _get(req, path)[0] == 404
+
+
+def test_kg_entity(req, kg_db: Path) -> None:
+    status, acme = _get(req, "/api/kg/entity/acme")
     assert status == 200 and acme["days"] == 90 and acme["since"] == "2026-06-30", acme
     assert acme["entity"] == {"key": "acme", "name": "Acme", "type": "org", "total": 4}  # 最常見的寫法
     assert [e["id"] for e in acme["events"]] == [1, 2, 3] and len(acme["links"]) == 2 and not acme["truncated"]
     assert [(r["key"], r["count"]) for r in acme["related"]] == [("beta", 2), ("台積電", 1)]
-    assert [e["id"] for e in get("/api/kg/entity/acme?days=365")[1]["events"]] == [4, 1, 2, 3]
-    tsmc = get("/api/kg/entity/" + quote("台積電"))[1]
+    assert [e["id"] for e in _get(req, "/api/kg/entity/acme?days=365")[1]["events"]] == [4, 1, 2, 3]
+    tsmc = _get(req, "/api/kg/entity/" + quote("台積電"))[1]
     assert tsmc["entity"]["name"] == "台積電" and [e["id"] for e in tsmc["events"]] == [3]
 
-    top = get("/api/kg/entities")[1]
+
+def test_kg_entities(req, kg_db: Path) -> None:
+    top = _get(req, "/api/kg/entities")[1]
     assert top["available"] and [(e["key"], e["count"]) for e in top["entities"]] == [("acme", 3), ("beta", 2), ("台積電", 1)]
     assert top["entities"][0]["last"] == "2026-09-28"
-    found = get("/api/kg/entities?q=" + quote(" ACME "))[1]
+    found = _get(req, "/api/kg/entities?q=" + quote(" ACME "))[1]
     assert found["q"] == "ACME" and found["since"] is None and [(e["key"], e["count"]) for e in found["entities"]] == [("acme", 4)]
-    assert get("/api/kg/entities?q=" + quote("，"))[1]["entities"] == []
+    assert _get(req, "/api/kg/entities?q=" + quote("，"))[1]["entities"] == []
 
-    # 前端路由回 index.html；KG 不進 ETag／離線副本
-    for page in ("/kg", f"/kg/item/{uid_a}", f"/kg/item/{uid_a},{u1}", "/kg/entity/" + quote("台積電")):
+
+def test_kg_pages_and_readonly(req, root: Path, kg_db: Path) -> None:
+    """前端路由回 index.html；KG 不進 ETag／離線副本；網頁讀過之後資料庫一個字都沒改。"""
+    for page in ("/kg", f"/kg/item/{UID_A}", f"/kg/item/{UID_A},{U1}", "/kg/entity/" + quote("台積電")):
         assert req("GET", page)[0] == 200, page
     assert req("GET", "/kg/item/xyz")[0] == 404
-    assert "etag" not in req("GET", f"/api/kg/item/{uid_a}")[1]
-    # 唯讀：網頁讀過之後資料庫一個字都沒改
-    before = db.read_bytes()
-    get(f"/api/kg/item/{uid_a}?depth=2")
-    assert db.read_bytes() == before and not (root / "state" / "kg.sqlite-journal").exists()
+    assert "etag" not in req("GET", f"/api/kg/item/{UID_A}")[1]
+    before = kg_db.read_bytes()
+    _get(req, f"/api/kg/item/{UID_A}?depth=2")
+    assert kg_db.read_bytes() == before and not (root / "state" / "kg.sqlite-journal").exists()
 
 
-def _selftest_etag(req, uid_a: str) -> None:
+def test_etag(req, uid_a: str) -> None:
     """離線副本的條件請求：沒變回 304（沒有 body），標記或晨報變了 ETag 跟著變。"""
     path = "/api/reports/2026-09-28"
     status, headers, _ = req("GET", path)
@@ -269,7 +318,7 @@ def _selftest_etag(req, uid_a: str) -> None:
     assert json.loads(req("GET", path)[2])["flags"] == {}
 
 
-def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
+def test_reports(req, site: Site, root: Path, uid_a: str) -> None:
     def get(path: str, headers=None) -> tuple[int, dict]:
         status, _, text = req("GET", path, headers)
         return status, json.loads(text)
@@ -356,7 +405,7 @@ def _selftest_reports(req, site: Site, root: Path, uid_a: str) -> None:
     (root / "reports" / "2026-09-26.md").unlink()
 
 
-def _selftest_static(req, shell: str) -> None:
+def test_static(req, shell: str) -> None:
     # 前端：路由一律回 index.html（含 CSP）；沒有行內腳本與樣式
     for path in ("/", "/reports", "/reports/", "/reports/2026-09-28", "/reports/2026-01-01", "/auth", "/stats",
                  "/feedback/0123456789abcdef", "/feedback/0123456789abcdef,1111111111111111"):
@@ -391,7 +440,7 @@ def _selftest_static(req, shell: str) -> None:
             assert headers["content-type"].startswith("text/plain") and body == "not found", path
 
 
-def _selftest_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str, str, str]) -> None:
+def test_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str, str, str]) -> None:
     uid_a, uid_b, uid_c = uids
     def get(path: str, headers=None) -> tuple[int, dict]:
         status, _, text = req("GET", path, headers)
@@ -472,13 +521,7 @@ def _selftest_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str,
     assert site.reports.feedback_path.read_text(encoding="utf-8") == before
 
 
-def selftest_auth() -> None:
-    secret = "sk-ant-oat01-" + "Kp4" * 14
-    _selftest_is_local()
-    _selftest_auth_http(secret)
-
-
-def _selftest_is_local() -> None:
+def test_is_local() -> None:
     # --- is_local_request：來源位址、Host、代理標頭、Origin ---
     ok_host = {"Host": "127.0.0.1:8787"}
     for ip, h in (("127.0.0.1", ok_host), ("::1", {"Host": "[::1]:8787"}), ("::ffff:127.0.0.1", {"Host": "localhost"}),
@@ -508,9 +551,12 @@ def _selftest_is_local() -> None:
     assert not is_local_request("172.18.0.1", ok_host)
 
 
-def _selftest_auth_http(secret: str) -> None:
-    import tempfile
-    from types import SimpleNamespace
+SECRET = "sk-ant-oat01-" + "Kp4" * 14
+
+
+@pytest.fixture
+def t(tmp_path):
+    secret = SECRET
 
     # --- 整個 HTTP 流程（假的 checker，不呼叫 Claude）---
     uid = "0123456789abcdef"
@@ -523,45 +569,40 @@ def _selftest_auth_http(secret: str) -> None:
 
     seen: list[str] = []
 
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        (root / "reports").mkdir()
-        (root / "reports" / "2026-09-28.md").write_text(
-            f"# 每日晨間簡報 2026-09-28\n\n<!-- subject: x -->\n\n> **今日頭條：** y\n\n## 科技\n\n"
-            f"**[t](https://a.example/1)**\n\n- a\n<!-- mark:    uid={uid} -->\n", encoding="utf-8")
-        (root / "apps" / "web-ui" / "dist").mkdir(parents=True)
-        (root / "apps" / "web-ui" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
-        site = Site(root, today=lambda: "2026-09-28", checker=checker)
+    root = tmp_path
+    (root / "reports").mkdir()
+    (root / "reports" / "2026-09-28.md").write_text(
+        f"# 每日晨間簡報 2026-09-28\n\n<!-- subject: x -->\n\n> **今日頭條：** y\n\n## 科技\n\n"
+        f"**[t](https://a.example/1)**\n\n- a\n<!-- mark:    uid={uid} -->\n", encoding="utf-8")
+    (root / "apps" / "web-ui" / "dist").mkdir(parents=True)
+    (root / "apps" / "web-ui" / "dist" / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+    site = Site(root, today=lambda: "2026-09-28", checker=checker)
 
-        with served(site) as raw_req:
-            def req(method, path, headers=None, body=None):
-                status, _, text = raw_req(method, path, headers, body)
-                seen.append(text)
-                return status, text
+    with served(site) as raw_req:
+        def req(method, path, headers=None, body=None):
+            status, _, text = raw_req(method, path, headers, body)
+            seen.append(text)
+            return status, text
 
-            def post(path, body, headers=None):
-                status, text = req("POST", path, headers, body)
-                return status, json.loads(text)
+        def post(path, body, headers=None):
+            status, text = req("POST", path, headers, body)
+            return status, json.loads(text)
 
-            def get(path, headers=None):
-                status, text = req("GET", path, headers)
-                return status, json.loads(text)
+        def get(path, headers=None):
+            status, text = req("GET", path, headers)
+            return status, json.loads(text)
 
-            missing = {"state": "missing", "kind": "missing", "checked_at": None}
-            other = "sk-ant-oat01-" + "Zz1" * 14
-            t = SimpleNamespace(site=site, req=req, get=get, post=post, secret=secret, other=other,
-                                checked=checked, outcome=outcome, uid=uid, missing=missing)
-            _selftest_auth_access(t)
-            _selftest_auth_token(t)
-            _selftest_auth_lifecycle(t)
+        missing = {"state": "missing", "kind": "missing", "checked_at": None}
+        other = "sk-ant-oat01-" + "Zz1" * 14
+        t = SimpleNamespace(site=site, req=req, get=get, post=post, secret=secret, other=other,
+                            checked=checked, outcome=outcome, uid=uid, missing=missing, root=root)
+        yield t
 
-            # 完整 token 不能出現在任何回應裡
-            assert not any(secret in text or other in text for text in seen)
-            # 👍／👎 仍照常寫入，與 /auth 互不干擾
-            assert uid in (root / "state" / "feedback.jsonl").read_text(encoding="utf-8")
+        # 完整 token 不能出現在任何回應裡
+        assert not any(secret in text or other in text for text in seen)
 
 
-def _selftest_auth_access(t) -> None:
+def test_auth_access(t) -> None:
     from unittest import mock
 
     site, req, get, post, secret, checked, uid, missing = t.site, t.req, t.get, t.post, t.secret, t.checked, t.uid, t.missing
@@ -616,9 +657,11 @@ def _selftest_auth_access(t) -> None:
     assert get("/api/today", tunnel)[0] == 200 and req("GET", "/", tunnel)[0] == 200
     assert get("/api/heartbeat", tunnel) == (200, {"ok": True})
     assert post("/api/feedback", {"uid": uid, "mark": "+"}, tunnel)[0] == 200
+    # 👍／👎 仍照常寫入，與 /auth 互不干擾
+    assert uid in (t.root / "state" / "feedback.jsonl").read_text(encoding="utf-8")
 
 
-def _selftest_auth_token(t) -> None:
+def test_auth_token(t) -> None:
     import stat
 
     site, req, get, post, secret, other, checked, outcome = t.site, t.req, t.get, t.post, t.secret, t.other, t.checked, t.outcome
@@ -686,11 +729,13 @@ def _selftest_auth_token(t) -> None:
     assert get("/api/auth-health")[1]["state"] == "ok"
 
 
-def _selftest_auth_lifecycle(t) -> None:
+def test_auth_lifecycle(t) -> None:
     from datetime import timedelta, timezone
     from unittest import mock
 
     site, get, post, secret, missing = t.site, t.get, t.post, t.secret, t.missing
+    auth_store.save(secret, site.auth.token_path)
+    assert post("/api/auth/test", {})[0] == 200  # 前提：驗證過一次，結果正常
 
     # 即將到期的提醒（以儲存時間推算）
     auth_store.save(secret, site.auth.token_path, datetime.now(timezone.utc) - timedelta(days=345))

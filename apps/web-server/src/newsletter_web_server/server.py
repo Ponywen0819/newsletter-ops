@@ -1,17 +1,15 @@
 """HTTP 層：路由、本機判斷、提供 apps/web-ui/dist。讀寫都交給 Site 底下的 reports 與 auth。"""
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import ipaddress
 import json
 import re
-import threading
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, Iterator, Mapping
+from typing import Callable, Mapping
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from newsletter_shared import ROOT
@@ -94,7 +92,7 @@ def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = F
 
 
 class Site:
-    """Handler 用到的全部狀態。root 可換掉，selftest 用暫存目錄。"""
+    """Handler 用到的全部狀態。root 可換掉，測試用暫存目錄。"""
 
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
                  checker: Callable[[str], dict] | None = None, access: Access | None = None):
@@ -309,31 +307,3 @@ def make_server(site: Site, host: str, port: int, quiet: bool = False, admin: bo
     server.admin = admin  # type: ignore[attr-defined]
     return server
 
-
-@contextlib.contextmanager
-def served(site: Site, admin: bool = False) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
-    """selftest 用的真 HTTP 伺服器。用 http.client：路徑原樣送出（不正規化 `..`），標頭可自訂。"""
-    import http.client
-
-    server = make_server(site, DEFAULT_HOST, 0, quiet=True, admin=admin)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    port = server.server_address[1]
-
-    def req(method: str, path: str, headers: Mapping[str, str] | None = None, body=None) -> tuple[int, dict[str, str], str]:
-        h, data = dict(headers or {}), None
-        if body is not None:
-            data = body if isinstance(body, bytes) else json.dumps(body).encode()
-            h.setdefault("Content-Type", "application/json")
-        conn = http.client.HTTPConnection(DEFAULT_HOST, port, timeout=10)
-        try:
-            conn.request(method, path, body=data, headers=h)
-            resp = conn.getresponse()
-            return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read().decode("utf-8")
-        finally:
-            conn.close()
-
-    try:
-        yield req
-    finally:
-        server.shutdown()
-        server.server_close()

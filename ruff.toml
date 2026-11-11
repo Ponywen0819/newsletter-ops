@@ -7,7 +7,7 @@ select = ["E", "F", "W", "B", "SIM", "C90", "PL", "RUF"]
 ignore = [
     "RUF001", "RUF002", "RUF003",  # 中文全形標點
     "PLR2004",                     # magic value
-    "PLC0415",                     # selftest 裡的區域 import
+    "PLC0415",                     # 區域 import（選用依賴、測試）
     "E501",                        # 行長是風格
-    "PLR0915",                     # selftest 本來就長；複雜度交給 C901
+    "PLR0915",                     # 測試本來就長；複雜度交給 C901
 ]

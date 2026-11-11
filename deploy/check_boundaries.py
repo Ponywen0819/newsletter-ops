@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """依賴方向檢查：path 依賴以 editable 安裝，違規的 import 常常照樣跑得動，所以掃 AST 把關。
 
-用法：python3 deploy/check_boundaries.py [--selftest]
+用法：python3 deploy/check_boundaries.py（測試：deploy/test_check_boundaries.py）
 
   1. 成員只能 import 自己或 MEMBERS 允許的 newsletter_* 套件
   2. 成員 pyproject.toml 的 newsletter-* 依賴要與 MEMBERS 一致；沒有成員可以依賴 apps/ 底下的模組
@@ -17,7 +17,6 @@ import json
 import re
 import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 
@@ -118,69 +117,7 @@ def check_projects(root: Path = ROOT, members: dict = MEMBERS, node: dict = NODE
     return errors
 
 
-def selftest() -> None:
-    with tempfile.TemporaryDirectory() as d:
-        base = Path(d) / "agent"
-        (base / "src" / "newsletter_agent").mkdir(parents=True)
-        (base / "pyproject.toml").write_text('[project]\nname = "newsletter-agent"\ndependencies = ["newsletter-shared", "claude-agent-sdk>=1"]\n')
-        mod = base / "src" / "newsletter_agent" / "x.py"
-        members = {"agent": (base, {"shared"})}
-
-        mod.write_text("from newsletter_shared import metrics\nimport newsletter_agent.y\n")
-        assert check(members) == [], check(members)
-
-        mod.write_text("import newsletter_notify.render_email\n")
-        assert any("不可 import newsletter_notify" in e for e in check(members))
-
-        mod.write_text("from pathlib import Path\nHERE = Path(__file__)\n")
-        assert any("__file__" in e for e in check(members))
-
-        mod.write_text("")
-        (base / "pyproject.toml").write_text('[project]\nname = "newsletter-agent"\ndependencies = ["newsletter-notify"]\n')
-        assert any("pyproject.toml" in e for e in check(members))
-        assert any("目錄不存在" in e for e in check({"notify": (Path(d) / "notify", {"shared"})}))
-
-        root = Path(d) / "repo"
-        root.mkdir()
-        assert check_root(root) == [], check_root(root)
-        (root / "uv.lock").write_text("")
-        assert any("uv.lock" in e for e in check_root(root))
-        (root / "uv.lock").unlink()
-
-        apps = {"worker": (Path(d) / "apps" / "worker", set()), "agent": (base, {"worker"})}
-        assert any("apps/" in e for e in check(apps))
-
-        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-        ui = root / "apps" / "web-ui"
-        ui.mkdir(parents=True)
-        (ui / "package.json").write_text('{"name": "newsletter-web-ui"}')
-        (ui / "project.json").write_text('{"name": "web-ui"}')
-        node = {"web-ui": ui}
-        subprocess.run(["git", "add", "."], cwd=root, check=True)
-        assert check_projects(root, {}, node) == [], check_projects(root, {}, node)
-        (ui / "package.json").write_text('{"name": "newsletter-web"}')
-        assert any("應為 newsletter-web-ui" in e for e in check_projects(root, {}, node))
-        (ui / "package.json").write_text('{"name": "newsletter-web-ui"}')
-        (ui / "project.json").write_text('{"name": "newsletter-web-ui"}')
-        assert any("project.json 的名稱是 newsletter-web-ui，應為 web-ui" in e for e in check_projects(root, {}, node))
-        (ui / "project.json").write_text('{"name": "web-ui"}')
-        assert any("沒有登記" in e for e in check_projects(root, {}, {}))
-        subprocess.run(["git", "rm", "-q", "--cached", "apps/web-ui/project.json"], cwd=root, check=True)
-        assert any("沒有進版控" in e for e in check_projects(root, {}, node))
-
-        py = root / "packages" / "shared"
-        py.mkdir(parents=True)
-        (py / "pyproject.toml").write_text('[project]\nname = "newsletter-shared"\n')
-        (py / "project.json").write_text('{"name": "shared"}')
-        subprocess.run(["git", "add", "packages"], cwd=root, check=True)
-        assert any("uv.lock 沒有進版控" in e for e in check_projects(root, {"shared": (py, set())}, {}))
-    print("ok")
-
-
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--selftest"]:
-        selftest()
-        raise SystemExit(0)
     errs = check() + check_root() + check_projects()
     print("\n".join(errs) if errs else "ok", file=sys.stderr if errs else sys.stdout)
     raise SystemExit(1 if errs else 0)

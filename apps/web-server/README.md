@@ -12,7 +12,7 @@ src/newsletter_web_server/
   reports.py   晨報與回饋的讀寫
   auth.py      OAuth token 的驗證、儲存、定時檢查
   errors.py    NotFound、ApiError
-  selftest.py  --selftest
+tests/         pytest（真的 HTTP 伺服器＋暫存目錄，不呼叫 Claude）
 ```
 
 ## 啟動
@@ -20,7 +20,6 @@ src/newsletter_web_server/
 ```bash
 (cd apps/web-ui && npm install && npm run build)   # 前端還沒建置過才需要；沒建置時頁面回 503 並提示這行
 uv run --project apps/web-server newsletter-web               # 晨報網頁，預設 http://127.0.0.1:8787（--port / NEWSLETTER_WEB_PORT 可改）
-uv run --project apps/web-server newsletter-web --selftest    # API、靜態檔、寫入／覆蓋／取消的讀回、/auth 的本機限制、驗證結果的讀寫
 ```
 
 `/` 當日晨報、`/reports` 歷史列表、`/reports/<date>` 單日。每則主要新聞末尾有「有用／沒用」兩顆按鈕（上／下箭頭圖示），按下即 append 一行到
@@ -77,10 +76,10 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 - 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。
 - `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../../packages/notify/README.md)。
 
-## 自我檢查
+## 測試
 
 ```bash
-uv run --project apps/web-server newsletter-web --selftest
+npx nx run web-server:test
 ```
 
 涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、知識圖譜（狀態與 flags、範圍、Unicode key、錯誤、唯讀）、`/auth` 的本機限制、`auth_health.json` 的讀寫與 `/api/auth-health`，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](../web-ui/README.md)。

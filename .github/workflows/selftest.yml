@@ -1,6 +1,6 @@
 name: selftest
 
-# 各模組的 lint、自我檢查（不連網）、前端測試都交給 Nx；PR 到 develop／main 時檢查，main 與 v* tag 的 push 之後 release.yml 接著建映像
+# 各模組的 lint、測試（pytest／vitest，不連網）都交給 Nx；PR 到 develop／main 時檢查，main 與 v* tag 的 push 之後 release.yml 接著建映像
 on:
   push:
     branches: [main]
@@ -36,9 +36,9 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: apps/web-ui
-      - run: npx nx run-many -t lint selftest typecheck test
+      - run: npx nx run-many -t lint typecheck test
       - run: git ls-files '*.sh' | xargs shellcheck --severity=warning
-      - run: uv run --no-project python deploy/check_boundaries.py --selftest
+      - run: uv run --no-project --with "pytest>=9,<10" pytest -q deploy
       - run: uv run --no-project python deploy/check_boundaries.py
       # compose 檔的語法與變數展開；值是假的，只為了讓必填變數不報錯
       - run: docker compose config -q

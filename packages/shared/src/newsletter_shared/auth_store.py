@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """OAuth token 的儲存與讀取，newsletter-web 與 newsletter-llm 共用。
 
-用法：uv run --project packages/shared python -m newsletter_shared.auth_store --selftest
-
 token 唯一的來源是 state/oauth_token.json（/auth 貼上後存的，權限 600），不讀 CLAUDE_CODE_OAUTH_TOKEN：
 換新要立刻生效，所有程序看到同一份。不支援 API key；scrub_environ() 移除優先序高於 OAuth 的來源。
 """
@@ -11,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -121,92 +118,3 @@ def scrub_environ(environ: MutableMapping[str, str]) -> list[str]:
     for name in removed:
         del environ[name]
     return removed
-
-
-def selftest() -> None:
-    import stat
-    import tempfile as tf
-    from unittest import mock
-
-    # 格式
-    assert check_format("") and check_format("short") and check_format("x" * (MAX_LEN + 1))
-    assert check_format("a" * 30 + " " + "b" * 30) and check_format("a" * 30 + "\n" + "b" * 30)
-    assert check_format("sk-ant-oat01-" + "Ab1_-" * 10) is None
-    assert clean("  tok\n") == "tok"
-
-    now = datetime(2026, 10, 2, tzinfo=timezone.utc)
-    secret = "sk-ant-oat01-" + "Zx9" * 12
-    with tf.TemporaryDirectory() as d:
-        path = Path(d) / "state" / "oauth_token.json"
-        assert load(path) is None and status(path, now) == {"state": "missing"}
-        assert delete(path) is False
-
-        save(secret, path, now)
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600, oct(path.stat().st_mode)
-        assert load(path)["token"] == secret
-        assert [p.name for p in path.parent.iterdir() if p.name != path.name + ".lock"] == [path.name]
-        st = status(path, now)
-        assert st == {"state": "ok", "tail": secret[-4:], "saved_at": "2026-10-02",
-                      "expires_at": "2027-10-02", "days_left": 365}, st
-        assert secret not in json.dumps(st)
-
-        # 到期狀態
-        assert status(path, now + timedelta(days=334))["state"] == "ok"
-        assert status(path, now + timedelta(days=335))["state"] == "expiring"
-        assert status(path, now + timedelta(days=364))["state"] == "expiring"
-        assert status(path, now + timedelta(days=366))["state"] == "expired"
-
-        # 覆寫：權限仍是 600；寫入失敗不能動到舊檔、也不留暫存檔
-        save(secret + "2", path, now)
-        assert load(path)["token"] == secret + "2" and stat.S_IMODE(path.stat().st_mode) == 0o600
-        real_replace = os.replace
-        try:
-            def boom(*a, **k):
-                raise OSError("disk full")
-            os.replace = boom  # type: ignore[assignment]
-            try:
-                save("never-saved-" + "x" * 20, path, now)
-                raise AssertionError("應該丟 OSError")
-            except OSError:
-                pass
-        finally:
-            os.replace = real_replace  # type: ignore[assignment]
-        assert load(path)["token"] == secret + "2"
-        assert [p.name for p in path.parent.iterdir() if p.name != path.name + ".lock"] == [path.name]
-
-        # 內容壞掉＝當作沒有，不崩潰
-        for bad in ("", "not json", "[]", '{"token": 1, "saved_at": "x"}', '{"token": "", "saved_at": "2026-01-01"}'):
-            path.write_text(bad, encoding="utf-8")
-            assert load(path) is None, bad
-        save(secret, path, now)
-
-        # 認證來源只有儲存的檔；環境變數（OAuth token、API key）一律不算
-        none = Path(d) / "none.json"
-        assert resolve(none) is None
-        with mock.patch.dict(os.environ, {TOKEN_ENV: "envtok", "ANTHROPIC_API_KEY": "sk-ant-api03-x"}):
-            assert resolve(none) is None
-            got = resolve(path)
-            assert got.source == "stored-token" and got.token == secret
-        assert secret not in repr(got)
-
-        # 路徑可由環境變數改
-        assert token_path(Path("/r"), {}) == Path("/r/state/oauth_token.json")
-        assert token_path(Path("/r"), {TOKEN_FILE_ENV: "/x/t.json"}) == Path("/x/t.json")
-
-        assert delete(path) is True and not path.exists() and delete(path) is False
-
-    # 排在 OAuth token 前面的來源整批移掉，其他變數與 OAuth token 本身不動
-    env = {"ANTHROPIC_API_KEY": "k", "ANTHROPIC_AUTH_TOKEN": "t", "CLAUDE_CODE_USE_BEDROCK": "1",
-           TOKEN_ENV: "tok", "PATH": "/bin", "ANTHROPIC_BASE_URL": "https://x"}
-    assert scrub_environ(env) == ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK"]
-    assert env == {TOKEN_ENV: "tok", "PATH": "/bin", "ANTHROPIC_BASE_URL": "https://x"}
-    assert scrub_environ(env) == []
-    print("ok")
-
-
-if __name__ == "__main__":
-    if sys.argv[1:] == ["--selftest"]:
-        selftest()
-    else:
-        print("用法：python -m newsletter_shared.auth_store --selftest", file=sys.stderr)
-        raise SystemExit(2)

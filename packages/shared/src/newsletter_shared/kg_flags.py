@@ -37,21 +37,3 @@ def append(uid: str, flag: str, path: Path = PATH) -> dict:
     with locked(path):
         append_rows(path, [row])
     return row
-
-
-if __name__ == "__main__":  # 自我檢查：uv run --project packages/shared python -m newsletter_shared.kg_flags
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "kg_flags.jsonl"
-        assert read(p) == {}
-        append("a" * 16, "wrong", p)
-        append("b" * 16, "trusted", p)
-        append("a" * 16, "", p)
-        assert read(p) == {"b" * 16: "trusted"}
-        try:
-            append("c" * 16, "maybe", p)
-            raise AssertionError("bad flag accepted")
-        except ValueError:
-            pass
-    print("kg_flags selftest ok")

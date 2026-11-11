@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Claude 認證的最近驗證結果：state/auth_health.json（{ok, kind, at}）。worker 寫（每天定時、每日流程授權失敗時），
 web 寫（/auth 測試或貼上 token 時）也讀（/api/auth-health）；兩邊只靠這個檔溝通。
-
-用法：uv run --project packages/shared python -m newsletter_shared.auth_health --selftest
 """
 from __future__ import annotations
 
@@ -66,53 +64,3 @@ def run_check(token: str | None = None, root: Path = ROOT) -> dict:
     if p.returncode == 2:  # newsletter-llm 在沒有 SDK 時、還沒走到驗證就以 2 結束
         return {"ok": False, "kind": "env", "message": "驗證需要 claude-agent-sdk（newsletter-llm）"}
     return {"ok": False, "kind": "other", "message": f"驗證程序異常結束（exit {p.returncode}）"}
-
-
-def selftest() -> None:
-    import tempfile
-    from unittest import mock
-
-    with tempfile.TemporaryDirectory() as d:
-        path = health_path(Path(d))
-        assert path == Path(d) / "state" / "auth_health.json" and read(path) is None
-        now = datetime(2026, 11, 8, 7, 30, tzinfo=timezone.utc)
-        write(False, "auth", path, now)
-        assert read(path) == {"ok": False, "kind": "auth", "at": now}
-        assert [p.name for p in path.parent.iterdir()] == [path.name]  # 原子寫入不留暫存檔
-        for bad in ("", "{", '{"ok": "yes", "kind": "ok", "at": "2026-11-08T00:00:00"}', '{"ok": true}'):
-            path.write_text(bad, encoding="utf-8")
-            assert read(path) is None, bad
-
-        secret = "sk-ant-oat01-" + "Qw7" * 12
-
-        def fake(stdout="", code=0, raises=None):
-            def run(cmd, **kw):
-                fake.cmd, fake.env = cmd, kw["env"]
-                if raises:
-                    raise raises
-                return subprocess.CompletedProcess(cmd, code, stdout, "")
-            return run
-
-        with mock.patch.object(subprocess, "run", fake('noise\n{"ok": false, "kind": "auth", "message": "bad ' + secret + '"}\n', 5)):
-            res = run_check(secret)
-        assert res == {"ok": False, "kind": "auth", "message": "bad ***"}, res
-        assert fake.cmd[-2:] == ["--auth-check", "--token-from-env"] and fake.env[auth_store.TOKEN_ENV] == secret
-        assert secret not in " ".join(fake.cmd)
-        with mock.patch.object(subprocess, "run", fake('{"ok": true, "kind": "ok", "message": "驗證通過"}')):
-            assert run_check()["ok"] is True
-        assert fake.cmd[-1] == "--auth-check"  # 沒給 token：驗證儲存的
-        with mock.patch.object(subprocess, "run", fake(code=2)):
-            assert run_check()["kind"] == "env"
-        with mock.patch.object(subprocess, "run", fake(code=1)):
-            assert run_check()["kind"] == "other"
-        with mock.patch.object(subprocess, "run", fake(raises=subprocess.TimeoutExpired("x", 1))):
-            assert run_check()["kind"] == "timeout"
-    print("ok")
-
-
-if __name__ == "__main__":
-    if sys.argv[1:] == ["--selftest"]:
-        selftest()
-    else:
-        print(__doc__, file=sys.stderr)
-        raise SystemExit(2)

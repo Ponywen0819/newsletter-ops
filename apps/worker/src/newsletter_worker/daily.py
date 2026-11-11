@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import signal
@@ -19,8 +18,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import IO, Iterator
+from typing import IO
 
 from newsletter_shared import ROOT, atomic, lock, metrics, today, tz
 
@@ -154,139 +152,3 @@ def _run(collect_args: list[str], log: IO[str], stop: threading.Event | None = N
         return code
     say(log, "完成")
     return 0
-
-
-# 自我檢查用的假步驟：記下收到的參數與 stdin，依 FAKE_FAIL=<步驟>:<exit code、kill 或 hang> 失敗
-FAKE_STEP = '''import os, sys, time
-name = "NAME"
-out = os.environ["FAKE_OUT"]
-data = sys.stdin.read() if name == "send" else ""
-open(f"{out}/{name}", "w").write(" ".join(sys.argv[1:]) + "|" + data)
-print(name, "stderr", file=sys.stderr)
-if name == "render":
-    print('{"subject": "s"}')
-fail = os.environ.get("FAKE_FAIL", "").split(":")
-if fail[0] == name:
-    if fail[1] == "kill":
-        os.kill(os.getpid(), 9)
-    if fail[1] == "hang":
-        time.sleep(60)
-    if fail[1] == "stubborn":  # 不理 SIGTERM
-        import signal
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        time.sleep(60)
-    sys.exit(int(fail[1]))
-'''
-
-
-@contextlib.contextmanager
-def fake_steps(tmp: Path) -> Iterator[None]:
-    """四步換成假步驟，鎖與紀錄放進 tmp；service 的自我檢查也用。"""
-    global MODULES, LOCK, RECORD, TIMEOUTS  # noqa: PLW0603
-    saved, env = (MODULES, LOCK, RECORD, TIMEOUTS), dict(os.environ)
-    for name in saved[0]:
-        (tmp / f"fake_{name}.py").write_text(FAKE_STEP.replace("NAME", name), encoding="utf-8")
-    os.environ.update(FAKE_OUT=str(tmp), PYTHONPATH=str(tmp), FAKE_FAIL="")
-    MODULES = {name: f"fake_{name}" for name in saved[0]}
-    LOCK, RECORD = tmp / "state" / "pipeline", tmp / "state" / "last_run.json"
-    TIMEOUTS = dict(saved[3])
-    try:
-        yield
-    finally:
-        MODULES, LOCK, RECORD, TIMEOUTS = saved
-        os.environ.clear()
-        os.environ.update(env)
-
-
-def selftest() -> None:
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as d, fake_steps(Path(d)):
-        tmp = Path(d)
-
-        def run(*args: str, fail: str = "", **kw) -> tuple[int, str]:
-            os.environ["FAKE_FAIL"] = fail
-            for name in MODULES:
-                (tmp / name).unlink(missing_ok=True)
-            with tempfile.TemporaryFile("w+", encoding="utf-8") as log:
-                code = run_pipeline(list(args), log, **kw)
-                log.seek(0)
-                return code, log.read()
-
-        def ran(name: str) -> bool:
-            return (tmp / name).exists()
-
-        # 全部成功：參數轉給 collect、render 的 stdout 原封不動餵給 send、各步驟的 stderr 進 log
-        code, text = run("--lookback", "72", trigger="schedule")
-        assert code == 0, (code, text)
-        assert (tmp / "collect").read_text() == "--lookback 72|"
-        assert (tmp / "send").read_text() == '|{"subject": "s"}\n'
-        assert "write stderr" in text and "render stderr" in text and text.rstrip().endswith("完成"), text
-        assert '"subject"' not in text
-        rec = read_record()
-        assert rec is not None and rec["trigger"] == "schedule" and rec["exit_code"] == 0 and rec["finished_at"], rec
-        assert rec["date"] == today() and rec["started_at"] <= rec["finished_at"], rec
-        assert rec["step"] is None, rec
-
-        # 任一步失敗：後面的不跑、exit code 是該步的、log 一行說明、紀錄記下 exit code；失敗也會放鎖
-        code, text = run(fail="write:5")
-        assert code == 5 and ran("collect") and ran("write") and not ran("render") and not ran("send")
-        assert "失敗，exit 5：newsletter-write" in text and "完成" not in text
-        assert read_record()["exit_code"] == 5 and read_record()["trigger"] == "cli" and read_record()["step"] == "write"
-        code, text = run(fail="collect:3")
-        assert code == 3 and ran("collect") and not ran("write")
-        code, text = run(fail="render:kill")
-        assert code == 128 + 9 and ran("render") and not ran("send") and read_record()["exit_code"] == 128 + 9
-        assert read_record()["step"] == "render"
-
-        # stop：對執行中的子程序送 SIGTERM、後面的不跑；紀錄有 finished_at 與 143
-        stop, t0 = threading.Event(), time.monotonic()
-        threading.Timer(1, stop.set).start()
-        code, text = run(fail="write:hang", stop=stop)
-        assert code == EXIT_STOPPED and time.monotonic() - t0 < 10 and not ran("render"), (code, text)
-        rec = read_record()
-        assert rec["exit_code"] == EXIT_STOPPED and rec["finished_at"], rec
-        code, _ = run(stop=stop)  # 已經要停：一步都不跑
-        assert code == EXIT_STOPPED and not ran("collect")
-
-        # 超時：SIGTERM 停下、exit 124、紀錄的 step 是那一步；不理 SIGTERM 的 KILL_AFTER 後 SIGKILL
-        global KILL_AFTER  # noqa: PLW0603
-        TIMEOUTS["write"], t0 = 1, time.monotonic()
-        code, text = run(fail="write:hang")
-        assert code == EXIT_TIMEOUT and not ran("render") and time.monotonic() - t0 < 10, (code, text)
-        assert "超過 1 秒" in text and read_record()["step"] == "write" and read_record()["exit_code"] == EXIT_TIMEOUT
-        saved_kill, KILL_AFTER, t0 = KILL_AFTER, 1, time.monotonic()
-        code, _ = run(fail="write:stubborn")
-        assert code == EXIT_TIMEOUT and time.monotonic() - t0 < 10, code
-        KILL_AFTER = saved_kill
-        TIMEOUTS["write"] = 60
-
-        # 從中間開始：前面的不跑；send 失敗要從 render 重來（send 吃 render 的 stdout）
-        code, text = run(start=resume_from("send"))
-        assert code == 0 and not ran("collect") and not ran("write") and ran("render"), text
-        assert (tmp / "send").read_text() == '|{"subject": "s"}\n' and "沿用今天的產出，不重跑：newsletter-write" in text
-        code, _ = run(start=resume_from("write"))
-        assert code == 0 and not ran("collect") and ran("write")
-        assert resume_from(None) == resume_from("bogus") == "collect"
-
-        # 別的執行緒（等同別的程序）拿著鎖：這次不執行，一步都不跑、不寫紀錄；放掉之後恢復正常
-        holding, release = threading.Event(), threading.Event()
-
-        def hold() -> None:
-            with lock.locked(LOCK):
-                holding.set()
-                release.wait(5)
-
-        before = RECORD.read_text()
-        t = threading.Thread(target=hold)
-        t.start()
-        assert holding.wait(5)
-        try:
-            code, text = run(trigger="manual")
-        finally:
-            release.set()
-            t.join()
-        assert code == EXIT_BUSY and "已有另一條 pipeline" in text and not any(ran(n) for n in MODULES)
-        assert RECORD.read_text() == before
-        assert run()[0] == 0
-    print("ok")
