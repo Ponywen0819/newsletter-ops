@@ -66,8 +66,8 @@ uv run --project packages/writer newsletter-kg --flag <uid> wrong      # 這則�
 
 成功之後還會比對 uid：curated 有但報告漏掉的（收不到回饋）、報告有但 curated 沒有的，都印警告到 stderr、記進 metrics 的 `coverage`，不影響 exit code。
 
-## 自我檢查
+## 測試
 
 ```bash
-uv run --project packages/writer newsletter-write --selftest
+npx nx run writer:test   # 驗收、權限、main 的流程與 KG，SDK 與模型都換成假的
 ```

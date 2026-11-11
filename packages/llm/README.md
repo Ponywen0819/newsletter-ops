@@ -12,7 +12,7 @@ src/newsletter_llm/
 
 ```bash
 uv run --project packages/llm newsletter-llm --auth-check     # 只驗證儲存的 token（一次最小的呼叫）
-uv run --project packages/llm newsletter-llm --selftest
+npx nx run llm:test                                           # tests/ 底下的 pytest，SDK 換成假的
 ```
 
 `--auth-check` 的 exit code：`0` 通過、`1` 其他失敗（含用了 API key）、`2` 沒有 token 或沒裝 SDK、`5` 授權失敗、`6` 額度用完。

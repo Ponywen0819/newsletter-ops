@@ -7,9 +7,9 @@
 
 ```
 src/newsletter_worker/
-  daily.py             run_pipeline()：鎖 → 紀錄 → 四步 → 失敗語意，與它的自我檢查
+  daily.py             run_pipeline()：鎖 → 紀錄 → 四步 → 失敗語意
   service.py           入口 worker：每日時鐘、補跑、GET /status、POST /run，以及 --once（Docker 的 worker 容器、systemd 的 newsletter-worker.service 跑它）
-  service_selftest.py  服務的自我檢查
+tests/                 pytest；helpers.py 的假步驟取代四步，不連網、不寄信
 ```
 
 ## 用法
@@ -18,7 +18,7 @@ src/newsletter_worker/
 npx nx run worker:once                   # 完整跑一遍。會呼叫 Claude、會寄信，和排程跑的是同一件事
 npx nx run worker:once --lookback 72     # 額外參數轉給 newsletter-collect
 npx nx run worker:start                  # 常駐排程服務，見下面「排程服務」
-npx nx run worker:selftest               # 用假步驟驗證，不連網、不寄信
+npx nx run worker:test                   # 用假步驟驗證，不連網、不寄信
 ```
 
 Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`，其餘同理。`--once` 的輸出印在終端機，不進 `logs/`。
@@ -91,4 +91,4 @@ SIGTERM：轉給執行中的那一步、等它結束、紀錄記成 143，然後
 
 ## 加一個步驟
 
-在 `daily.py` 的 `MODULES` 加一行模組名，在 `_run` 依序加一次 `go(...)`，並在 `selftest` 的假步驟裡涵蓋它。
+在 `daily.py` 的 `MODULES` 加一行模組名，在 `_run` 依序加一次 `go(...)`，並在 `tests/` 的測試裡涵蓋它（假步驟見 `tests/helpers.py`）。

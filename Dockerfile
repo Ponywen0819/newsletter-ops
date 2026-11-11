@@ -28,12 +28,12 @@ COPY apps/worker/pyproject.toml apps/worker/uv.lock ./apps/worker/
 COPY apps/web-server/pyproject.toml apps/web-server/uv.lock ./apps/web-server/
 # 先只裝第三方依賴，讓只動程式碼時這層走快取
 RUN for app in web-server worker; do \
-      UV_PROJECT_ENVIRONMENT=/opt/$app uv sync --locked --no-editable --no-install-project --no-install-local \
+      UV_PROJECT_ENVIRONMENT=/opt/$app uv sync --locked --no-dev --no-editable --no-install-project --no-install-local \
         --project apps/$app || exit 1; done
 COPY packages ./packages
 COPY apps ./apps
 RUN for app in web-server worker; do \
-      UV_PROJECT_ENVIRONMENT=/opt/$app uv sync --locked --no-editable --project apps/$app || exit 1; done
+      UV_PROJECT_ENVIRONMENT=/opt/$app uv sync --locked --no-dev --no-editable --project apps/$app || exit 1; done
 
 FROM ${PYTHON} AS base
 RUN useradd --create-home --uid 1000 app \
