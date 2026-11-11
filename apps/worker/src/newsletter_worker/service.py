@@ -9,6 +9,7 @@
 今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 從失敗的那步自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
 認證的驗證只看 auth_health.json 的時間：今天排定時間之後驗過（web 的 /auth 測試也算）就不再驗。
 token 剩 REMIND_DAYS 裡的天數時（推算的到期日），在驗證時間寄一封提醒。
+NEWSLETTER_SCHEDULE=off（測試區）：不排程、不補跑、不驗認證、不寄提醒與備份，只接受 POST /run。
 """
 from __future__ import annotations
 
@@ -179,6 +180,7 @@ class Service:
     def __init__(self, at: time, tz: ZoneInfo, check_at: time, log_dir: Path = ROOT / "logs",
                  health: Path | None = None):
         self.at, self.tz, self.check_at, self.log_dir = at, tz, check_at, log_dir
+        self.scheduled = True  # False＝測試區，只接受 POST /run
         self.health = health or auth_health.health_path()
         self.checker = auth_health.run_check
         self.notifier = send_notice
@@ -230,9 +232,9 @@ class Service:
                 self.current = None
 
     def status(self) -> dict:
-        nxt = next_run_at(datetime.now(timezone.utc), self.at, self.tz)
+        nxt = next_run_at(datetime.now(timezone.utc), self.at, self.tz).isoformat() if self.scheduled else None
         current = self.current
-        return {"state": "running" if current else "idle", "next_run_at": nxt.isoformat(),
+        return {"state": "running" if current else "idle", "next_run_at": nxt,
                 "current": current, "last": daily.read_record()}
 
     def check_auth(self) -> None:
@@ -269,6 +271,8 @@ class Service:
             atomic.write_text(marker, week)
 
     def tick(self, now: datetime) -> None:
+        if not self.scheduled:
+            return
         self.remind(now)
         self.backup(now)
         if check_due(now, auth_health.read(self.health), self.check_at, self.tz):
@@ -277,7 +281,10 @@ class Service:
             self.start(action)
 
     def loop(self) -> None:
-        say(f"下次執行：{next_run_at(datetime.now(timezone.utc), self.at, self.tz):%Y-%m-%d %H:%M %Z}")
+        if self.scheduled:
+            say(f"下次執行：{next_run_at(datetime.now(timezone.utc), self.at, self.tz):%Y-%m-%d %H:%M %Z}")
+        else:
+            say("排程關閉（NEWSLETTER_SCHEDULE=off），只接受 POST /run")
         while not self.stop.is_set():
             self.tick(datetime.now(timezone.utc))
             self.stop.wait(TICK)
@@ -349,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[worker] {name} {exc}", file=sys.stderr)
             return 2
     service = Service(times["NEWSLETTER_RUN_AT"], tz(), times["NEWSLETTER_AUTH_CHECK_AT"])
+    service.scheduled = os.environ.get("NEWSLETTER_SCHEDULE", "on") != "off"
     server = make_server(service, args.host, args.port)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     for sig in (signal.SIGTERM, signal.SIGINT):

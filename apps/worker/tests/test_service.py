@@ -343,3 +343,16 @@ def test_sigterm(tmp_path):
     assert rec_["exit_code"] == daily.EXIT_STOPPED and rec_["finished_at"] and rec_["trigger"] in ("catchup", "schedule")
     assert "收到停止" in out and f"exit {daily.EXIT_STOPPED}" in out
     assert not (tmp_path / "render").exists()
+
+
+def test_schedule_off(steps):
+    """測試區：不排程、不補跑、不驗認證、不寄提醒，status 沒有下次執行時間；POST /run 照常。"""
+    service = service_for(steps, time(0, 0), time(0, 0))
+    service.scheduled = False
+    service.token_status = lambda: EXPIRING
+    service.tick(datetime.now(timezone.utc))
+    assert service.current is None and service.checks == [] and service.notices == []
+    assert service.status()["next_run_at"] is None
+    assert service.start("manual") is not None
+    service._worker.join(15)
+    assert daily.read_record()["exit_code"] == 0

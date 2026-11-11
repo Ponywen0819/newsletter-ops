@@ -1,0 +1,3 @@
+# 容器裡跑的腳本一定要 LF：Windows 的 git 預設轉成 CRLF，sh 會讀到 \r 而失敗
+*.sh text eol=lf
+Dockerfile text eol=lf
