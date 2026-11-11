@@ -1,6 +1,6 @@
 """晨報網頁的後端入口。API 列表與安全設計見 apps/web-server/README.md。
 
-用法：uv run --project apps/web-server newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N] [--selftest]
+用法：uv run --project apps/web-server newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N]
 """
 from __future__ import annotations
 
@@ -20,13 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--admin-port", type=int, default=int(os.environ.get("NEWSLETTER_ADMIN_PORT", "0")),
                     help="另開一個管理 port（綁在 --host），/auth 與 /api/auth* 只在這裡開；0＝不開。給 Docker 用，"
                          "compose 只把它 publish 成 127.0.0.1:<port>（見 deploy/README.md）")
-    ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
-    if args.selftest:
-        from .selftest import selftest
-
-        selftest()
-        return 0
     if args.admin_port and args.admin_port == args.port:
         ap.error("--admin-port 不能和 --port 相同")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
