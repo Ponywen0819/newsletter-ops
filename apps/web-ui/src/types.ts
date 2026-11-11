@@ -139,3 +139,92 @@ export interface AuthResult {
   message: string
   status: AuthStatus
 }
+
+// ---- 知識圖譜（apps/web-server 的 kg.py；事件狀態的規則在 shared 的 kg_store.py）----
+
+export type KgStatus = 'active' | 'disputed' | 'invalid'
+/** src 是較新的事件：same＝同一件事、follow＝src 是 dst 的後續、contradict＝說法衝突、retract＝src 撤回／否認 dst */
+export type KgKind = 'same' | 'follow' | 'contradict' | 'retract'
+export type KgEntityType = 'org' | 'person' | 'product' | 'place' | 'other'
+
+export interface KgEntityRef {
+  /** 正規化後的名稱（kg_store.norm），網址用這個 */
+  key: string
+  name: string
+  type: KgEntityType
+}
+
+/** 從新聞萃取出的一個事件。summary、quote、title 是外部網頁來的文字，只當純文字顯示 */
+export interface KgEvent {
+  id: number
+  uid: string
+  date: string
+  summary: string
+  /** 原文逐字引句（萃取時的證據） */
+  quote: string
+  title: string
+  url: string
+  source: string
+  status: KgStatus
+  /** 報導這件事的來源數（same 連到的也算） */
+  sources: number
+  /** 收錄這則的最新一份晨報；沒寫進晨報是 null（這時不能標「事實有誤」） */
+  report: string | null
+  entities: KgEntityRef[]
+}
+
+export interface KgLink {
+  src: number
+  dst: number
+  kind: KgKind
+  /** contradict／retract 的證據引句；其他是空字串 */
+  quote: string
+  date: string
+}
+
+export interface KgGraph {
+  /** 舊到新 */
+  events: KgEvent[]
+  /** 只含兩端都在 events 裡的 */
+  links: KgLink[]
+  /** 圖裡被標了「事實有誤」的則 */
+  flags: Flags
+  /** 超過上限被截斷 */
+  truncated: boolean
+}
+
+export interface KgItem {
+  uid: string
+  date: string
+  title: string
+  url: string
+  source: string
+  report: string | null
+}
+
+/** GET /api/kg/item/<uid,…>?depth=：以這幾則的事件為中心往外 depth 層 */
+export interface KgItemPayload extends KgGraph {
+  uids: string[]
+  items: KgItem[]
+  depth: 1 | 2
+  /** 這幾則自己的事件 id */
+  seeds: number[]
+}
+
+/** GET /api/kg/entity/<key>?days=：提到這個實體的事件 */
+export interface KgEntityPayload extends KgGraph {
+  entity: KgEntityRef & { total: number }
+  days: number
+  since: string
+  /** 在這些事件裡常一起出現的實體 */
+  related: (KgEntityRef & { count: number })[]
+}
+
+/** GET /api/kg/entities?q=：q 空白＝近 30 天最常出現的；否則是搜尋結果 */
+export interface KgEntities {
+  q: string
+  /** 還沒建過知識圖譜是 false */
+  available: boolean
+  since: string | null
+  entities: (KgEntityRef & { count: number; last: string })[]
+}

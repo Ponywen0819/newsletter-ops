@@ -18,6 +18,7 @@ MARKS = {"+", "-", ""}  # "" ＝ 取消
 SEARCH_LIMIT = 50
 SEARCH_MAX_QUERY = 100
 _COMMENT = re.compile(r"<!--.*?-->")
+_UID_MARK = re.compile(r"uid=([0-9a-f]{16})")
 _LINE_PREFIX = re.compile(r"^[\s>*-]*(?:#+\s*)?")
 
 
@@ -32,7 +33,7 @@ class Reports:
         self.today = today or (lambda: shared_today(root))
         self.feedback_path = root / "state" / "feedback.jsonl"
         self.flags_path = root / "state" / "kg_flags.jsonl"
-
+        self._uid_index: tuple[tuple, dict[str, str]] = ((), {})
 
     def report_dates(self) -> list[str]:
         """reports/*.md 的日期，新到舊。"""
@@ -41,6 +42,31 @@ class Reports:
 
     def _report_path(self, date: str) -> Path:
         return self.root / "reports" / f"{date}.md"
+
+    def uid_dates(self) -> dict[str, str]:
+        """uid → 收錄它的最新一份晨報日期。報告檔沒變（檔名、大小、修改時間）就用上次的結果。"""
+        dates = self.report_dates()
+        stats = []
+        for date in dates:
+            try:
+                st = self._report_path(date).stat()
+            except OSError:
+                continue
+            stats.append((date, st.st_size, st.st_mtime_ns))
+        signature = tuple(stats)
+        cached_sig, cached = self._uid_index
+        if signature == cached_sig:
+            return cached
+        index: dict[str, str] = {}
+        for date, *_ in stats:  # 新到舊：先寫進來的就是最新的
+            try:
+                text = self._report_path(date).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for uid in _UID_MARK.findall(text):
+                index.setdefault(uid, date)
+        self._uid_index = (signature, index)
+        return index
 
     def marks(self) -> dict[str, str]:
         """uid → 目前的標記（'+' / '-'；沒標或已取消的不在裡面）。"""

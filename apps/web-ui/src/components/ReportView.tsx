@@ -22,6 +22,9 @@ function Actions({ uids, votes }: { uids: string[]; votes: Votes }) {
   return (
     <FeedbackButtons uids={uids} marks={votes.marks} onChange={votes.onMark}>
       <FactFlagButton uids={uids} flags={votes.flags} onChange={votes.onFlag} />
+      <Link className="fb-btn fb-kg" to={`/kg/item/${uids.join(',')}`} title="這則新聞的前因後果：知識圖譜裡相關的先前報導">
+        脈絡
+      </Link>
     </FeedbackButtons>
   )
 }

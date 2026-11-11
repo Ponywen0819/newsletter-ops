@@ -14,7 +14,7 @@ npm test             # Vitest + Testing Library：元件與路由
 npm run typecheck
 ```
 
-- 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/stats` 回饋統計（從歷史晨報左欄連過去）、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
+- 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/stats` 回饋統計（從歷史晨報左欄連過去）、`/kg`、`/kg/item/<uid>[,<uid>…]`、`/kg/entity/<key>` 知識圖譜（見下面「知識圖譜」）、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
   其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/server.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
 - 鍵盤：晨報頁 `j`／`k` 跳到下一則／上一則（≥1100px，有左側目錄時）；`[`／`]` 換到前一份／下一份（內文最後也有連結）。輸入框裡、帶修飾鍵時不攔截。
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（worker 每天驗一次，不輪詢），
@@ -43,6 +43,7 @@ npm run typecheck
   只有 Chromium 系、**已安裝**的 PWA 支援，觸發頻率由瀏覽器依使用情況決定、不保證；iOS Safari、Firefox 不支援。沒權限或不支援時靜默略過，行為和沒有這功能一樣。
   背景喚醒時離線、連不上或 Access 逾時（列表被轉址）都不寫入任何東西，也不通知。service worker 沒有 `localStorage`，所以同步紀錄同時寫進 `api` cache 的 `/__offline-sync`，頁面啟動時比 `localStorage` 新就搬過去。
 - **離線**：有網路時永遠先拿最新的（標記狀態、新產出的晨報不會被舊快取蓋住）。
+- **知識圖譜**（`src/pages/KgPages.tsx`、`src/components/KgView.tsx`、`src/kgLayout.ts`、`src/styles/kg.css`）：晨報每則的「脈絡」連到 `/kg/item/<uid>`（這則的前因後果），`/kg/entity/<key>` 是一個實體的時間軸，`/kg` 找實體（從歷史晨報左欄連過去）。圖是自己畫的 inline SVG，不用圖形函式庫：橫軸是日期（一天一欄，舊在左），線的顏色是關係（後續、同一件事、矛盾、撤回），節點的樣子是狀態（有爭議、失效）。圖只給滑鼠與觸控（`aria-hidden`），鍵盤與螢幕閱讀器用下面的事件列表，內容相同。點事件看詳情：原文引句、關係與證據、提到的實體、所在晨報；有進晨報的可以直接標「事實有誤」，之後重新載入（狀態要伺服器重算）。整組在 `App.tsx` 裡 lazy 載入（另一個 chunk），晨報本身不必多帶；**只在線上能用**，不進離線副本，service worker 也不碰 `/api/kg/*`。
 - **事實有誤**（`src/components/FactFlagButton.tsx`）：和有用／沒用同一排，送 `POST /api/kg-flag`。**不排隊**：離線或連不上時直接顯示做不到，不改畫面。狀態來自 payload 的 `flags`（舊的離線副本沒有，當作沒標）。
 - **離線時的標記**（`src/feedbackQueue.ts`）：離線或連不上時按「有用／沒用」不送出，先排進 `localStorage` 的 `feedback-queue`（`{uid: {mark, before, at, tries}}`，`before` 是第一次按下前畫面上的標記），
   畫面立刻更新、按鈕旁標「待同步」，本機副本（today、單日晨報）的 `marks` 也一起改寫（保留 `ETag`），離線重開仍看得到。同一則只留最後一次；改回 `before` 就整筆拿掉。

@@ -64,9 +64,13 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | `GET /api/feedback/<uid>` | `{uid, date, title, mark}` | email 確認頁用，只讀 |
 | `POST /api/feedback` | `{uid, mark}` | 有用／沒用 |
 | `POST /api/kg-flag` | `{uid, flag}` | 事實有誤（`wrong`）或取消（`""`）；只收出現在某份晨報裡的 uid |
+| `GET /api/kg/item/<uid>[,<uid>…]?depth=1\|2` | `{uids, items, depth, seeds, events, links, flags, truncated}` | 知識圖譜：以這幾則（最多 10 則）的事件為中心，沿關係往外 `depth` 層。`items` 是這幾則本身（`uid, date, title, url, source, report`），`seeds` 是它們的事件 id |
+| `GET /api/kg/entity/<key>?days=` | `{entity: {key, name, type, total}, days, since, related, events, links, flags, truncated}` | 提到這個實體的事件，近 `days` 天（1～365，預設 90），新的優先；`key` 是正規化後的名稱（`kg_store.norm`，Unicode，網址要百分比編碼），不是正規化形式的一律 404。`related` 是同一批事件裡常一起出現的實體（`{key, name, type, count}`） |
+| `GET /api/kg/entities?q=` | `{q, available, since, entities: [{key, name, type, count, last}]}` | `q` 空白＝近 30 天最常出現的 30 個；否則 key 含 `norm(q)` 的實體（不限日期，最多 50 個），事件多的在前。還沒建過 KG 時 `available` 是 false |
 | `GET /api/auth-health` | `{state, kind, checked_at}` | 認證健康狀態，所有人可讀 |
 | `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理，只限本機 |
 
+- 知識圖譜的 `events` 舊到新，每個是 `{id, uid, date, summary, quote, title, url, source, status, sources, report, entities: [{key, name, type}]}`；`status` 是 `active`／`disputed`／`invalid`，與 writer 寫背景時同一套規則（shared 的 `kg_store.statuses`，套用 `kg_flags.jsonl`）；`report` 是收錄這則的最新一份晨報（沒有是 null）。`links` 只含兩端都在圖裡的（`{src, dst, kind, quote, date}`，src 是較新的那個）。一張圖最多 150 個事件，超過時 `truncated`。`state/kg.sqlite` 只用唯讀連線開（不建表、不寫入）；檔案不存在時 item／entity 回 404。摘要、引句、標題是外部網頁萃取來的文字，前端只當純文字顯示。這三條不回 ETag、不進離線副本。
 - `GET /api/today`、`/api/reports`、`/api/reports/<date>` 回 `ETag`（對最後的 JSON 取雜湊，所以標記變了也會變）；`If-None-Match` 相符時回 `304`、沒有 body。
   比對時忽略 `W/`（Cloudflare 可能把強 ETag 改成弱的）。`Cache-Control` 照舊是 `no-store`：條件請求由前端的離線副本同步自己帶，不靠瀏覽器的 HTTP cache。
 - 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。
@@ -78,4 +82,4 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 npx nx run web-server:test
 ```
 
-涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、`/auth` 的本機限制、`auth_health.json` 的讀寫與 `/api/auth-health`，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](../web-ui/README.md)。
+涵蓋 API、靜態檔、寫入／覆蓋／取消的讀回、知識圖譜（狀態與 flags、範圍、Unicode key、錯誤、唯讀）、`/auth` 的本機限制、`auth_health.json` 的讀寫與 `/api/auth-health`，以及 manifest／`sw.js`／圖示的 Content-Type 與 `no-cache`、heartbeat 的回應（`no-store`、不寫入任何檔案）。前端測試見 [ui/README.md](../web-ui/README.md)。

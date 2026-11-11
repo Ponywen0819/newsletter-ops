@@ -12,6 +12,9 @@ src/newsletter_shared/
   metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量（newsletter-metrics）
   auth_store.py          OAuth token 的儲存與來源解析，llm 與 web 共用
   auth_health.py         最近一次認證驗證的結果（state/auth_health.json）與驗證子程序，worker 與 web 共用
+  kg_flags.py            使用者對新聞事實的判定（state/kg_flags.jsonl）：網頁的「事實有誤」與 newsletter-kg --flag
+  kg_store.py            知識圖譜（state/kg.sqlite）的資料表、實體 key 的正規化、事件狀態與來源數的算法；
+                         writer 的 KG（寫入、產生背景）與 web 的脈絡圖（唯讀）共用，兩邊的判定才會一致
 ```
 
 ## 檔案鎖（`lock.py`）
@@ -38,7 +41,7 @@ with lock.locked(path, timeout=0):    # 搶不到就丟 lock.LockBusy；給「�
   | --- | --- | --- |
   | `state/feedback.jsonl` | web、`newsletter-feedback` | `locked`（讀＋append） |
   | `state/kg_flags.jsonl` | web、`newsletter-kg --flag`（寫）、writer 的 KG（讀） | `locked`（`kg_flags.py`） |
-  | `state/kg.sqlite` | writer 的 KG | `locked`（萃取、比對、重建整段） |
+  | `state/kg.sqlite` | writer 的 KG（寫）、web 的脈絡圖（讀） | writer：`locked`（萃取、比對、重建整段）；web 用 SQLite 唯讀連線（`kg_store.open_readonly`），寫入中最多等 5 秒 |
   | `state/oauth_token.json` | web（存／刪）、llm（讀） | `locked`（存／刪）；讀不鎖，靠原子替換 |
   | `state/auth_health.json` | worker、web（寫）、web（讀） | 沒有（整檔原子替換，最後寫的算數） |
   | `state/seen.json` | `newsletter-collect` | 沒有（只有一個寫入者，原子寫入） |
