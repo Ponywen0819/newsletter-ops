@@ -19,3 +19,11 @@ newsletter-shared = { path = "../../packages/shared", editable = true }
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

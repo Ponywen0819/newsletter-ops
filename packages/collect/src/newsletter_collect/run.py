@@ -92,20 +92,6 @@ def prune_raw(stamp: str, days: int, raw_dir: Path = RAW) -> list[str]:
     return removed
 
 
-def selftest() -> None:
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as d:
-        raw_dir = Path(d)
-        for name in ("2026-10-08.jsonl", "2026-10-09.jsonl", "2026-11-08.jsonl", "notes.jsonl", "2026-01-01.txt"):
-            (raw_dir / name).write_text("", encoding="utf-8")
-        assert prune_raw("2026-11-08", 30, raw_dir) == ["2026-10-08.jsonl"]
-        assert sorted(p.name for p in raw_dir.iterdir()) == [
-            "2026-01-01.txt", "2026-10-09.jsonl", "2026-11-08.jsonl", "notes.jsonl"]
-        assert prune_raw("2026-11-08", 30, raw_dir) == []
-    print("ok")
-
-
 def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: bool) -> None:
     """整理 → 搜尋 → 補原文，寫 data/curated/<stamp>.json。"""
     curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
@@ -149,11 +135,7 @@ def main() -> int:
     ap.add_argument("--list-sources", action="store_true", help="列出載入的來源後結束，不連網")
     ap.add_argument("--lookback", type=int, help="覆寫時間窗（小時）")
     ap.add_argument("--config", default=str(ROOT / "config" / "config.json"))
-    ap.add_argument("--selftest", action="store_true", help="不連網的自我檢查")
     args = ap.parse_args()
-    if args.selftest:
-        selftest()
-        return 0
 
     try:
         config = load_config(Path(args.config))
