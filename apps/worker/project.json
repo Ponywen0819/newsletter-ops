@@ -6,8 +6,8 @@
     "lang:py"
   ],
   "targets": {
-    "selftest": {
-      "command": "uv run --locked --project {projectRoot} worker --selftest"
+    "test": {
+      "command": "uv run --locked --project {projectRoot} pytest -q {projectRoot}"
     },
     "start": {
       "command": "uv run --locked --project {projectRoot} worker"

@@ -39,7 +39,7 @@ collect 與 writer 互不依賴：蒐集只寫 `data/curated/<date>.json`，寫�
 - 目錄名 = id = Nx 專案名；套件名是 `newsletter-<id>`（`packages/collect/` → `newsletter-collect`），import 名把連字號換成底線（`newsletter_collect`）。
   前綴只留在套件名：import 名在 venv 裡是全域的，`llm`、`shared` 這種名字容易撞到第三方套件。
   指令名不跟套件名綁在一起：被依賴的模組的指令會裝進每個依賴它的 venv，所以帶前綴（`newsletter-collect`、`newsletter-web`…）；最頂層的 worker 就叫 `worker`。
-- 每個模組有一個 `project.json`（`name` 是 id），定義 `lint`、`selftest` 等任務；前端的任務直接來自 `package.json` 的 scripts。
+- 每個模組有一個 `project.json`（`name` 是 id），定義 `lint`、`test` 等任務；前端的任務直接來自 `package.json` 的 scripts。
 - 新增模組：建目錄與 `project.json`；Python 模組再 `uv lock --project <目錄>` 產生自己的鎖檔；最後登記到 `deploy/check_boundaries.py` 的 `MEMBERS`（Python）或 `NODE_MODULES`。
   `.gitignore`、`.dockerignore` 用萬用字元放行 `*/*/` 底下的模組檔，不必另外加；Dockerfile 要不要帶進映像則要自己決定。
 
@@ -95,11 +95,11 @@ uv lock --project packages/collect --upgrade         # 升級該模組鎖定的�
 指令都在 repo 根目錄執行：程式讀寫的 `config/`、`reports/`、`data/`、`state/`、`logs/` 以**工作目錄**為根（`newsletter_shared.ROOT`），
 要放別處就設環境變數 `NEWSLETTER_ROOT`。
 
-所有模組的 lint、自我檢查、前端測試都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `apps/web-ui` 各 `npm ci`：
+所有模組的 lint 與測試（Python 是各模組 `tests/` 底下的 pytest，前端是 vitest）都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `apps/web-ui` 各 `npm ci`：
 
 ```bash
-npx nx run-many -t lint selftest typecheck test   # 全部模組；改成 `nx affected -t …` 只跑受影響的
-npx nx run collect:selftest                         # 單一模組的單一任務
+npx nx run-many -t lint typecheck test            # 全部模組；改成 `nx affected -t …` 只跑受影響的
+npx nx run collect:test                             # 單一模組的單一任務
 npx nx graph                                      # 模組依賴圖
 ```
 
@@ -108,6 +108,7 @@ Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是
 ```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
 uv run --no-project python deploy/check_boundaries.py
+uv run --no-project --with "pytest>=9,<10" pytest -q deploy   # 依賴方向檢查本身的測試
 ```
 
 commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：

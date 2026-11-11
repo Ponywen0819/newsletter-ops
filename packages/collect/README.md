@@ -168,13 +168,10 @@ Hugging Face / Google Research 給 1.2。數量由配額控制。
 
 論文的會議／期刊接受資訊從 API 的 Comments / Journal-Ref 解析，清單在 `config.json` 的 `arxiv_venues`（conference / journal / minor_tracks）；
 主會議或期刊 +2.0、workshop 等次級 track +0.8、投稿中 +0.4，結果連同中文 `label` 寫進 curated JSON 的 `venue`。
-自我檢查見文末。
+測試見文末。
 
-## 自我檢查
+## 測試
 
 ```bash
-uv run --project packages/collect python -m newsletter_collect.curate
-uv run --project packages/collect python -m newsletter_collect.fetch
-uv run --project packages/collect python -m newsletter_collect.search
-uv run --project packages/collect python -m newsletter_collect.enrich
+npx nx run collect:test   # tests/ 底下的 pytest，不連網，不碰 state/
 ```
