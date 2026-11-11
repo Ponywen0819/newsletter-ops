@@ -76,6 +76,9 @@
   border-radius: 2px;
 }
 .report-stats-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
   margin: 8px 0 0;
   font-size: var(--fs-list);
 }

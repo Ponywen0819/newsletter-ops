@@ -1,6 +1,21 @@
 import { API_CACHE } from './cacheName'
 import { check } from './connectivity'
-import type { AuthHealth, AuthResult, AuthStatus, FeedbackTarget, FeedbackStats, Mark, ReportPayload, ReportSummary, SearchResult, Session, TodayPayload } from './types'
+import type {
+  AuthHealth,
+  AuthResult,
+  AuthStatus,
+  FeedbackStats,
+  FeedbackTarget,
+  KgEntities,
+  KgEntityPayload,
+  KgItemPayload,
+  Mark,
+  ReportPayload,
+  ReportSummary,
+  SearchResult,
+  Session,
+  TodayPayload,
+} from './types'
 
 /** 伺服器回了非 2xx。message 是伺服器給的 error 文字（沒有就是狀態碼）。 */
 export class ApiError extends Error {
@@ -70,6 +85,13 @@ export const api = {
   feedback,
   /** 「事實有誤」：flag '' ＝ 取消。不排隊，連不上就是失敗。 */
   kgFlag: (uid: string, flag: 'wrong' | '') => request<{ uid: string; flag: 'wrong' | '' }>('/api/kg-flag', { uid, flag }),
+  /** 知識圖譜：不進離線副本，連不上就是失敗 */
+  kg: {
+    item: (uids: string[], depth: 1 | 2) =>
+      request<KgItemPayload>(`/api/kg/item/${uids.map(encodeURIComponent).join(',')}?depth=${depth}`),
+    entity: (key: string, days: number) => request<KgEntityPayload>(`/api/kg/entity/${encodeURIComponent(key)}?days=${days}`),
+    entities: (q: string) => request<KgEntities>(`/api/kg/entities?q=${encodeURIComponent(q)}`),
+  },
   /** 對每個 uid 各送一次。成功的不會收回，畫面要以 saved 為準。 */
   feedbackAll: async (uids: string[], mark: Mark) => {
     const results = await Promise.allSettled(uids.map((uid) => feedback(uid, mark)))

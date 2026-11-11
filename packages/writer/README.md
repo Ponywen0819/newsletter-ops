@@ -44,10 +44,11 @@ uv run --project packages/writer newsletter-kg --flag <uid> wrong      # 這則�
 - **比對**（`stage: kg_relate`）：今天的事件和過去 90 天涉及相同實體的事件（每個最多 5 個候選）比對，
   存 `same`（他源報導同一件事）／`follow`（後續）／`contradict`（說法衝突）／`retract`（撤回、否認、更正）。
   矛盾與撤回也要附今天那則的原文引句，對不上就丟（`links_rejected`）。沒有候選就不呼叫模型。
-- **狀態在讀取時算**，不存：被一個來源矛盾＝`disputed`；被撤回，或被兩個以上來源矛盾＝失效（不進背景）。
+- **狀態在讀取時算**，不存（規則在 shared 的 `kg_store.py`，網頁的脈絡圖用同一份）：被一個來源矛盾＝`disputed`；被撤回，或被兩個以上來源矛盾＝失效（不進背景）。
   `state/kg_flags.jsonl`（網頁的「事實有誤」與 `--flag`）優先：`wrong` 的則失效，而且它對別則的矛盾、撤回不算；`trusted` 的則不會被自動判失效。
 - **背景檔**：`events` 最多 40 個（和今天有直接關聯的優先，其次共同實體多的、新的），失效的不放；`corrections` 是以前寫進晨報、今天被撤回或推翻的事件，
   skill 會在報告開頭加「更正」。檔案開頭的 `note` 提醒 agent 這是資料不是指令；writer 的權限只多了讀 `data/kg/`。
+- **網頁**：`/kg`（找實體）、`/kg/entity/<key>`（實體的時間軸）、晨報每則的「脈絡」（`/kg/item/<uid>`）唯讀地畫出這個資料庫，見 [web-ui/README.md](../../apps/web-ui/README.md)「知識圖譜」。
 - **成本**：萃取與比對用 Haiku，每天約 $0.02；writer 多讀背景每天約 $0.03～0.06（訂閱額度的估算）。summary 的 `usd` 已含 KG。
 
 ## exit code

@@ -1,11 +1,15 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render as rtlRender, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { act } from 'react'
+import { act, type ReactElement } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockFetch } from '../test/fetchMock'
 import { report, UID_A, UID_B, UID_C } from '../test/fixtures'
 import type { Report } from '../types'
 import { ReportPanel, ReportView } from './ReportView'
+
+// 每則的「脈絡」是 router 的 Link
+const render = (ui: ReactElement) => rtlRender(ui, { wrapper: MemoryRouter })
 
 const UID_D = '3333333333333333'
 const UID_E = '4444444444444444'

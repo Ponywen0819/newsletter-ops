@@ -12,7 +12,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Iterator, Mapping
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from newsletter_shared import ROOT
 
@@ -20,13 +20,16 @@ from .access import HEADER as ACCESS_HEADER
 from .access import Access
 from .auth import Auth
 from .errors import ApiError, NotFound
+from .kg import DEFAULT_DAYS as DEFAULT_KG_DAYS
+from .kg import Graph
 from .reports import Reports
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 MAX_BODY = 4096
 # 與 apps/web-ui/src/App.tsx 的路由同步
-SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/stats|/auth")
+SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/stats|/auth"
+                        r"|/kg|/kg/item/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/kg/entity/[^/]+")
 # 離線副本同步的對象：回 ETag，If-None-Match 相符回 304（前端自己帶，所以照舊 no-store）
 ETAG_PATHS = re.compile(r"/api/today|/api/reports|/api/reports/\d{4}-\d{2}-\d{2}")
 
@@ -97,6 +100,7 @@ class Site:
                  checker: Callable[[str], dict] | None = None, access: Access | None = None):
         self.access = access  # 有設就驗 Cloudflare Access 的 JWT（本機請求不驗）
         self.reports = Reports(root, today)
+        self.kg = Graph(root, self.reports.today, self.reports.uid_dates)
         self.auth = Auth(root, checker)
         self.dist = root / "apps" / "web-ui" / "dist"
 
@@ -208,10 +212,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.site.reports.report_payload(m[1])
         if m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
             return self.site.reports.feedback_target(m[1])
+        query = parse_qs(urlsplit(self.path).query)
         if path == "/api/search":
-            return self.site.reports.search(parse_qs(urlsplit(self.path).query).get("q", [""])[0])
+            return self.site.reports.search(query.get("q", [""])[0])
+        if path.startswith("/api/kg/"):
+            return self._kg_payload(path, query)
         if path == "/api/auth" and self._local():
             return self.site.auth.status()
+        raise NotFound(path)
+
+    def _kg_payload(self, path: str, query: dict[str, list[str]]) -> dict:
+        """知識圖譜（唯讀）。實體的 key 是 Unicode，網址裡是百分比編碼。"""
+        if m := re.fullmatch(r"/api/kg/item/([0-9a-f]{16}(?:,[0-9a-f]{16})*)", path):
+            return self.site.kg.item(m[1].split(","), query.get("depth", ["1"])[0])
+        if m := re.fullmatch(r"/api/kg/entity/([^/]+)", path):
+            return self.site.kg.entity(unquote(m[1]), query.get("days", [str(DEFAULT_KG_DAYS)])[0])
+        if path == "/api/kg/entities":
+            return self.site.kg.entities(query.get("q", [""])[0])
         raise NotFound(path)
 
     def _get_api(self, path: str) -> None:

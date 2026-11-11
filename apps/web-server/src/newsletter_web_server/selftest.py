@@ -7,7 +7,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from newsletter_shared import auth_health, auth_store, feedback
+from newsletter_shared import auth_health, auth_store, feedback, kg_flags, kg_store
 
 from . import server
 from .auth import STALE_AFTER
@@ -70,6 +70,7 @@ def selftest() -> None:
             _selftest_static(req, shell)
             _selftest_feedback(req, site, root, shell, (uid_a, uid_b, uid_c))
             _selftest_etag(req, uid_a)
+            _selftest_kg(req, root, uid_a)
         _selftest_timeout(site)
         _selftest_access(root)
 
@@ -143,6 +144,94 @@ def _selftest_timeout(site: Site) -> None:
         finally:
             server.shutdown()
             server.server_close()
+
+
+def _selftest_kg(req, root: Path, uid_a: str) -> None:
+    """知識圖譜：唯讀、狀態與 flags 一致、範圍與錯誤。uid_a 在 09-28、09-27 兩份晨報裡。"""
+    import sqlite3
+    from urllib.parse import quote
+
+    def get(path: str) -> tuple[int, dict]:
+        status, _, body = req("GET", path)
+        return status, json.loads(body)
+
+    # 還沒建過 KG：總覽說沒有，個別的 404
+    assert get("/api/kg/entities") == (200, {"q": "", "available": False, "since": "2026-08-29", "entities": []})
+    assert get(f"/api/kg/item/{uid_a}")[0] == 404
+
+    u1, u2, u3 = "3" * 16, "4" * 16, "5" * 16
+    db = root / "state" / "kg.sqlite"
+    con = sqlite3.connect(db)
+    con.executescript(kg_store.SCHEMA)
+    with con:
+        con.executemany("INSERT INTO items VALUES (?, ?, ?, ?, ?, 1)", [
+            (uid_a, "2026-09-28", "Acme 完成", "https://s1/a", "S1"), (u1, "2026-09-20", "Beta 否認", "https://s2/b", "S2"),
+            (u2, "2026-09-10", "Acme 宣布", "https://s3/c", "S3"), (u3, "2026-01-01", "Acme 成立", "https://s4/d", "S4")])
+        con.executemany("INSERT INTO events(id, uid, date, summary, quote) VALUES (?, ?, ?, ?, ?)", [
+            (1, u2, "2026-09-10", "Acme 宣布收購 Beta", "q1"), (2, u1, "2026-09-20", "Beta 否認", "q2"),
+            (3, uid_a, "2026-09-28", "Acme 完成收購", "q3"), (4, u3, "2026-01-01", "Acme 成立", "q4")])
+        con.executemany("INSERT INTO mentions VALUES (?, ?, ?, ?)", [
+            (1, "acme", "Acme", "org"), (1, "beta", "Beta", "org"), (2, "beta", "Beta", "org"), (2, "acme", "ACME", "org"),
+            (3, "acme", "Acme", "org"), (3, "台積電", "台積電", "org"), (4, "acme", "Acme", "org")])
+        con.executemany("INSERT INTO links VALUES (?, ?, ?, ?, ?)", [
+            (2, 1, "contradict", "not in talks", "2026-09-20"), (3, 2, "follow", "", "2026-09-28"),
+            (3, 2, "follow", "", "2026-09-28")])  # 重複的連結只回一次
+    con.close()
+
+    status, one = get(f"/api/kg/item/{uid_a}")
+    assert status == 200 and one["depth"] == 1 and one["seeds"] == [3], one
+    assert [e["id"] for e in one["events"]] == [2, 3]  # 舊到新
+    assert one["links"] == [{"src": 3, "dst": 2, "kind": "follow", "quote": "", "date": "2026-09-28"}]
+    assert one["items"] == [{"uid": uid_a, "date": "2026-09-28", "title": "Acme 完成", "url": "https://s1/a", "source": "S1",
+                             "report": "2026-09-28"}]
+    ev3 = one["events"][1]
+    assert ev3["report"] == "2026-09-28" and ev3["status"] == "active" and ev3["sources"] == 1
+    assert ev3["entities"] == [{"key": "acme", "name": "Acme", "type": "org"}, {"key": "台積電", "name": "台積電", "type": "org"}]
+    assert one["events"][0]["report"] is None  # 沒寫進晨報的則
+
+    two = get(f"/api/kg/item/{uid_a},{u1},{uid_a}?depth=2")[1]
+    assert two["uids"] == [uid_a, u1] and [e["id"] for e in two["events"]] == [1, 2, 3] and len(two["links"]) == 2
+    assert {e["id"]: e["status"] for e in two["events"]} == {1: "disputed", 2: "active", 3: "active"}
+    assert two["flags"] == {}
+
+    kg_flags.append(u1, "wrong", root / "state" / "kg_flags.jsonl")  # 否認的那則才是錯的
+    two = get(f"/api/kg/item/{uid_a}?depth=2")[1]
+    assert {e["id"]: e["status"] for e in two["events"]} == {1: "active", 2: "invalid", 3: "active"}
+    assert two["flags"] == {u1: "wrong"}
+    kg_flags.append(u1, "", root / "state" / "kg_flags.jsonl")
+
+    for bad in (f"/api/kg/item/{uid_a}?depth=3", f"/api/kg/item/{uid_a}?depth=x", "/api/kg/item/" + ",".join([uid_a] * 2 + [
+            f"{i:016x}" for i in range(10)]), "/api/kg/entity/acme?days=0", "/api/kg/entity/acme?days=366",
+                "/api/kg/entities?q=" + "a" * 101):
+        assert get(bad)[0] == 400, bad
+    for missing in ("/api/kg/item/" + "6" * 16, "/api/kg/entity/Acme", "/api/kg/entity/nobody", "/api/kg/entity/a%2Fb"):
+        assert get(missing)[0] == 404, missing
+
+    status, acme = get("/api/kg/entity/acme")
+    assert status == 200 and acme["days"] == 90 and acme["since"] == "2026-06-30", acme
+    assert acme["entity"] == {"key": "acme", "name": "Acme", "type": "org", "total": 4}  # 最常見的寫法
+    assert [e["id"] for e in acme["events"]] == [1, 2, 3] and len(acme["links"]) == 2 and not acme["truncated"]
+    assert [(r["key"], r["count"]) for r in acme["related"]] == [("beta", 2), ("台積電", 1)]
+    assert [e["id"] for e in get("/api/kg/entity/acme?days=365")[1]["events"]] == [4, 1, 2, 3]
+    tsmc = get("/api/kg/entity/" + quote("台積電"))[1]
+    assert tsmc["entity"]["name"] == "台積電" and [e["id"] for e in tsmc["events"]] == [3]
+
+    top = get("/api/kg/entities")[1]
+    assert top["available"] and [(e["key"], e["count"]) for e in top["entities"]] == [("acme", 3), ("beta", 2), ("台積電", 1)]
+    assert top["entities"][0]["last"] == "2026-09-28"
+    found = get("/api/kg/entities?q=" + quote(" ACME "))[1]
+    assert found["q"] == "ACME" and found["since"] is None and [(e["key"], e["count"]) for e in found["entities"]] == [("acme", 4)]
+    assert get("/api/kg/entities?q=" + quote("，"))[1]["entities"] == []
+
+    # 前端路由回 index.html；KG 不進 ETag／離線副本
+    for page in ("/kg", f"/kg/item/{uid_a}", f"/kg/item/{uid_a},{u1}", "/kg/entity/" + quote("台積電")):
+        assert req("GET", page)[0] == 200, page
+    assert req("GET", "/kg/item/xyz")[0] == 404
+    assert "etag" not in req("GET", f"/api/kg/item/{uid_a}")[1]
+    # 唯讀：網頁讀過之後資料庫一個字都沒改
+    before = db.read_bytes()
+    get(f"/api/kg/item/{uid_a}?depth=2")
+    assert db.read_bytes() == before and not (root / "state" / "kg.sqlite-journal").exists()
 
 
 def _selftest_etag(req, uid_a: str) -> None:
