@@ -17,7 +17,8 @@ env:
 jobs:
   image:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
-    runs-on: ubuntu-24.04-arm
+    # 自架 runner 是 x64，arm64 映像靠 QEMU 模擬建置（比原生慢）
+    runs-on: [self-hosted, linux, x64, docker]
     strategy:
       matrix:
         target: [web, worker]
@@ -25,6 +26,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
