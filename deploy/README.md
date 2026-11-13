@@ -160,6 +160,30 @@ deploy/push-images.sh v1.2.0   # 版本 tag → :v1.2.0 與 :sha-<commit>
 生成物都在 volume `newsletter-data`（容器內 `/var/lib/newsletter`），換容器、換映像、`docker compose down` 都還在；
 **`docker compose down -v` 或 `docker volume rm` 才會刪掉**。只有 `state/feedback.jsonl` 每週日寄一份到 `NEWSLETTER_MAIL_TO`，決定見[根目錄 README](../README.md)「資料保存」。
 
+**8. Tunnel 設定進版控（tunnel-sync）**
+
+正式區 Tunnel 的 Public Hostname 以 `deploy/cloudflare-tunnel.json` 為準，由 [tunnel-sync.yml](../.github/workflows/tunnel-sync.yml) 同步：
+PR 到 `develop`／`main` 時驗檔案、與線上比對（差異寫在 Actions 的 Summary），`main` 更新後才 PUT 整份設定並補上缺的 DNS CNAME。
+**導入後就只改這個檔，不要在網頁上改 Tunnel 路由**：下次套用會整份蓋掉。Access Application 不在同步範圍，新增 hostname 時仍要手動建。
+
+`check` 會擋下：沒有 catch-all、hostname 重複，以及**沒開 Enforce Access JWT validation**（`originRequest.access.required`）的 hostname，
+也就是步驟 2 第 4 點從「強烈建議」變成必做。
+
+導入（一次）：
+
+1. Cloudflare → My Profile → API Tokens → Custom token，權限 `Account › Cloudflare Tunnel › Edit` 與 `Zone › DNS › Edit`，範圍只選自己的帳號與網域。
+2. repo 的 Actions secrets：`CF_API_TOKEN`、`CF_ACCOUNT_ID`、`CF_ZONE_ID`（網域 Overview 右下）、`CF_TUNNEL_ID`（Tunnel 頁面的 UUID）。
+3. 匯出線上設定，從 `develop` 開分支 commit 後開 PR，Diff 應該是 `no change`：
+
+```bash
+read -rs CF_API_TOKEN && export CF_API_TOKEN CF_ACCOUNT_ID=<...> CF_TUNNEL_ID=<...>
+deploy/tunnel-sync.sh export   # 寫出 deploy/cloudflare-tunnel.json
+deploy/tunnel-sync.sh check    # 不連網；要過才合得進去
+deploy/tunnel-sync.sh diff     # 與線上比對
+```
+
+workflow 跑在 GitHub 代管的 `ubuntu-latest`，不是自架 runner：它只打 Cloudflare API，而且 PR 會觸發。fork 來的 PR 拿不到 secrets，只跑 `check`。
+
 ## 測試區（區域網路，沒有 Tunnel）
 
 [`docker-compose.test.yml`](../docker-compose.test.yml) 是另一組 web＋worker，給區域網路直接連，用來測試、或讓本機開發的前端接一個已經跑著的後端，不必整套重建。

@@ -1,0 +1,43 @@
+name: tunnel-sync
+
+# deploy/cloudflare-tunnel.json 是正式區 Cloudflare Tunnel 路由的唯一來源（見 deploy/README.md「Tunnel 設定進版控」）
+# PR 到 develop／main：驗檔案、與線上比對；main 更新後才套用（PUT 整份設定、補 DNS CNAME）
+on:
+  pull_request:
+    branches: [develop, main]
+    paths: [deploy/cloudflare-tunnel.json, deploy/tunnel-sync.sh, .github/workflows/tunnel-sync.yml]
+  push:
+    branches: [main]
+    paths: [deploy/cloudflare-tunnel.json, deploy/tunnel-sync.sh, .github/workflows/tunnel-sync.yml]
+  workflow_dispatch:   # 在 main 上手動跑會套用；其他分支只比對
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tunnel-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # 只打 Cloudflare API，用 GitHub 代管的 runner：repo 是公開的，PR 不要碰到掛 docker.sock 的自架 runner
+    runs-on: ubuntu-latest
+    env:
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      CF_TUNNEL_ID: ${{ secrets.CF_TUNNEL_ID }}
+      CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check
+        run: bash deploy/tunnel-sync.sh check
+
+      # fork 來的 PR 拿不到 secrets，只做上面的離線檢查
+      - name: Diff against live
+        if: env.CF_API_TOKEN != ''
+        run: bash deploy/tunnel-sync.sh diff
+
+      - name: Apply
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: bash deploy/tunnel-sync.sh apply
