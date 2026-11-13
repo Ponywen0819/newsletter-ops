@@ -20,8 +20,9 @@ concurrency:
 
 jobs:
   sync:
-    # 只打 Cloudflare API，用 GitHub 代管的 runner：repo 是公開的，PR 不要碰到掛 docker.sock 的自架 runner
-    runs-on: ubuntu-latest
+    # 自架 runner（和 selftest 一樣）。repo 是公開的：fork 來的 PR 不在這台跑
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
     env:
       CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
       CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -30,10 +31,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # runner 上不一定有 jq：沒有就下載固定版本到這次工作的暫存目錄（不動系統）
+      - name: Ensure jq
+        run: |
+          command -v jq >/dev/null && exit 0
+          curl -fsSL -o "$RUNNER_TEMP/jq" https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64
+          chmod +x "$RUNNER_TEMP/jq"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
       - name: Check
         run: bash deploy/tunnel-sync.sh check
 
-      # fork 來的 PR 拿不到 secrets，只做上面的離線檢查
+      # secrets 還沒設定時只做上面的離線檢查
       - name: Diff against live
         if: env.CF_API_TOKEN != ''
         run: bash deploy/tunnel-sync.sh diff
