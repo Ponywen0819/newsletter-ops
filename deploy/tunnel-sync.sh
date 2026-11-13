@@ -49,12 +49,17 @@ cmd_check() {
   open=$(jq -r '.config.ingress[] | select(has("hostname")) | select((.originRequest.access.required // false) != true) | .hostname' "$FILE")
   [ -z "$open" ] || fail "這些 hostname 沒開 Enforce Access JWT validation（originRequest.access.required）：$open"
 
+  local holder
+  holder=$(jq -r '.. | strings | select(test("^<.*>$"))' "$FILE")
+  [ -z "$holder" ] || fail "還有沒換掉的佔位符：$holder"
+
   echo "check ok: $(jq '[.config.ingress[] | select(has("hostname"))] | length' "$FILE") 個 hostname"
 }
 
 cmd_diff() {
-  local out
-  if out=$(diff -u --label live --label "$FILE" <(live) <(jq -S '.config' "$FILE")); then
+  local current out
+  current=$(live) || fail "讀不到線上設定（CF_API_TOKEN、CF_ACCOUNT_ID、CF_TUNNEL_ID 對嗎？）"
+  if out=$(diff -u --label live --label "$FILE" <(echo "$current") <(jq -S '.config' "$FILE")); then
     echo "no change"
   else
     echo "$out"
