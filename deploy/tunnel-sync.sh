@@ -12,6 +12,10 @@ API=https://api.cloudflare.com/client/v4
 
 fail() { echo "::error::$*" >&2; exit 1; }
 
+for bin in jq curl; do
+  command -v "$bin" >/dev/null || fail "找不到 $bin：Debian/Ubuntu 用 'sudo apt-get install -y $bin'，Windows 用 'winget install jqlang.jq'"
+done
+
 cf() {  # cf METHOD PATH [curl 參數...]
   local method=$1 path=$2; shift 2
   curl -fsS -X "$method" -H "Authorization: Bearer ${CF_API_TOKEN:?}" -H 'Content-Type: application/json' "$@" "$API$path"
