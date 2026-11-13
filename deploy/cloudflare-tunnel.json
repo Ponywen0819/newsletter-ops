@@ -7,8 +7,8 @@
         "originRequest": {
           "access": {
             "required": true,
-            "teamName": "<team>",
-            "audTag": ["<AUD tag>"]
+            "teamName": "ponygames",
+            "audTag": ["afcf4fa5f45ea88af7cfafe647202a8d9121001c173c2650b1292feb2b9232fc"]
           }
         }
       },
