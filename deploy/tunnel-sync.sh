@@ -16,9 +16,14 @@ for bin in jq curl; do
   command -v "$bin" >/dev/null || fail "找不到 $bin：Debian/Ubuntu 用 'sudo apt-get install -y $bin'，Windows 用 'winget install jqlang.jq'"
 done
 
-cf() {  # cf METHOD PATH [curl 參數...]
-  local method=$1 path=$2; shift 2
-  curl -fsS -X "$method" -H "Authorization: Bearer ${CF_API_TOKEN:?}" -H 'Content-Type: application/json' "$@" "$API$path"
+cf() {  # cf METHOD PATH [curl 參數...]；失敗時印出 Cloudflare 回的錯誤（GitHub 會把 secrets 遮成 ***）
+  local method=$1 path=$2 out; shift 2
+  out=$(curl -sS -X "$method" -H "Authorization: Bearer ${CF_API_TOKEN:?}" -H 'Content-Type: application/json' "$@" "$API$path") || return 1
+  if ! jq -e '.success == true' <<<"$out" >/dev/null 2>&1; then
+    echo "Cloudflare API $method $path 失敗：$(jq -c '.errors // .' <<<"$out" 2>/dev/null || head -c 300 <<<"$out")" >&2
+    return 1
+  fi
+  echo "$out"
 }
 
 tunnel_path() { echo "/accounts/${CF_ACCOUNT_ID:?}/cfd_tunnel/${CF_TUNNEL_ID:?}/configurations"; }
