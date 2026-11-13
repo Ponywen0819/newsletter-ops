@@ -11,9 +11,9 @@ from newsletter_web_server.server import DEFAULT_HOST, Site, make_server
 
 
 @contextlib.contextmanager
-def served(site: Site, admin: bool = False) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
+def served(site: Site) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
     """真的 HTTP 伺服器。用 http.client：路徑原樣送出（不正規化 `..`），標頭可自訂。"""
-    server = make_server(site, DEFAULT_HOST, 0, quiet=True, admin=admin)
+    server = make_server(site, DEFAULT_HOST, 0, quiet=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
 

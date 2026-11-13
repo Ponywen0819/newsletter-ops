@@ -14,12 +14,12 @@ npm test             # Vitest + Testing Library：元件與路由
 npm run typecheck
 ```
 
-- 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/stats` 回饋統計（從歷史晨報左欄連過去）、`/kg`、`/kg/item/<uid>[,<uid>…]`、`/kg/entity/<key>` 知識圖譜（見下面「知識圖譜」）、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（只限本機：本機直接跑時在主 port，Docker 部署時只在管理 port 8788，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
+- 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/stats` 回饋統計（從歷史晨報左欄連過去）、`/kg`、`/kg/item/<uid>[,<uid>…]`、`/kg/entity/<key>` 知識圖譜（見下面「知識圖譜」）、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權（正式區只能從 nginx 的區網入口 8788 開，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
   其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/server.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
 - 鍵盤：晨報頁 `j`／`k` 跳到下一則／上一則（≥1100px，有左側目錄時）；`[`／`]` 換到前一份／下一份（內文最後也有連結）。輸入框裡、帶修飾鍵時不攔截。
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（worker 每天驗一次，不輪詢），
   有問題才在頁首顯示。`/api/session` 的 `local` 為真時附「前往授權」連結，否則（經 Tunnel）只寫「請在主機上重新授權」。各狀態的意思見 [web-server/README.md](../web-server/README.md)。
-- 開發時 Vite 的代理不改 `Host`、不加 `X-Forwarded-*`，所以後端仍把它當本機，`/auth` 可以正常測。後端埠號不是 8787 時，
+- 開發時經 Vite 的代理直接連 web（沒有 nginx），`/auth` 可以正常測。後端埠號不是 8787 時，
   前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
 - 深色模式：預設跟系統（`prefers-color-scheme`），頁首「配色」可改成淺色／深色，選擇存在瀏覽器的 localStorage（key `theme`，只收 `light`／`dark`，沒有＝自動），後端不知道。

@@ -1,8 +1,9 @@
-"""HTTP 層：路由、本機判斷、提供 apps/web-ui/dist。讀寫都交給 Site 底下的 reports 與 auth。"""
+"""HTTP 層：路由、提供 apps/web-ui/dist。讀寫都交給 Site 底下的 reports 與 auth。
+
+不做身分驗證：誰能連進來、誰能開 /auth 由前面的 nginx 決定（docker/nginx.conf）；這個服務只能放在它後面或本機。"""
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import re
 import traceback
@@ -14,8 +15,6 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from newsletter_shared import ROOT
 
-from .access import HEADER as ACCESS_HEADER
-from .access import Access
 from .auth import Auth
 from .errors import ApiError, NotFound
 from .kg import DEFAULT_DAYS as DEFAULT_KG_DAYS
@@ -53,62 +52,18 @@ STATIC_TYPES = {  # 副檔名白名單
 IMMUTABLE = "public, max-age=31536000, immutable"
 CSP = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-# POST 路由 → 是否只限本機
-POST_ROUTES = {"/api/feedback": False, "/api/kg-flag": False, "/api/auth/token": True, "/api/auth/test": True, "/api/auth/revoke": True}
-LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
-PROXY_HEADERS = {"x-real-ip", "forwarded", "via", "cdn-loop"}  # 另外 cf-*、x-forwarded-* 開頭的也算
-
-
-def local_host(value: str, lan: bool = False) -> bool:
-    """Host／Origin 的主機部分是不是本機（可帶 port）。lan：私有 IP 位址也算（只認 IP，網域名稱可能被 DNS rebinding 指到區網）。"""
-    if not value or "@" in value or "/" in value:
-        return False
-    try:
-        parts = urlsplit("//" + value)
-        parts.port  # noqa: B018  port 不合法會丟 ValueError
-    except ValueError:
-        return False
-    if parts.hostname in LOCAL_HOSTNAMES:
-        return True
-    try:
-        return lan and ipaddress.ip_address(parts.hostname or "").is_private
-    except ValueError:
-        return False
-
-
-def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = False, lan: bool = False) -> bool:
-    """/auth 的存取條件。cloudflared 也是從 127.0.0.1 連進來，所以還要看 Host 與代理標頭。
-    admin：Docker 轉進來的來源是 bridge 閘道，只要求私有位址。lan（只對 admin 有效）：Host／Origin 是私有 IP 也放行（測試區）。"""
-    lan = admin and lan
-    try:
-        addr = ipaddress.ip_address(client_ip.split("%", maxsplit=1)[0])
-    except ValueError:
-        return False
-    addr = getattr(addr, "ipv4_mapped", None) or addr  # ::ffff:127.0.0.1
-    if not (addr.is_private if admin else addr.is_loopback):
-        return False
-    h = {k.lower(): v for k, v in headers.items()}
-    if not local_host(h.get("host", ""), lan):
-        return False
-    if "origin" in h:
-        origin = urlsplit(h["origin"])
-        if origin.scheme not in ("http", "https") or not local_host(origin.netloc, lan):
-            return False
-    return not any(k.startswith(("cf-", "x-forwarded-")) or k in PROXY_HEADERS for k in h)
+POST_ROUTES = {"/api/feedback", "/api/kg-flag", "/api/auth/token", "/api/auth/test", "/api/auth/revoke"}
 
 
 class Site:
     """Handler 用到的全部狀態。root 可換掉，測試用暫存目錄。"""
 
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
-                 checker: Callable[[str], dict] | None = None, access: Access | None = None):
-        self.access = access  # 有設就驗 Cloudflare Access 的 JWT（本機請求不驗）
+                 checker: Callable[[str], dict] | None = None):
         self.reports = Reports(root, today)
         self.kg = Graph(root, self.reports.today, self.reports.uid_dates)
         self.auth = Auth(root, checker)
         self.dist = root / "apps" / "web-ui" / "dist"
-        self.admin_lan = False  # True＝管理 port 也收區網（Host 是私有 IP）的請求；只給測試區
-
 
     def index_html(self) -> bytes | None:
         try:
@@ -143,10 +98,6 @@ class Handler(BaseHTTPRequestHandler):
         if not getattr(self.server, "quiet", False):
             super().log_message(format, *args)
 
-    def _local(self) -> bool:
-        return is_local_request(self.client_address[0], self.headers, getattr(self.server, "admin", False),
-                                self.server.site.admin_lan)  # type: ignore[attr-defined]
-
     def _send(self, status: int, body: str | bytes, ctype: str = "text/plain; charset=utf-8",
               cache: str = "no-store", headers: Mapping[str, str] | None = None) -> None:
         data = body.encode("utf-8") if isinstance(body, str) else body
@@ -175,26 +126,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
 
-    def _denied(self) -> bool:
-        """Access 驗證沒過就回 403。本機（容器的 healthcheck、管理 port）不驗。"""
-        access = self.site.access
-        if access is None or self._local() or access.ok(self.headers.get(ACCESS_HEADER)):
-            return False
-        self._send(HTTPStatus.FORBIDDEN, "forbidden")
-        return True
-
     def do_HEAD(self) -> None:
         self.head_only = True
         self.do_GET()
 
     def do_GET(self) -> None:
-        if self._denied():
-            return
         path = urlsplit(self.path).path.rstrip("/") or "/"
         if path.startswith("/api/"):
             self._get_api(path)
         elif SPA_ROUTES.fullmatch(path):
-            self._send_shell(404 if path == "/auth" and not self._local() else 200)
+            self._send_shell()
         elif (found := self.site.static_file(path)) is not None:
             body, ctype, cache = found
             self._send(200, body, ctype, cache)
@@ -205,11 +146,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_payload(self, path: str):
         fixed = {
-            "/api/session": lambda: {"local": self._local()},
+            "/api/session": lambda: {"local": True},  # nginx 在對外那一側改回 false（不顯示 /auth）
             "/api/heartbeat": lambda: {"ok": True},
             "/api/today": self.site.reports.today_payload,
             "/api/reports": self.site.reports.list_payload,
             "/api/auth-health": self.site.auth.health,
+            "/api/auth": self.site.auth.status,
             "/api/feedback-stats": self.site.reports.feedback_stats,
         }
         if path in fixed:
@@ -223,8 +165,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.site.reports.search(query.get("q", [""])[0])
         if path.startswith("/api/kg/"):
             return self._kg_payload(path, query)
-        if path == "/api/auth" and self._local():
-            return self.site.auth.status()
         raise NotFound(path)
 
     def _kg_payload(self, path: str, query: dict[str, list[str]]) -> dict:
@@ -292,11 +232,8 @@ class Handler(BaseHTTPRequestHandler):
         return self.site.auth.revoke_token()  # /api/auth/revoke
 
     def do_POST(self) -> None:
-        if self._denied():
-            return
         path = urlsplit(self.path).path.rstrip("/")
-        local_only = POST_ROUTES.get(path)
-        if local_only is None or (local_only and not self._local()):
+        if path not in POST_ROUTES:
             self._send_json(404, {"error": "not found"})
             return
         try:
@@ -308,10 +245,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": "server error"})
 
 
-def make_server(site: Site, host: str, port: int, quiet: bool = False, admin: bool = False) -> ThreadingHTTPServer:
+def make_server(site: Site, host: str, port: int, quiet: bool = False) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), Handler)
     server.site = site  # type: ignore[attr-defined]
     server.quiet = quiet  # type: ignore[attr-defined]
-    server.admin = admin  # type: ignore[attr-defined]
     return server
 

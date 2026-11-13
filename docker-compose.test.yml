@@ -21,14 +21,10 @@ services:
     <<: *app
     build: {context: ., target: web}
     image: localhost/newsletter-ops-web:test
-    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787", "--admin-port", "8788"]
-    environment:
-      <<: *env
-      NEWSLETTER_ADMIN_LAN: "1"
-    # 都對區域網路開放、沒有登入。/auth 在 8788：要用 IP 開（http://<IP>:18788/auth），網域名稱一律 404（擋 DNS rebinding）
+    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787"]
+    # 沒有 nginx：直接對區域網路開放，沒有登入，/auth 也在這裡
     ports:
       - "18787:8787"
-      - "18788:8788"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)\""]
       interval: 30s

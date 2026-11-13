@@ -437,7 +437,6 @@ source = { editable = "." }
 dependencies = [
     { name = "newsletter-llm" },
     { name = "newsletter-shared" },
-    { name = "pyjwt", extra = ["crypto"] },
 ]
 
 [package.dev-dependencies]
@@ -449,7 +448,6 @@ dev = [
 requires-dist = [
     { name = "newsletter-llm", editable = "../../packages/llm" },
     { name = "newsletter-shared", editable = "../../packages/shared" },
-    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15" },
 ]
 
 [package.metadata.requires-dev]

@@ -1,52 +1,34 @@
 """晨報網頁的後端入口。API 列表與安全設計見 apps/web-server/README.md。
 
-用法：uv run --project apps/web-server newsletter-web [--host 127.0.0.1] [--port 8787] [--admin-port N]
+用法：uv run --project apps/web-server newsletter-web [--host 127.0.0.1] [--port 8787]
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
-import threading
 
-from . import access
 from .server import BUILD_COMMAND, DEFAULT_HOST, DEFAULT_PORT, Site, make_server
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="晨報瀏覽與 👍／👎 回饋")
-    ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}，不要綁到對外位址（沒有登入）")
+    ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}；沒有登入，對外要放在 nginx 後面（見 deploy/README.md）")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WEB_PORT", DEFAULT_PORT)))
-    ap.add_argument("--admin-port", type=int, default=int(os.environ.get("NEWSLETTER_ADMIN_PORT", "0")),
-                    help="另開一個管理 port（綁在 --host），/auth 與 /api/auth* 只在這裡開；0＝不開。給 Docker 用，"
-                         "compose 只把它 publish 成 127.0.0.1:<port>（見 deploy/README.md）")
     args = ap.parse_args(argv)
-    if args.admin_port and args.admin_port == args.port:
-        ap.error("--admin-port 不能和 --port 相同")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
-        print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
-    site = Site(access=access.from_env())
-    site.admin_lan = os.environ.get("NEWSLETTER_ADMIN_LAN") == "1"
-    if site.access is None:
-        print(f"[web] 沒設 {access.TEAM_ENV}／{access.AUD_ENV}：不驗 Cloudflare Access 的 JWT，安全全靠 Access 政策", file=sys.stderr)
+        print(f"[web] 綁在 {args.host}：這個服務不做身分驗證，連得到的人都能讀寫、也能開 /auth。", file=sys.stderr)
+    site = Site()
     if site.index_html() is None:
         print(f"[web] 找不到 apps/web-ui/dist，頁面會回 503。先建置前端：{BUILD_COMMAND}", file=sys.stderr)
     server = make_server(site, args.host, args.port)
     print(f"[web] http://{args.host}:{server.server_address[1]}/  （Ctrl-C 結束）", file=sys.stderr)
-    admin = make_server(site, args.host, args.admin_port, admin=True) if args.admin_port else None
-    if admin:
-        threading.Thread(target=admin.serve_forever, daemon=True).start()
-        where = "區網也能開（NEWSLETTER_ADMIN_LAN=1，只給測試區）" if site.admin_lan else "不要 publish 到 127.0.0.1 以外"
-        print(f"[web] 管理 port http://{args.host}:{args.admin_port}/auth  （{where}）", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
-        if admin:
-            admin.shutdown()
-            admin.server_close()
     return 0
 
 
