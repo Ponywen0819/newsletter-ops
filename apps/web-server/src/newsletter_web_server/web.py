@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"[web] 警告：綁在 {args.host}，這個服務沒有登入機制，任何連得到的人都能寫入回饋。", file=sys.stderr)
     site = Site(access=access.from_env())
+    site.admin_lan = os.environ.get("NEWSLETTER_ADMIN_LAN") == "1"
     if site.access is None:
         print(f"[web] 沒設 {access.TEAM_ENV}／{access.AUD_ENV}：不驗 Cloudflare Access 的 JWT，安全全靠 Access 政策", file=sys.stderr)
     if site.index_html() is None:
@@ -35,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     admin = make_server(site, args.host, args.admin_port, admin=True) if args.admin_port else None
     if admin:
         threading.Thread(target=admin.serve_forever, daemon=True).start()
-        print(f"[web] 管理 port http://{args.host}:{args.admin_port}/auth  （不要 publish 到 127.0.0.1 以外）", file=sys.stderr)
+        where = "區網也能開（NEWSLETTER_ADMIN_LAN=1，只給測試區）" if site.admin_lan else "不要 publish 到 127.0.0.1 以外"
+        print(f"[web] 管理 port http://{args.host}:{args.admin_port}/auth  （{where}）", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

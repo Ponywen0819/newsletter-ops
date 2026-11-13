@@ -521,6 +521,36 @@ def test_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str, str,
     assert site.reports.feedback_path.read_text(encoding="utf-8") == before
 
 
+@pytest.mark.parametrize(("host", "origin", "admin", "lan", "want"), [
+    ("192.168.1.20:18788", None, True, True, True),
+    ("10.0.0.5:18788", "http://10.0.0.5:18788", True, True, True),
+    ("[fd00::1]:18788", None, True, True, True),
+    ("localhost:18788", None, True, True, True),
+    ("192.168.1.20:18788", None, True, False, False),       # 沒開 lan：照舊只認 localhost
+    ("192.168.1.20:18788", None, False, True, False),       # lan 只對管理 port 有效
+    ("8.8.8.8:18788", None, True, True, False),             # 公網 IP
+    ("mypc.local:18788", None, True, True, False),          # 網域名稱不算（DNS rebinding）
+    ("192.168.1.20:18788", "https://evil.example", True, True, False),
+])
+def test_is_local_lan(host, origin, admin, lan, want):
+    """測試區：管理 port 收 Host 是私有 IP 的請求；代理標頭仍一律拒絕。"""
+    h = {"Host": host, **({"Origin": origin} if origin else {})}
+    assert is_local_request("10.88.0.1", h, admin=admin, lan=lan) is want
+    assert not is_local_request("10.88.0.1", {**h, "Cf-Ray": "x"}, admin=admin, lan=lan)
+
+
+def test_admin_lan_http(root):
+    """開了 admin_lan：從區網 IP 開 /auth 拿得到頁面、/api/session 說是本機；主 port 照舊 404。"""
+    site = Site(root, today=lambda: "2026-09-28")
+    site.admin_lan = True
+    lan = {"Host": "192.168.1.20:18788"}
+    with served(site, admin=True) as req:
+        assert req("GET", "/auth", lan)[0] == 200
+        assert json.loads(req("GET", "/api/session", lan)[2]) == {"local": True}
+    with served(site) as req:
+        assert req("GET", "/auth", lan)[0] == 404
+
+
 def test_is_local() -> None:
     # --- is_local_request：來源位址、Host、代理標頭、Origin ---
     ok_host = {"Host": "127.0.0.1:8787"}

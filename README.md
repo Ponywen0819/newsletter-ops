@@ -57,6 +57,7 @@ config/config.json             執行參數：時間窗、關鍵字權重、收�
 config/sources.d/*.json        來源清單，一個主題一個檔
 .claude/skills/news-digest/    報告撰寫的 skill，隨專案進版控
 Dockerfile, docker-compose.yml, docker/   容器部署：一個 Dockerfile 建 web、worker 兩個映像，加上 cloudflared；生成物放 volume
+docker-compose.test.yml                   測試區：區網直接連、沒有 Tunnel、不排程
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
 ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 固定所有 Python 模組的直譯器版本
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json
@@ -169,7 +170,7 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-c
 
 ## 部署
 
-pipeline 與 web 跑在家裡一台 host，經 Cloudflare Tunnel + Access 對外；本機只當測試區。`web` 沒有登入，**唯一的防線是 Access**。
+pipeline 與 web 跑在家裡一台 host，經 Cloudflare Tunnel + Access 對外；測試區是另一台機器上的 `docker-compose.test.yml`（見 [deploy/README.md](deploy/README.md)「測試區」）。`web` 沒有登入，**唯一的防線是 Access**。
 做法（Docker 與 systemd 兩種）、自動部署、Cloudflare 設定與驗收清單見 [deploy/README.md](deploy/README.md)。
 
 ## 資料保存：只備份回饋

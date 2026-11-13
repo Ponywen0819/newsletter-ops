@@ -1,6 +1,6 @@
 # 部署到家用 host（Docker + Cloudflare Tunnel + Access）
 
-目標：worker 與 web 跑在家裡一台 host（VM 也行，只要有 Docker），經 Cloudflare 在外也能看晨報、按有用／沒用。本機只當測試區。
+目標：worker 與 web 跑在家裡一台 host（VM 也行，只要有 Docker），經 Cloudflare 在外也能看晨報、按有用／沒用。測試區是另一台機器上的另一組容器，見[測試區](#測試區區域網路沒有-tunnel)。
 host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。專案全貌見[根目錄 README](../README.md)。
 
 ```
@@ -152,6 +152,41 @@ deploy/push-images.sh v1.2.0   # 版本 tag → :v1.2.0 與 :sha-<commit>
 
 生成物都在 volume `newsletter-data`（容器內 `/var/lib/newsletter`），換容器、換映像、`docker compose down` 都還在；
 **`docker compose down -v` 或 `docker volume rm` 才會刪掉**。只有 `state/feedback.jsonl` 每週日寄一份到 `NEWSLETTER_MAIL_TO`，決定見[根目錄 README](../README.md)「資料保存」。
+
+## 測試區（區域網路，沒有 Tunnel）
+
+[`docker-compose.test.yml`](../docker-compose.test.yml) 是另一組 web＋worker，給區域網路直接連，用來測試、或讓本機開發的前端接一個已經跑著的後端，不必整套重建。
+建議放在正式區以外的機器（例如 Windows 的 Podman），弄壞了也不影響正式區。
+
+| | 正式區 | 測試區 |
+|---|---|---|
+| 對外 | 只有 Tunnel（Access）；8788 只綁 host 本機 | 18787（網頁）、18788（`/auth`）、18790（worker）都對區網開放，沒有登入 |
+| `/auth` | host 的 `127.0.0.1:8788` | 區網任一台用 IP 開 `http://<IP>:18788/auth`（`NEWSLETTER_ADMIN_LAN=1`；用網域名稱開一律 404，擋 DNS rebinding） |
+| 排程 | 每天跑、補跑、驗認證、寄提醒與備份 | 全關（`NEWSLETTER_SCHEDULE=off`），只有 `POST /run` |
+| 資料 | volume `newsletter-ops_newsletter-data` | volume `newsletter-ops-test_newsletter-data`（專案名不同，互不相干） |
+| metrics | `prod` | `test`（`NEWSLETTER_RUN_LABEL=test`） |
+| 映像 | GHCR | 在那台機器上建（`localhost/…:test`） |
+
+區網上誰都能看報告、按回饋、觸發 `/run`（會用到 Claude 額度），也能換掉或刪除測試區的 token，所以只在信得過的家用網路開，路由器不要轉發這些 port；有公網 IPv6 的話用防火牆擋掉。
+
+### Windows（Podman）
+
+PowerShell：
+
+```powershell
+winget install RedHat.Podman Docker.DockerCompose     # podman compose 會用 docker-compose
+podman machine init; podman machine start
+git clone https://github.com/Ponywen0819/newsletter-ops.git; cd newsletter-ops
+podman compose -f docker-compose.test.yml up -d --build
+# 只對「私人」網路開
+New-NetFirewallRule -DisplayName "newsletter-ops test" -Direction Inbound -Protocol TCP -LocalPort 18787,18788,18790 -Action Allow -Profile Private
+```
+
+- repo 的 `.gitattributes` 讓 `*.sh` 保持 LF；clone 之前就改過 `core.autocrlf` 也沒關係。
+- token：在這台機器上用 `claude setup-token` 另外產生一個，在區網任一台開 `http://<這台的 IP>:18788/auth` 貼上（這台本機也可以用 `localhost`）。和正式區用不同的 token，這邊被換掉或撤銷都不影響正式區（額度是同一個訂閱）。
+- 要寄信就在 repo 根放 `.env`，設 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（`NEWSLETTER_MAIL_TO` 預設寄給自己）；沒設的話流程停在寄信那步（exit 2），報告照樣寫好。
+- 跑一次：`curl.exe -X POST http://<這台的 IP>:18790/run`，或 `?from=write` 只重寫報告；`GET /status` 看進度。
+- 更新：`git pull` 後再跑一次 `up -d --build`。區網連不到時，先在這台用 `localhost:18787` 試，再查防火牆與網路設定檔是不是「私人」。
 
 ## 不用 Docker：systemd + cloudflared
 

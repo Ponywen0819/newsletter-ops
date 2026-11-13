@@ -42,6 +42,7 @@ uv run --project apps/web-server newsletter-web               # 晨報網頁，�
 - **`/auth`（貼 OAuth token）只能從本機開**：要同時符合來源是 loopback、`Host` 是本機、沒有 `Cf-*`／`X-Forwarded-*` 等代理標頭、`Origin`（若有）是本機，否則 404。
   cloudflared 也是從 `127.0.0.1` 連進來，所以光看來源位址不夠。遠端 host 用 `ssh -L 8787:127.0.0.1:8787 <host>`。
   Docker 部署改用 `--admin-port` 另開的管理 port（來源只要求私有位址，其他檢查照舊），見 [deploy/README.md](../../deploy/README.md)。
+  測試區另外設 `NEWSLETTER_ADMIN_LAN=1`：管理 port 的 Host／Origin 是私有 IP 也放行（只認 IP，不認網域名稱），區網任一台都能開 `/auth`；正式區不要設。
   token 只存在這一頁存的檔，不讀 `CLAUDE_CODE_OAUTH_TOKEN`，政策見 [llm/README.md](../../packages/llm/README.md)「認證」。
 - **驗證結果**：定時驗證在 worker（每天 07:30，見 [worker/README.md](../worker/README.md)），這裡不開定時器。
   `/auth` 貼上 token（通過時）與「測試連線」的結果也寫進同一個 `state/auth_health.json`，刪除 token 時一起刪掉。
