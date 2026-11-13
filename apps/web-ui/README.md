@@ -20,7 +20,7 @@ npm run typecheck
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（worker 每天驗一次，不輪詢），
   有問題才在頁首顯示。`/api/session` 的 `local` 為真時附「前往授權」連結，否則（經 Tunnel）只寫「請在主機上重新授權」。各狀態的意思見 [web-server/README.md](../web-server/README.md)。
 - 開發時經 Vite 的代理直接連 web（沒有 nginx），`/auth` 可以正常測。後端埠號不是 8787 時，
-  前端用同一個環境變數：`NEWSLETTER_WEB_PORT=8790 npm run dev`。
+  前端用 `NEWSLETTER_BACKEND_URL` 指定完整網址（預設 `http://127.0.0.1:8787`）：`NEWSLETTER_BACKEND_URL=http://127.0.0.1:8790 npm run dev`，或寫進 `apps/web-ui/.env.local`（`vite.config.ts` 用 `loadEnv` 讀，只取 `NEWSLETTER_` 開頭，shell 的值優先；白名單 .gitignore 不會收進版控）。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），所以前端不能有行內 `<script>`／`style="…"`。
 - 深色模式：預設跟系統（`prefers-color-scheme`），頁首「配色」可改成淺色／深色，選擇存在瀏覽器的 localStorage（key `theme`，只收 `light`／`dark`，沒有＝自動），後端不知道。
   `<html data-theme>` 是唯一真相；顏色在 `styles/base.css` 的 `:root` 用 `light-dark(淺, 深)` 定義（需要 2024 年中以後的瀏覽器）。
