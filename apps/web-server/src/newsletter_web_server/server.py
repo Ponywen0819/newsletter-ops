@@ -59,8 +59,8 @@ LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
 PROXY_HEADERS = {"x-real-ip", "forwarded", "via", "cdn-loop"}  # 另外 cf-*、x-forwarded-* 開頭的也算
 
 
-def local_host(value: str) -> bool:
-    """Host／Origin 的主機部分是不是本機（可帶 port）。"""
+def local_host(value: str, lan: bool = False) -> bool:
+    """Host／Origin 的主機部分是不是本機（可帶 port）。lan：私有 IP 位址也算（只認 IP，網域名稱可能被 DNS rebinding 指到區網）。"""
     if not value or "@" in value or "/" in value:
         return False
     try:
@@ -68,12 +68,18 @@ def local_host(value: str) -> bool:
         parts.port  # noqa: B018  port 不合法會丟 ValueError
     except ValueError:
         return False
-    return parts.hostname in LOCAL_HOSTNAMES
+    if parts.hostname in LOCAL_HOSTNAMES:
+        return True
+    try:
+        return lan and ipaddress.ip_address(parts.hostname or "").is_private
+    except ValueError:
+        return False
 
 
-def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = False) -> bool:
+def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = False, lan: bool = False) -> bool:
     """/auth 的存取條件。cloudflared 也是從 127.0.0.1 連進來，所以還要看 Host 與代理標頭。
-    admin：Docker 轉進來的來源是 bridge 閘道，只要求私有位址。"""
+    admin：Docker 轉進來的來源是 bridge 閘道，只要求私有位址。lan（只對 admin 有效）：Host／Origin 是私有 IP 也放行（測試區）。"""
+    lan = admin and lan
     try:
         addr = ipaddress.ip_address(client_ip.split("%", maxsplit=1)[0])
     except ValueError:
@@ -82,11 +88,11 @@ def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = F
     if not (addr.is_private if admin else addr.is_loopback):
         return False
     h = {k.lower(): v for k, v in headers.items()}
-    if not local_host(h.get("host", "")):
+    if not local_host(h.get("host", ""), lan):
         return False
     if "origin" in h:
         origin = urlsplit(h["origin"])
-        if origin.scheme not in ("http", "https") or not local_host(origin.netloc):
+        if origin.scheme not in ("http", "https") or not local_host(origin.netloc, lan):
             return False
     return not any(k.startswith(("cf-", "x-forwarded-")) or k in PROXY_HEADERS for k in h)
 
@@ -101,6 +107,7 @@ class Site:
         self.kg = Graph(root, self.reports.today, self.reports.uid_dates)
         self.auth = Auth(root, checker)
         self.dist = root / "apps" / "web-ui" / "dist"
+        self.admin_lan = False  # True＝管理 port 也收區網（Host 是私有 IP）的請求；只給測試區
 
 
     def index_html(self) -> bytes | None:
@@ -137,7 +144,8 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(format, *args)
 
     def _local(self) -> bool:
-        return is_local_request(self.client_address[0], self.headers, getattr(self.server, "admin", False))
+        return is_local_request(self.client_address[0], self.headers, getattr(self.server, "admin", False),
+                                self.server.site.admin_lan)  # type: ignore[attr-defined]
 
     def _send(self, status: int, body: str | bytes, ctype: str = "text/plain; charset=utf-8",
               cache: str = "no-store", headers: Mapping[str, str] | None = None) -> None:
