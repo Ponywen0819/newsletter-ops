@@ -16,9 +16,8 @@ from newsletter_shared import auth_health, auth_store, feedback, kg_flags, kg_st
 
 from helpers import served
 
-from newsletter_web_server import server
 from newsletter_web_server.auth import STALE_AFTER
-from newsletter_web_server.server import IMMUTABLE, MAX_BODY, Site, is_local_request
+from newsletter_web_server.server import IMMUTABLE, MAX_BODY, Site
 
 
 UID_A, UID_B, UID_C = "0123456789abcdef", "1111111111111111", "2222222222222222"
@@ -110,44 +109,6 @@ def test_no_frontend(tmp_path):
         assert status == 200 and json.loads(body) == {"date": "2026-09-28", "report": None, "marks": {}, "flags": {}, "latest": None,
                                                  "run": None}
         assert json.loads(req("GET", "/api/reports")[2]) == {"reports": []}
-
-
-def test_access(root: Path) -> None:
-    """設了 Access：經 tunnel 來的請求（帶 cf-* 標頭）要有效的 JWT，否則 403；本機不驗。"""
-    import time
-
-    import jwt
-    from cryptography.hazmat.primitives.asymmetric import rsa
-
-    from newsletter_web_server.access import Access, from_env
-
-    key, other = (rsa.generate_private_key(public_exponent=65537, key_size=2048) for _ in range(2))
-    access = Access("https://team.cloudflareaccess.com/", "aud-1", key_for=lambda token: key.public_key())
-    assert access.issuer == "https://team.cloudflareaccess.com" and Access("team", "a", key_for=id).issuer == access.issuer
-
-    def token(signer=key, **over) -> str:
-        claims = {"aud": "aud-1", "iss": access.issuer, "exp": int(time.time()) + 60, "email": "me@example.com", **over}
-        return jwt.encode(claims, signer, algorithm="RS256")
-
-    tunnel = {"Cf-Ray": "abc", "Host": "news.example.com"}
-    with served(Site(root, today=lambda: "2026-09-28", access=access)) as req:
-        assert req("GET", "/api/session")[0] == 200  # 本機（healthcheck）不驗
-        for bad in (None, "x.y.z", token(aud="other"), token(iss="https://evil.cloudflareaccess.com"),
-                    token(exp=int(time.time()) - 10), token(signer=other)):
-            h = {**tunnel, **({"Cf-Access-Jwt-Assertion": bad} if bad else {})}
-            for method, path in (("GET", "/api/today"), ("GET", "/"), ("GET", "/assets/app-abc123.js"), ("HEAD", "/")):
-                assert req(method, path, h)[0] == 403, (bad, method, path)
-            assert req("POST", "/api/feedback", {**h, "Content-Type": "application/json"}, {"uid": "x", "mark": "+"})[0] == 403
-        good = {**tunnel, "Cf-Access-Jwt-Assertion": token()}
-        assert req("GET", "/api/today", good)[0] == 200 and req("GET", "/", good)[0] == 200
-    with served(Site(root, today=lambda: "2026-09-28")) as req:
-        assert req("GET", "/api/today", tunnel)[0] == 200  # 沒設就不驗
-    env = {"NEWSLETTER_ACCESS_TEAM": "team", "NEWSLETTER_ACCESS_AUD": "aud-1"}
-    from unittest import mock
-    with mock.patch.dict(os.environ, env):
-        assert from_env() is not None and from_env().aud == "aud-1"
-    with mock.patch.dict(os.environ, {**env, "NEWSLETTER_ACCESS_AUD": ""}):
-        assert from_env() is None
 
 
 def test_timeout(site: Site) -> None:
@@ -521,66 +482,6 @@ def test_feedback(req, site: Site, root: Path, shell: str, uids: tuple[str, str,
     assert site.reports.feedback_path.read_text(encoding="utf-8") == before
 
 
-@pytest.mark.parametrize(("host", "origin", "admin", "lan", "want"), [
-    ("192.168.1.20:18788", None, True, True, True),
-    ("10.0.0.5:18788", "http://10.0.0.5:18788", True, True, True),
-    ("[fd00::1]:18788", None, True, True, True),
-    ("localhost:18788", None, True, True, True),
-    ("192.168.1.20:18788", None, True, False, False),       # 沒開 lan：照舊只認 localhost
-    ("192.168.1.20:18788", None, False, True, False),       # lan 只對管理 port 有效
-    ("8.8.8.8:18788", None, True, True, False),             # 公網 IP
-    ("mypc.local:18788", None, True, True, False),          # 網域名稱不算（DNS rebinding）
-    ("192.168.1.20:18788", "https://evil.example", True, True, False),
-])
-def test_is_local_lan(host, origin, admin, lan, want):
-    """測試區：管理 port 收 Host 是私有 IP 的請求；代理標頭仍一律拒絕。"""
-    h = {"Host": host, **({"Origin": origin} if origin else {})}
-    assert is_local_request("10.88.0.1", h, admin=admin, lan=lan) is want
-    assert not is_local_request("10.88.0.1", {**h, "Cf-Ray": "x"}, admin=admin, lan=lan)
-
-
-def test_admin_lan_http(root):
-    """開了 admin_lan：從區網 IP 開 /auth 拿得到頁面、/api/session 說是本機；主 port 照舊 404。"""
-    site = Site(root, today=lambda: "2026-09-28")
-    site.admin_lan = True
-    lan = {"Host": "192.168.1.20:18788"}
-    with served(site, admin=True) as req:
-        assert req("GET", "/auth", lan)[0] == 200
-        assert json.loads(req("GET", "/api/session", lan)[2]) == {"local": True}
-    with served(site) as req:
-        assert req("GET", "/auth", lan)[0] == 404
-
-
-def test_is_local() -> None:
-    # --- is_local_request：來源位址、Host、代理標頭、Origin ---
-    ok_host = {"Host": "127.0.0.1:8787"}
-    for ip, h in (("127.0.0.1", ok_host), ("::1", {"Host": "[::1]:8787"}), ("::ffff:127.0.0.1", {"Host": "localhost"}),
-                  ("127.0.0.1", {"host": "LOCALHOST:1"}),
-                  ("127.0.0.1", {"Host": "localhost:1", "Origin": "http://localhost:1"})):
-        assert is_local_request(ip, h), (ip, h)
-    for ip, h in (("192.168.1.5", ok_host), ("10.0.0.2", ok_host), ("not-an-ip", ok_host), ("", ok_host),
-                  ("127.0.0.1", {}), ("127.0.0.1", {"Host": ""}),
-                  ("127.0.0.1", {"Host": "news.example.com"}), ("127.0.0.1", {"Host": "news.example.com:443"}),
-                  ("127.0.0.1", {"Host": "127.0.0.1.evil.com"}), ("127.0.0.1", {"Host": "localhost.evil.com"}),
-                  ("127.0.0.1", {"Host": "evil.com@127.0.0.1"}), ("127.0.0.1", {"Host": "localhost:abc"}),
-                  ("127.0.0.1", {**ok_host, "Origin": "https://evil.example"}), ("127.0.0.1", {**ok_host, "Origin": "null"}),
-                  ("127.0.0.1", {**ok_host, "Origin": "http://localhost.evil.com"})):
-        assert not is_local_request(ip, h), (ip, h)
-    for name in ("Cf-Connecting-Ip", "Cf-Ray", "Cf-Access-Authenticated-User-Email", "CF-IPCountry", "X-Forwarded-For",
-                 "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip", "Forwarded", "Via", "Cdn-Loop"):
-        assert not is_local_request("127.0.0.1", {**ok_host, name: "x"}), name
-        assert not is_local_request("172.18.0.1", {**ok_host, name: "x"}, admin=True), name
-    # 管理 port：來源放寬到私有位址（Docker bridge 閘道），公網位址、Host／Origin／代理標頭的檢查不變
-    for ip in ("172.18.0.1", "192.168.1.5", "10.0.0.2", "127.0.0.1", "::1"):
-        assert is_local_request(ip, ok_host, admin=True), ip
-        assert is_local_request(ip, {**ok_host, "Origin": "http://127.0.0.1:8788"}, admin=True), ip
-    for ip, h in (("8.8.8.8", ok_host), ("2001:4860:4860::8888", ok_host), ("not-an-ip", ok_host),
-                  ("172.18.0.1", {"Host": "news.example.com"}), ("172.18.0.1", {}),
-                  ("172.18.0.1", {**ok_host, "Origin": "https://evil.example"})):
-        assert not is_local_request(ip, h, admin=True), (ip, h)
-    assert not is_local_request("172.18.0.1", ok_host)
-
-
 SECRET = "sk-ant-oat01-" + "Kp4" * 14
 
 
@@ -633,61 +534,16 @@ def t(tmp_path):
 
 
 def test_auth_access(t) -> None:
-    from unittest import mock
-
-    site, req, get, post, secret, checked, uid, missing = t.site, t.req, t.get, t.post, t.secret, t.checked, t.uid, t.missing
-
-    # 本機：session、狀態、頁面
+    """web 不做身分判斷（交給 nginx）：/auth、/api/auth* 照常提供，session 一律說可以管理。"""
+    req, get, post, uid, missing = t.req, t.get, t.post, t.uid, t.missing
     assert get("/api/session") == (200, {"local": True})
     assert get("/api/auth") == (200, {"state": "missing"})
     assert req("GET", "/auth")[0] == 200
-
-    # 非本機（公開網域的 Host、代理標頭、跨站 Origin）：/auth 與 /api/auth* 全部是 404，session 說不是本機
-    for hdr in ({"Host": "news.example.com"},
-                {"Cf-Ray": "abc", "Cf-Connecting-Ip": "1.2.3.4"},
-                {"X-Forwarded-For": "1.2.3.4"},
-                {"Cdn-Loop": "cloudflare"},
-                {"Origin": "https://evil.example"}):
-        assert req("GET", "/auth", hdr)[0] == 404 and req("GET", "/auth/", hdr)[0] == 404, hdr
-        assert get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
-        assert get("/api/session", hdr) == (200, {"local": False}), hdr
-        for path in ("/api/auth/token", "/api/auth/test", "/api/auth/revoke"):
-            status, body = post(path, {"token": secret}, hdr)
-            assert status == 404 and body == {"error": "not found"}, (hdr, path)
-    assert not checked and not site.auth.token_path.exists()
-
-    # 管理 port（--admin-port）：同一個 Site，/auth 與 /api/auth* 在這裡才算本機；Host／代理標頭／Origin 照擋
-    with served(site, admin=True) as admin_req:
-        def admin_get(path, headers=None):
-            status, _, text = admin_req("GET", path, headers)
-            return status, json.loads(text) if text.startswith("{") else text
-
-        assert admin_get("/api/session") == (200, {"local": True})
-        assert admin_get("/api/auth") == (200, {"state": "missing"})
-        assert admin_req("GET", "/auth")[0] == 200
-        status, _, text = admin_req("POST", "/api/auth/revoke", None, {})
-        assert status == 200 and "本來就沒有" in text
-        for hdr in ({"Host": "news.example.com"}, {"Cf-Ray": "abc"}, {"X-Forwarded-For": "1.2.3.4"},
-                    {"Origin": "https://evil.example"}):
-            assert admin_req("GET", "/auth", hdr)[0] == 404, hdr
-            assert admin_get("/api/auth", hdr) == (404, {"error": "not found"}), hdr
-            assert admin_req("POST", "/api/auth/revoke", hdr, {})[0] == 404, hdr
-        # 實際的來源位址進不來（測試只能從 127.0.0.1 連），改驗 Handler 有把「這是管理 port」交給判斷
-        real, calls = server.is_local_request, []
-        with mock.patch.object(server, "is_local_request", lambda *a: calls.append(a[2]) or real(*a)):
-            admin_get("/api/session")
-            get("/api/session")
-        assert calls == [True, False], calls
-
-    # 認證健康狀態是給所有人看的（橫幅用）：非本機也讀得到；沒有任何認證來源＝missing
     assert get("/api/auth-health") == (200, missing)
-    assert get("/api/auth-health", {"Host": "news.example.com", "Cf-Ray": "abc"}) == (200, missing)
-    # 一般功能不受影響：經 Tunnel（公開網域）一樣能讀報告、按 👍／👎
-    tunnel = {"Host": "news.example.com", "Cf-Ray": "abc"}
-    assert get("/api/today", tunnel)[0] == 200 and req("GET", "/", tunnel)[0] == 200
-    assert get("/api/heartbeat", tunnel) == (200, {"ok": True})
-    assert post("/api/feedback", {"uid": uid, "mark": "+"}, tunnel)[0] == 200
-    # 👍／👎 仍照常寫入，與 /auth 互不干擾
+    assert post("/api/auth/revoke", {})[0] == 200
+    # 一般功能照常：讀報告、按 👍／👎
+    assert get("/api/today")[0] == 200 and get("/api/heartbeat") == (200, {"ok": True})
+    assert post("/api/feedback", {"uid": uid, "mark": "+"})[0] == 200
     assert uid in (t.root / "state" / "feedback.jsonl").read_text(encoding="utf-8")
 
 
