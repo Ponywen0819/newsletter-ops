@@ -36,6 +36,7 @@
 !/deploy/*.example
 !/deploy/*.py
 !/deploy/*.sh
+!/deploy/cloudflare-tunnel.json
 
 # 模組（apps/、packages/、web/ 底下一個目錄一個）：Nx 專案檔
 !/*/*/project.json
