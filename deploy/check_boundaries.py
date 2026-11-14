@@ -98,7 +98,7 @@ def check_projects(root: Path = ROOT, members: dict = MEMBERS, node: dict = NODE
     tracked = _tracked(root)
     for pj in sorted(root.glob("*/*/project.json")):
         base = pj.parent
-        rel = str(base.relative_to(root))
+        rel = base.relative_to(root).as_posix()  # git ls-files 一律用 /，Windows 上 str() 會是 \
         if base not in registered:
             errors.append(f"{rel}/project.json 沒有登記在 MEMBERS 或 NODE_MODULES")
             continue
