@@ -12,7 +12,7 @@ def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:  # 原樣寫入：Windows 不把 \n 換成 \r\n
             fh.write(text)
             fh.flush()
             os.fsync(fh.fileno())

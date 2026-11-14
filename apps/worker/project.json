@@ -6,8 +6,11 @@
     "lang:py"
   ],
   "targets": {
-    "selftest": {
-      "command": "uv run --locked --project {projectRoot} worker --selftest"
+    "install": {
+      "command": "uv sync --locked --project {projectRoot}"
+    },
+    "test": {
+      "command": "uv run --locked --project {projectRoot} pytest -q {projectRoot}"
     },
     "start": {
       "command": "uv run --locked --project {projectRoot} worker"
@@ -17,6 +20,14 @@
     },
     "lint": {
       "command": "uvx ruff@0.17.3 check {projectRoot}"
+    },
+    "dev": {
+      "command": "uv run --locked --project {projectRoot} worker --host 127.0.0.1",
+      "options": {
+        "env": {
+          "NEWSLETTER_SCHEDULE": "off"
+        }
+      }
     }
   }
 }

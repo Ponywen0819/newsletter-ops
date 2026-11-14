@@ -39,7 +39,7 @@ collect 與 writer 互不依賴：蒐集只寫 `data/curated/<date>.json`，寫�
 - 目錄名 = id = Nx 專案名；套件名是 `newsletter-<id>`（`packages/collect/` → `newsletter-collect`），import 名把連字號換成底線（`newsletter_collect`）。
   前綴只留在套件名：import 名在 venv 裡是全域的，`llm`、`shared` 這種名字容易撞到第三方套件。
   指令名不跟套件名綁在一起：被依賴的模組的指令會裝進每個依賴它的 venv，所以帶前綴（`newsletter-collect`、`newsletter-web`…）；最頂層的 worker 就叫 `worker`。
-- 每個模組有一個 `project.json`（`name` 是 id），定義 `lint`、`selftest` 等任務；前端的任務直接來自 `package.json` 的 scripts。
+- 每個模組有一個 `project.json`（`name` 是 id），定義 `lint`、`test` 等任務；前端的任務直接來自 `package.json` 的 scripts。
 - 新增模組：建目錄與 `project.json`；Python 模組再 `uv lock --project <目錄>` 產生自己的鎖檔；最後登記到 `deploy/check_boundaries.py` 的 `MEMBERS`（Python）或 `NODE_MODULES`。
   `.gitignore`、`.dockerignore` 用萬用字元放行 `*/*/` 底下的模組檔，不必另外加；Dockerfile 要不要帶進映像則要自己決定。
 
@@ -57,6 +57,7 @@ config/config.json             執行參數：時間窗、關鍵字權重、收�
 config/sources.d/*.json        來源清單，一個主題一個檔
 .claude/skills/news-digest/    報告撰寫的 skill，隨專案進版控
 Dockerfile, docker-compose.yml, docker/   容器部署：一個 Dockerfile 建 web、worker 兩個映像，加上 cloudflared；生成物放 volume
+docker-compose.test.yml                   測試區：區網直接連、沒有 Tunnel、不排程
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
 ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 固定所有 Python 模組的直譯器版本
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json
@@ -64,11 +65,14 @@ package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；
 # 執行期生成物（都不進版控；位置都在 repo 根，Docker 裡是 volume）
 data/raw/<date>.jsonl          當日原始抓取（append，供回溯；只留 raw_retention_days 天）
 data/search/<date>.json        搜尋補充的稽核紀錄：缺口、query、LLM 原始回覆、收下與退回（含原因）
-data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入
+data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入；不會自動刪，KG 重建靠它
+data/kg/<date>.json            知識圖譜給 writer 的背景：相關的舊事件與更正（writer/README.md「知識圖譜」）
 reports/<date>.md              最終報告
 reports/<date>.html            email 版（newsletter-render 產生；.txt 是信件的純文字部分）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
+state/kg.sqlite                新聞知識圖譜：事件、實體、事件之間的關係（可用 newsletter-kg --rebuild 從 curated 重建）
+state/kg_flags.jsonl           「事實有誤」的標記（網頁按鈕、newsletter-kg --flag）
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
 state/auth_health.json         最近一次 Claude 認證驗證的結果（worker 每天寫、web 讀來顯示橫幅）
 state/last_run.json            上次每日流程的開始、結束與 exit code（worker 據此判斷今天跑過沒）
@@ -81,6 +85,15 @@ logs/<YYYY-MM>.log             排程執行紀錄
 Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-version` 固定直譯器（3.11，所有模組共用），每個模組的 `uv.lock` 鎖定它自己的依賴。
 安裝 uv 後不必自己建 venv，`uv run --project <模組>` 第一次執行會在該模組底下建 `.venv` 並裝好依賴；沒有該版本的 Python 時 uv 會自動下載。
 
+第一次 clone 之後（之後 lock 檔有變也一樣）：
+
+```bash
+npm ci                                           # 根目錄：只有 Nx
+npm run setup                                    # = nx run-many -t install：每個 Python 模組 uv sync --locked，前端 npm install
+```
+
+單一模組用 `npx nx run <模組>:install`，或直接用 uv：
+
 ```bash
 uv sync --project apps/worker                    # 依該模組的 uv.lock 同步它的環境
 uv add --project packages/collect <套件>              # 替某個模組新增依賴（改它的 pyproject.toml 與 uv.lock，一起 commit）
@@ -92,11 +105,11 @@ uv lock --project packages/collect --upgrade         # 升級該模組鎖定的�
 指令都在 repo 根目錄執行：程式讀寫的 `config/`、`reports/`、`data/`、`state/`、`logs/` 以**工作目錄**為根（`newsletter_shared.ROOT`），
 要放別處就設環境變數 `NEWSLETTER_ROOT`。
 
-所有模組的 lint、自我檢查、前端測試都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `apps/web-ui` 各 `npm ci`：
+所有模組的 lint 與測試（Python 是各模組 `tests/` 底下的 pytest，前端是 vitest）都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先照上面裝好依賴：
 
 ```bash
-npx nx run-many -t lint selftest typecheck test   # 全部模組；改成 `nx affected -t …` 只跑受影響的
-npx nx run collect:selftest                         # 單一模組的單一任務
+npx nx run-many -t lint typecheck test            # 全部模組；改成 `nx affected -t …` 只跑受影響的
+npx nx run collect:test                             # 單一模組的單一任務
 npx nx graph                                      # 模組依賴圖
 ```
 
@@ -105,6 +118,7 @@ Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是
 ```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
 uv run --no-project python deploy/check_boundaries.py
+uv run --no-project --with "pytest>=9,<10" pytest -q deploy   # 依賴方向檢查本身的測試
 ```
 
 commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：
@@ -115,6 +129,17 @@ git config core.hooksPath .githooks
 
 抓取、整理、寄信都只用標準庫，只有 `llm` 模組需要第三方套件（`claude-agent-sdk`），collect 的搜尋與 writer 經由它用 Claude。
 skill 裡呼叫的指令都是 `uv run --locked --project <模組> …`，要在 repo 根目錄、有 uv 的環境下執行。
+
+## 開發
+
+```bash
+npm run dev                  # = nx run-many -t dev：前端（Vite，http://localhost:5173）、web-server（8787）、worker（8790）一起起來
+npx nx run web-ui:dev        # 只起其中一個；web-server:dev、worker:dev 同理
+```
+
+- 前端的 `/api` 由 Vite 代理到 web-server；web-server 與 worker 以 repo 根目錄為資料根目錄（讀寫這裡的 `reports/`、`state/` 等）。
+- `worker:dev` 綁 `127.0.0.1`、**不排程**（`NEWSLETTER_SCHEDULE=off`）：不會自己跑每日流程或寄信，只有手動 `POST /run` 才會跑；要跑正式排程用 `worker:start`。
+- Python 的部分只能在 Linux／macOS（或 WSL）跑：`newsletter_shared.lock` 用 `fcntl`，Windows 原生的 Python 沒有。
 
 ## 快速開始
 
@@ -165,14 +190,15 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-c
 
 ## 部署
 
-pipeline 與 web 跑在家裡一台 host，經 Cloudflare Tunnel + Access 對外；本機只當測試區。`web` 沒有登入，**唯一的防線是 Access**。
+pipeline 與 web 跑在家裡一台 host，經 Cloudflare Tunnel + Access 對外；測試區是另一台機器上的 `docker-compose.test.yml`（見 [deploy/README.md](deploy/README.md)「測試區」）。`web` 沒有登入，**唯一的防線是 Access**。
 做法（Docker 與 systemd 兩種）、自動部署、Cloudflare 設定與驗收清單見 [deploy/README.md](deploy/README.md)。
 
 ## 資料保存：只備份回饋
 
 生成物——`reports/`、`data/`、`state/`、`logs/`——不進版控（Docker 部署時放在 volume `newsletter-data`，見 [deploy/README.md](deploy/README.md)），
 壞了就重來：抓取結果可以重跑，`seen.json` 沒了或壞了（讀不了時當作空的）只會讓時間窗內已報過的新聞再出現一次。
-例外是 `state/feedback.jsonl`：一則一則按出來的，丟了無法重來，worker 每週日把它寄給自己當備份（[worker/README.md](apps/worker/README.md)「回饋備份」）。
+例外是 `state/feedback.jsonl` 與 `state/kg_flags.jsonl`：一則一則按出來的，丟了無法重來，worker 每週日把它們寄給自己當備份（[worker/README.md](apps/worker/README.md)「回饋備份」）。
+`state/kg.sqlite` 是推算出來的，壞了用 `newsletter-kg --rebuild` 從 `data/curated/` 重建。
 本 repo 是 public，標記含標題與來源，不推上來。
 
 版控裡只有程式、設定與 `interests.md`；這些是唯一需要「持續更新」的內容，`git pull` 後重 build 即可。

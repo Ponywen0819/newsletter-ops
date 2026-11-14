@@ -3,12 +3,11 @@ name = "newsletter-web-server"
 version = "0.1.0"
 description = "newsletter-ops 的網頁後端：JSON API ＋ 提供前端（apps/web-ui）的建置結果"
 requires-python = ">=3.10"
-# 依賴 shared、llm（只為了 token 驗證：以 `python -m newsletter_llm.runner --auth-check` 呼叫）、
-# pyjwt（驗 Cloudflare Access 的 JWT）；不得依賴 notify（deploy/check_boundaries.py 會檢查）。
+# 依賴 shared、llm（只為了 token 驗證：以 `python -m newsletter_llm.runner --auth-check` 呼叫）；
+# 不得依賴 notify（deploy/check_boundaries.py 會檢查）。
 dependencies = [
     "newsletter-shared",
     "newsletter-llm",
-    "pyjwt[crypto]>=2.15",
 ]
 
 [project.scripts]
@@ -21,3 +20,11 @@ newsletter-llm = { path = "../../packages/llm", editable = true }
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

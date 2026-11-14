@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react'
+import { type ReactNode, useState, useSyncExternalStore } from 'react'
 import { api } from '../api'
 import { check } from '../connectivity'
 import { enqueue, getQueue, patchCopies, subscribeQueue } from '../feedbackQueue'
@@ -14,13 +14,15 @@ interface Props {
   uids: string[]
   marks: Marks
   onChange: (uid: string, mark: Mark) => void
+  /** 同一排的其他按鈕（事實有誤） */
+  children?: ReactNode
 }
 
 /**
  * 有用／沒用。再按一次＝取消。線上時亮不亮以伺服器回傳為準；多個 uid 要全部同一標記才亮。
  * 離線或連不上時先排隊（feedbackQueue.ts），畫面與本機副本立刻更新，旁邊標「待同步」，恢復連線後補送。
  */
-export function FeedbackButtons({ uids, marks, onChange }: Props) {
+export function FeedbackButtons({ uids, marks, onChange, children }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const queue = useSyncExternalStore(subscribeQueue, getQueue)
@@ -80,6 +82,7 @@ export function FeedbackButtons({ uids, marks, onChange }: Props) {
           </svg>
         </button>
       ))}
+      {children}
       <span className="fb-msg" role="status">
         {error || (pending && '待同步')}
       </span>

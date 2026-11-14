@@ -77,6 +77,8 @@ export function Layout({ variant }: { variant: 'reader' | 'single' }) {
           <NavLink to="/reports">歷史晨報</NavLink>
           {/* /auth 能寫入憑證，後端只服務本機；經 Tunnel 進來的看不到這個連結 */}
           {session?.local && <NavLink to="/auth">Claude 授權</NavLink>}
+          {/* /ops 能觸發執行，同 /auth 只服務本機 */}
+          {session?.local && <NavLink to="/ops">維運</NavLink>}
           <ThemeSelect />
         </nav>
       </header>

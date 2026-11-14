@@ -6,8 +6,11 @@
     "lang:py"
   ],
   "targets": {
-    "selftest": {
-      "command": "uv run --locked --project {projectRoot} newsletter-llm --selftest"
+    "install": {
+      "command": "uv sync --locked --project {projectRoot}"
+    },
+    "test": {
+      "command": "uv run --locked --project {projectRoot} pytest -q {projectRoot}"
     },
     "lint": {
       "command": "uvx ruff@0.17.3 check {projectRoot}"

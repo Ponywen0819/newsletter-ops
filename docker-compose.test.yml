@@ -1,0 +1,60 @@
+# 測試區：區域網路可直接連的一組 web＋worker，沒有 Tunnel。說明見 deploy/README.md「測試區」。
+#   podman compose -f docker-compose.test.yml up -d --build
+# 和正式區分開：專案名不同（volume 也就不同）、映像在本機建、worker 不排程、metrics 標 test。
+name: newsletter-ops-test
+
+x-app: &app
+  restart: unless-stopped
+  init: true
+  pull_policy: build
+  volumes:
+    - newsletter-data:/var/lib/newsletter
+  read_only: true
+  tmpfs: [/tmp, "/home/app:mode=1777"]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment: &env
+    NEWSLETTER_RUN_LABEL: test
+
+services:
+  web:
+    <<: *app
+    build: {context: ., target: web}
+    image: localhost/newsletter-ops-web:test
+    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787"]
+    # 沒有 nginx：直接對區域網路開放，沒有登入，/auth、/ops 也在這裡
+    ports:
+      - "18787:8787"
+    environment:
+      <<: *env
+      NEWSLETTER_WORKER_URL: http://worker:8790  # 維運頁（/ops）呼叫 worker
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *app
+    build: {context: ., target: worker}
+    image: localhost/newsletter-ops-worker:test
+    # 不排程、不補跑、不驗認證、不寄提醒與備份；只有 POST /run、/job（沒有登入，區域網路誰都能觸發）
+    ports:
+      - "18790:8790"
+    stop_grace_period: 2m
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8790/status', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    environment:
+      <<: *env
+      NEWSLETTER_SCHEDULE: "off"
+      # 沒設 GMAIL_* 時流程停在寄信那步（exit 2），報告照樣寫好
+      GMAIL_USER: ${GMAIL_USER:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      NEWSLETTER_MAIL_TO: ${NEWSLETTER_MAIL_TO:-${GMAIL_USER:-}}
+      NEWSLETTER_BASE_URL: ${NEWSLETTER_BASE_URL:-}
+
+volumes:
+  newsletter-data:

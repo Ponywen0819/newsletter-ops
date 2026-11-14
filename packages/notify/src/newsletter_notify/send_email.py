@@ -4,7 +4,6 @@
 用法：uv run --project packages/notify newsletter-render | uv run --project packages/notify newsletter-send [--dry-run]
       echo '{"subject": "…", "text": "…"}' | uv run --project packages/notify newsletter-send --notice   # 純文字通知（worker 的失敗通知）
       notice 可加 "attachments": [{"path": "…", "filename": "…"}]（worker 的回饋備份）
-      uv run --project packages/notify newsletter-send --selftest
 
 環境變數：GMAIL_USER、GMAIL_APP_PASSWORD（應用程式密碼）、NEWSLETTER_MAIL_TO（逗號分隔，預設寄給自己）
 """
@@ -44,9 +43,6 @@ def build_notice(meta: dict, sender: str, to: list[str]) -> EmailMessage:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if "--selftest" in argv:
-        selftest()
-        return 0
     meta = json.loads(sys.stdin.read())
     sender = os.environ.get("GMAIL_USER", "")
     to = [a.strip() for a in os.environ.get("NEWSLETTER_MAIL_TO", sender).split(",") if a.strip()]
@@ -66,39 +62,6 @@ def main(argv: list[str] | None = None) -> int:
         smtp.send_message(msg)
     print(f"[send] 已寄出 → {msg['To']}", file=sys.stderr)
     return 0
-
-
-def selftest() -> None:
-    import tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as fh:
-        fh.write("<p>頭條</p>")
-    msg = build({"subject": "每日晨間簡報 2026/09/28 — 測試", "headline": "頭條", "html_path": fh.name},
-                "a@example.com", ["b@example.com", "c@example.com"])
-    os.unlink(fh.name)
-    assert msg["To"] == "b@example.com, c@example.com"
-    assert msg["Subject"] == "每日晨間簡報 2026/09/28 — 測試"
-    html_part = msg.get_body(("html",))
-    assert html_part is not None and "頭條" in html_part.get_content()
-    assert "頭條" in msg.get_body(("plain",)).get_content()
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as tx, \
-            tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as hx:
-        tx.write("純文字版\n")
-        hx.write("<p>x</p>")
-    msg = build({"subject": "s", "headline": "h", "html_path": hx.name, "text_path": tx.name}, "a@example.com", ["b@example.com"])
-    os.unlink(tx.name)
-    os.unlink(hx.name)
-    assert msg.get_body(("plain",)).get_content() == "純文字版\n"
-    msg = build_notice({"subject": "失敗", "text": "內容\n"}, "a@example.com", ["b@example.com"])
-    assert msg["Subject"] == "失敗" and msg.get_content() == "內容\n" and not msg.is_multipart()
-    with tempfile.NamedTemporaryFile("wb", suffix=".jsonl", delete=False) as ax:
-        ax.write(b'{"uid": "x"}\n')
-    msg = build_notice({"subject": "備份", "text": "t\n", "attachments": [{"path": ax.name, "filename": "f.jsonl"}]},
-                       "a@example.com", ["b@example.com"])
-    os.unlink(ax.name)
-    att = next(msg.iter_attachments())
-    assert msg.get_body(("plain",)).get_content() == "t\n" and att.get_filename() == "f.jsonl"
-    assert att.get_content() == b'{"uid": "x"}\n'
-    print("ok")
 
 
 if __name__ == "__main__":

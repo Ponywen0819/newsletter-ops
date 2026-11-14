@@ -14,7 +14,7 @@
     ]
   },
   "targetDefaults": {
-    "selftest": {
+    "test": {
       "cache": true,
       "inputs": [
         "default",
@@ -37,14 +37,17 @@
     "typecheck": {
       "cache": true
     },
-    "test": {
-      "cache": true
-    },
     "build": {
       "cache": true,
       "outputs": [
         "{projectRoot}/dist"
       ]
+    },
+    "dev": {
+      "continuous": true
+    },
+    "start": {
+      "continuous": true
     }
   }
 }

@@ -18,14 +18,12 @@ services:
     <<: *app
     build: {context: ., target: web}
     image: ghcr.io/ponywen0819/newsletter-ops-web:${NEWSLETTER_TAG:-latest}
-    # 不要 publish 8787（會繞過 Access）；8788 只能綁 127.0.0.1（/auth 沒有登入）
-    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787", "--admin-port", "8788"]
-    ports:
-      - "127.0.0.1:8788:8788"
-    # 有設就驗 Cloudflare Access 的 JWT：Access 政策被誤刪時不會整站公開（見 deploy/README.md 步驟 2）
+    # 不做身分驗證，只能經 nginx 連：不 publish、只在 app 網路（cloudflared 碰不到）。
+    # 也在 be 網路：維運頁（/ops，只有區網入口開得到）呼叫 worker 的 /status、/run、/job
+    command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787"]
+    networks: [app, be]
     environment:
-      NEWSLETTER_ACCESS_TEAM: ${NEWSLETTER_ACCESS_TEAM:-}
-      NEWSLETTER_ACCESS_AUD: ${NEWSLETTER_ACCESS_AUD:-}
+      NEWSLETTER_WORKER_URL: http://worker:8790
     # 用 CMD-SHELL：podman 會把 CMD 陣列裡含空格的參數拆開
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)\""]
@@ -37,7 +35,7 @@ services:
     <<: *app
     build: {context: ., target: worker}
     image: ghcr.io/ponywen0819/newsletter-ops-worker:${NEWSLETTER_TAG:-latest}
-    # 映像的 CMD 是 worker --port 8790：每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run 不 publish，只在 be 網路
+    # 映像的 CMD 是 worker --port 8790：每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run、/job 不 publish，只在 be 網路
     networks: [be]
     # 停止時要等執行中的步驟收尾、寫好紀錄
     stop_grace_period: 2m
@@ -55,18 +53,42 @@ services:
       NEWSLETTER_BASE_URL: ${NEWSLETTER_BASE_URL:-}
       NEWSLETTER_HEARTBEAT_URL: ${NEWSLETTER_HEARTBEAT_URL:-}
 
+  nginx:
+    # 閘門：8080 給 cloudflared（/auth 一律 404），8788 給家裡區網／VPN（含 /auth）。規則在 docker/nginx.conf
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    # 只綁 IPv4：IPv6 經 docker-proxy 轉進來時來源會變成 bridge 閘道（私有位址），繞過來源檢查
+    ports:
+      - "0.0.0.0:8788:8788"
+    networks: [edge, app]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/heartbeat"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
   cloudflared:
     # 固定版本：上游改行為（例如 QUIC）會讓 tunnel 斷線；要升級時改這裡
     image: cloudflare/cloudflared:2026.10.7
-    # QUIC 在家用網路上會定期斷線，改用 http2
+    # QUIC 在家用網路上會定期斷線，改用 http2。Tunnel 的服務要設成 http://nginx:8080（Cloudflare 後台）
     command: tunnel --no-autoupdate --protocol http2 run
+    networks: [edge]
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN（Cloudflare Zero Trust 建立 Tunnel 時取得）}
     depends_on:
-      web:
+      nginx:
         condition: service_healthy
     restart: unless-stopped
 
@@ -74,5 +96,10 @@ volumes:
   newsletter-data:
 
 networks:
-  # 只有 worker：web 沒有登入、cloudflared 對外，都不該連得到 /run
+  # worker 與 web：/run、/job 會用額度、寄信，nginx、cloudflared 都不該連得到。
+  # web 能連（維運頁），所以「誰能觸發」由 nginx 決定：/ops、/api/ops* 只有區網入口開得到
   be:
+  # cloudflared ↔ nginx
+  edge:
+  # nginx ↔ web；web 需要對外（驗 token 時呼叫 Claude），所以不設 internal
+  app:

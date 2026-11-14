@@ -41,9 +41,8 @@ email 的連結文字帶 emoji（「👍 有用／👎 沒用」；網頁上的�
 - 網址要是 Tunnel + Access 保護的那個網域：點連結時 Access 會先要求登入，掃描器看到的只是登入頁。
 - Docker 部署在 `.env` 設；systemd 部署在 `~/.config/newsletter-ops/env` 設（見 [deploy/README.md](../deploy/README.md)）。
 
-## 自我檢查
+## 測試
 
 ```bash
-uv run --project packages/notify newsletter-render --selftest   # email 輸出
-uv run --project packages/notify newsletter-send --selftest
+npx nx run notify:test   # email 輸出與信件組裝，不寄信
 ```

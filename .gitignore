@@ -7,6 +7,7 @@
 
 # 專案文件與入口
 !/.gitignore
+!/.gitattributes
 !/README.md
 !/CLAUDE.md
 !/ISSUES.md
@@ -24,8 +25,10 @@
 !/Dockerfile
 !/.dockerignore
 !/docker-compose.yml
+!/docker-compose.test.yml
 !/.env.example
 !/docker/*.sh
+!/docker/*.conf
 
 # 部署範本（systemd 單元、cloudflared 設定、env 範本；真正的機密不放這裡）
 !/deploy/*.service
@@ -33,14 +36,16 @@
 !/deploy/*.example
 !/deploy/*.py
 !/deploy/*.sh
+!/deploy/cloudflare-tunnel.json
 
 # 模組（apps/、packages/、web/ 底下一個目錄一個）：Nx 專案檔
 !/*/*/project.json
 
-# Python 模組（各自一個 uv 專案）：只放行 pyproject.toml、uv.lock 與 src/<套件>/ 底下的 .py
+# Python 模組（各自一個 uv 專案）：只放行 pyproject.toml、uv.lock、src/<套件>/ 與 tests/ 底下的 .py
 !/*/*/pyproject.toml
 !/*/*/uv.lock
 !/*/*/src/**/*.py
+!/*/*/tests/*.py
 
 # Node 模組（Vite + React）：只放行原始碼、設定與鎖檔
 !/*/*/index.html
@@ -60,7 +65,7 @@
 # 報告撰寫的 skill
 !/.claude/skills/**
 
-# GitHub Actions（push 時跑自我檢查）
+# GitHub Actions（push 時跑 lint 與測試）
 !/.github/**
 
 # 刻意不放行（每日生成物與本機狀態；本 repo 是 public，也不留備份，見 README「資料保存」）：

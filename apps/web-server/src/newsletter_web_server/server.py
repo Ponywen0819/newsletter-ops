@@ -1,32 +1,34 @@
-"""HTTP 層：路由、本機判斷、提供 apps/web-ui/dist。讀寫都交給 Site 底下的 reports 與 auth。"""
+"""HTTP 層：路由、提供 apps/web-ui/dist。讀寫都交給 Site 底下的 reports 與 auth。
+
+不做身分驗證：誰能連進來、誰能開 /auth 由前面的 nginx 決定（docker/nginx.conf）；這個服務只能放在它後面或本機。"""
 from __future__ import annotations
 
-import contextlib
 import hashlib
-import ipaddress
 import json
 import re
-import threading
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, Iterator, Mapping
-from urllib.parse import parse_qs, urlsplit
+from typing import Callable, Mapping
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from newsletter_shared import ROOT
 
-from .access import HEADER as ACCESS_HEADER
-from .access import Access
 from .auth import Auth
 from .errors import ApiError, NotFound
+from .kg import DEFAULT_DAYS as DEFAULT_KG_DAYS
+from .kg import Graph
+from .ops import Ops
 from .reports import Reports
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 MAX_BODY = 4096
 # 與 apps/web-ui/src/App.tsx 的路由同步
-SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/stats|/auth")
+SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/stats|/auth"
+                        r"|/ops|/ops/metrics|/ops/config"
+                        r"|/kg|/kg/item/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/kg/entity/[^/]+")
 # 離線副本同步的對象：回 ETag，If-None-Match 相符回 304（前端自己帶，所以照舊 no-store）
 ETAG_PATHS = re.compile(r"/api/today|/api/reports|/api/reports/\d{4}-\d{2}-\d{2}")
 
@@ -52,54 +54,20 @@ STATIC_TYPES = {  # 副檔名白名單
 IMMUTABLE = "public, max-age=31536000, immutable"
 CSP = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-# POST 路由 → 是否只限本機
-POST_ROUTES = {"/api/feedback": False, "/api/auth/token": True, "/api/auth/test": True, "/api/auth/revoke": True}
-LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1"}
-PROXY_HEADERS = {"x-real-ip", "forwarded", "via", "cdn-loop"}  # 另外 cf-*、x-forwarded-* 開頭的也算
-
-
-def local_host(value: str) -> bool:
-    """Host／Origin 的主機部分是不是本機（可帶 port）。"""
-    if not value or "@" in value or "/" in value:
-        return False
-    try:
-        parts = urlsplit("//" + value)
-        parts.port  # noqa: B018  port 不合法會丟 ValueError
-    except ValueError:
-        return False
-    return parts.hostname in LOCAL_HOSTNAMES
-
-
-def is_local_request(client_ip: str, headers: Mapping[str, str], admin: bool = False) -> bool:
-    """/auth 的存取條件。cloudflared 也是從 127.0.0.1 連進來，所以還要看 Host 與代理標頭。
-    admin：Docker 轉進來的來源是 bridge 閘道，只要求私有位址。"""
-    try:
-        addr = ipaddress.ip_address(client_ip.split("%", maxsplit=1)[0])
-    except ValueError:
-        return False
-    addr = getattr(addr, "ipv4_mapped", None) or addr  # ::ffff:127.0.0.1
-    if not (addr.is_private if admin else addr.is_loopback):
-        return False
-    h = {k.lower(): v for k, v in headers.items()}
-    if not local_host(h.get("host", "")):
-        return False
-    if "origin" in h:
-        origin = urlsplit(h["origin"])
-        if origin.scheme not in ("http", "https") or not local_host(origin.netloc):
-            return False
-    return not any(k.startswith(("cf-", "x-forwarded-")) or k in PROXY_HEADERS for k in h)
+POST_ROUTES = {"/api/feedback", "/api/kg-flag", "/api/auth/token", "/api/auth/test", "/api/auth/revoke",
+               "/api/ops/request"}
 
 
 class Site:
-    """Handler 用到的全部狀態。root 可換掉，selftest 用暫存目錄。"""
+    """Handler 用到的全部狀態。root 可換掉，測試用暫存目錄。"""
 
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
-                 checker: Callable[[str], dict] | None = None, access: Access | None = None):
-        self.access = access  # 有設就驗 Cloudflare Access 的 JWT（本機請求不驗）
+                 checker: Callable[[str], dict] | None = None, worker_url: str | None = None):
         self.reports = Reports(root, today)
+        self.kg = Graph(root, self.reports.today, self.reports.uid_dates)
         self.auth = Auth(root, checker)
+        self.ops = Ops(root, self.reports.today, worker_url)
         self.dist = root / "apps" / "web-ui" / "dist"
-
 
     def index_html(self) -> bytes | None:
         try:
@@ -134,9 +102,6 @@ class Handler(BaseHTTPRequestHandler):
         if not getattr(self.server, "quiet", False):
             super().log_message(format, *args)
 
-    def _local(self) -> bool:
-        return is_local_request(self.client_address[0], self.headers, getattr(self.server, "admin", False))
-
     def _send(self, status: int, body: str | bytes, ctype: str = "text/plain; charset=utf-8",
               cache: str = "no-store", headers: Mapping[str, str] | None = None) -> None:
         data = body.encode("utf-8") if isinstance(body, str) else body
@@ -165,26 +130,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(status, index, "text/html; charset=utf-8", "no-cache", {"Content-Security-Policy": CSP})
 
-    def _denied(self) -> bool:
-        """Access 驗證沒過就回 403。本機（容器的 healthcheck、管理 port）不驗。"""
-        access = self.site.access
-        if access is None or self._local() or access.ok(self.headers.get(ACCESS_HEADER)):
-            return False
-        self._send(HTTPStatus.FORBIDDEN, "forbidden")
-        return True
-
     def do_HEAD(self) -> None:
         self.head_only = True
         self.do_GET()
 
     def do_GET(self) -> None:
-        if self._denied():
-            return
         path = urlsplit(self.path).path.rstrip("/") or "/"
         if path.startswith("/api/"):
             self._get_api(path)
         elif SPA_ROUTES.fullmatch(path):
-            self._send_shell(404 if path == "/auth" and not self._local() else 200)
+            self._send_shell()
         elif (found := self.site.static_file(path)) is not None:
             body, ctype, cache = found
             self._send(200, body, ctype, cache)
@@ -195,12 +150,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_payload(self, path: str):
         fixed = {
-            "/api/session": lambda: {"local": self._local()},
+            "/api/session": lambda: {"local": True},  # nginx 在對外那一側改回 false（不顯示 /auth）
             "/api/heartbeat": lambda: {"ok": True},
             "/api/today": self.site.reports.today_payload,
             "/api/reports": self.site.reports.list_payload,
             "/api/auth-health": self.site.auth.health,
+            "/api/auth": self.site.auth.status,
             "/api/feedback-stats": self.site.reports.feedback_stats,
+            # 維運（只限本機，由 nginx 擋）
+            "/api/ops": self.site.ops.status,
+            "/api/ops/config": self.site.ops.config,
         }
         if path in fixed:
             return fixed[path]()
@@ -208,10 +167,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.site.reports.report_payload(m[1])
         if m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
             return self.site.reports.feedback_target(m[1])
+        query = parse_qs(urlsplit(self.path).query)
+        if path == "/api/ops/metrics":
+            return self.site.ops.metrics(query.get("days", ["14"])[0], query.get("all", ["0"])[0])
         if path == "/api/search":
-            return self.site.reports.search(parse_qs(urlsplit(self.path).query).get("q", [""])[0])
-        if path == "/api/auth" and self._local():
-            return self.site.auth.status()
+            return self.site.reports.search(query.get("q", [""])[0])
+        if path.startswith("/api/kg/"):
+            return self._kg_payload(path, query)
+        raise NotFound(path)
+
+    def _kg_payload(self, path: str, query: dict[str, list[str]]) -> dict:
+        """知識圖譜（唯讀）。實體的 key 是 Unicode，網址裡是百分比編碼。"""
+        if m := re.fullmatch(r"/api/kg/item/([0-9a-f]{16}(?:,[0-9a-f]{16})*)", path):
+            return self.site.kg.item(m[1].split(","), query.get("depth", ["1"])[0])
+        if m := re.fullmatch(r"/api/kg/entity/([^/]+)", path):
+            return self.site.kg.entity(unquote(m[1]), query.get("days", [str(DEFAULT_KG_DAYS)])[0])
+        if path == "/api/kg/entities":
+            return self.site.kg.entities(query.get("q", [""])[0])
         raise NotFound(path)
 
     def _get_api(self, path: str) -> None:
@@ -252,29 +224,31 @@ class Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise ApiError(HTTPStatus.BAD_REQUEST, "body 不是合法的 JSON") from None
 
+    def _post_payload(self, path: str, data) -> dict:
+        if path in ("/api/feedback", "/api/kg-flag"):
+            field = "mark" if path == "/api/feedback" else "flag"
+            if not (isinstance(data, dict) and isinstance(data.get("uid"), str) and isinstance(data.get(field), str)):
+                raise ApiError(HTTPStatus.BAD_REQUEST, f"需要字串欄位 uid、{field}")
+            record = self.site.reports.record if field == "mark" else self.site.reports.record_flag
+            row = record(data["uid"], data[field])
+            return {"uid": row["uid"], field: row[field]}
+        if path == "/api/auth/token":
+            if not (isinstance(data, dict) and isinstance(data.get("token"), str)):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
+            return self.site.auth.submit_token(data["token"])
+        if path == "/api/auth/test":
+            return self.site.auth.test_token()
+        if path == "/api/ops/request":
+            return self.site.ops.request(data)
+        return self.site.auth.revoke_token()  # /api/auth/revoke
+
     def do_POST(self) -> None:
-        if self._denied():
-            return
         path = urlsplit(self.path).path.rstrip("/")
-        local_only = POST_ROUTES.get(path)
-        if local_only is None or (local_only and not self._local()):
+        if path not in POST_ROUTES:
             self._send_json(404, {"error": "not found"})
             return
         try:
-            data = self._read_json()
-            if path == "/api/feedback":
-                if not (isinstance(data, dict) and isinstance(data.get("uid"), str) and isinstance(data.get("mark"), str)):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 uid、mark")
-                row = self.site.reports.record(data["uid"], data["mark"])
-                self._send_json(200, {"uid": row["uid"], "mark": row["mark"]})
-            elif path == "/api/auth/token":
-                if not (isinstance(data, dict) and isinstance(data.get("token"), str)):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
-                self._send_json(200, self.site.auth.submit_token(data["token"]))
-            elif path == "/api/auth/test":
-                self._send_json(200, self.site.auth.test_token())
-            else:  # /api/auth/revoke
-                self._send_json(200, self.site.auth.revoke_token())
+            self._send_json(200, self._post_payload(path, self._read_json()))
         except ApiError as exc:
             self._send_json(exc.status, {"error": str(exc)})
         except Exception:
@@ -282,38 +256,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": "server error"})
 
 
-def make_server(site: Site, host: str, port: int, quiet: bool = False, admin: bool = False) -> ThreadingHTTPServer:
+def make_server(site: Site, host: str, port: int, quiet: bool = False) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), Handler)
     server.site = site  # type: ignore[attr-defined]
     server.quiet = quiet  # type: ignore[attr-defined]
-    server.admin = admin  # type: ignore[attr-defined]
     return server
 
-
-@contextlib.contextmanager
-def served(site: Site, admin: bool = False) -> Iterator[Callable[..., tuple[int, dict[str, str], str]]]:
-    """selftest 用的真 HTTP 伺服器。用 http.client：路徑原樣送出（不正規化 `..`），標頭可自訂。"""
-    import http.client
-
-    server = make_server(site, DEFAULT_HOST, 0, quiet=True, admin=admin)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    port = server.server_address[1]
-
-    def req(method: str, path: str, headers: Mapping[str, str] | None = None, body=None) -> tuple[int, dict[str, str], str]:
-        h, data = dict(headers or {}), None
-        if body is not None:
-            data = body if isinstance(body, bytes) else json.dumps(body).encode()
-            h.setdefault("Content-Type", "application/json")
-        conn = http.client.HTTPConnection(DEFAULT_HOST, port, timeout=10)
-        try:
-            conn.request(method, path, body=data, headers=h)
-            resp = conn.getresponse()
-            return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read().decode("utf-8")
-        finally:
-            conn.close()
-
-    try:
-        yield req
-    finally:
-        server.shutdown()
-        server.server_close()

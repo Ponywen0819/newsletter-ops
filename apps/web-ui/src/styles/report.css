@@ -154,3 +154,17 @@
     min-height: 44px;
   }
 }
+/* 事實有誤：和有用／沒用同一排，按下是警示色 */
+.fb-flag {
+  font-size: 12px;
+}
+/* 脈絡：連到知識圖譜，樣子同按鈕 */
+.fb-kg {
+  font-size: 12px;
+  text-decoration: none;
+}
+.fb-flag[aria-pressed='true'] {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}

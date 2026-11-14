@@ -202,8 +202,9 @@ def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
     tok = c.get("tokens", {})
     top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
     via = c.get("runner", "chat") if c else "-"  # sdk＝newsletter-write；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
-    costs = [r["total_cost_usd"] for r in (c, run.get("search", {})) if r.get("total_cost_usd") is not None]
-    usd = f"{sum(costs):.2f}" if costs else "-"  # writer＋搜尋；只有 sdk 路線拿得到
+    costs = [r["total_cost_usd"] for r in (c, *(run.get(s, {}) for s in ("search", "kg_extract", "kg_relate")))
+             if r.get("total_cost_usd") is not None]
+    usd = f"{sum(costs):.2f}" if costs else "-"  # writer＋搜尋＋KG；只有 sdk 路線拿得到
     result = "-" if p is None else "ok" if not p["exit_code"] else f"{p['step']}:{p['exit_code']}"
     secs = " ".join(f"{run[s]['seconds']:>6.1f}" if "seconds" in run.get(s, {}) else f"{'-':>6}" for s in stages)
     return (f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} {secs} "
@@ -212,63 +213,8 @@ def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
             f"{cov.get('near_misses_used', '-'):>3} {result:8}  {top}")
 
 
-def selftest() -> None:
-    # 路徑都從 ROOT 推算：紀錄在 ROOT/logs/metrics，Claude session 紀錄的位置由 cwd（＝ROOT）決定，debug 旗標讀 ROOT/config/config.json
-    assert METRICS_DIR == ROOT / "logs" / "metrics"
-    assert TRANSCRIPTS.name == re.sub(r"[^A-Za-z0-9]", "-", str(ROOT)), TRANSCRIPTS
-    assert (ROOT / "config" / "config.json").is_file()
-    rows = [
-        {"type": "user", "timestamp": "2026-01-01T00:00:00Z", "message": {"content": "hi"}},
-        {"type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "message": {"id": "m0", "model": "x",
-         "usage": {"input_tokens": 999}, "content": []}},
-        {"type": "assistant", "timestamp": "2026-01-01T00:00:10Z", "message": {"id": "m1", "model": "x",
-         "usage": {"input_tokens": 5, "cache_read_input_tokens": 100, "output_tokens": 7},
-         "content": [{"type": "tool_use", "id": "s", "name": "Skill", "input": {"skill": "news-digest"}}]}},
-        {"type": "assistant", "timestamp": "2026-01-01T00:00:11Z", "message": {"id": "m2", "model": "x",
-         "usage": {"input_tokens": 1, "output_tokens": 3}, "content": [{"type": "thinking"}]}},
-        {"type": "assistant", "timestamp": "2026-01-01T00:00:12Z", "message": {"id": "m2", "model": "x",
-         "usage": {"input_tokens": 1, "output_tokens": 3},
-         "content": [{"type": "tool_use", "id": "t1", "name": "WebFetch", "input": {}}]}},
-        {"type": "user", "timestamp": "2026-01-01T00:00:20Z",
-         "message": {"content": [{"type": "tool_result", "tool_use_id": "t1"}]}},
-    ]
-    tmp = METRICS_DIR.parent / ".selftest.jsonl"
-    tmp.parent.mkdir(parents=True, exist_ok=True)
-    tmp.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
-    try:
-        u = claude_usage(tmp)
-    finally:
-        tmp.unlink()
-    assert u["api_turns"] == 2, u
-    assert u["tokens"] == {"input": 6, "cache_write": 0, "cache_read": 100, "output": 10}, u
-    assert u["tools"] == {"WebFetch": {"calls": 1, "seconds": 8.0}}, u
-    stages = ["fetch_source", "fetch", "curate", "render", "claude", "fetch", "curate", "render", "render"]
-    runs = split_runs([{"stage": st, "ts": str(i)} for i, st in enumerate(stages)])
-    assert [sorted(r) for r in runs] == [["claude", "curate", "fetch", "render"],
-                                         ["curate", "fetch", "render"], ["render"]], runs
-    # run_id：第二次從 write 補跑（沒有 fetch）也自成一列，不黏到前一次
-    tagged = [("a", "fetch"), ("a", "claude"), ("a", "pipeline"), ("b", "claude"), ("b", "render"), ("b", "pipeline")]
-    runs = split_runs([{"stage": st, "ts": str(i), "run_id": r} for i, (r, st) in enumerate(tagged)])
-    assert [sorted(r) for r in runs] == [["claude", "fetch", "pipeline"], ["claude", "pipeline", "render"]], runs
-    assert u["seconds"] == 10.0 and u["non_tool_seconds"] == 2.0, u
-    run = {"fetch": {"ts": "2026-01-01T08:00:00", "seconds": 20.0},
-           "claude": {"ts": "x", "seconds": 300.0, "runner": "sdk", "total_cost_usd": 1.5, "api_turns": 9,
-                      "tokens": {"input": 1, "cache_read": 2, "output": 3}},
-           "search": {"ts": "x", "seconds": 60.0, "total_cost_usd": 0.25},
-           "coverage": {"ts": "x", "missing": 2, "near_misses_used": 1},
-           "search_yield": {"ts": "x", "accepted": 0},
-           "pipeline": {"ts": "x", "seconds": 400.0, "exit_code": 6, "step": "write"}}
-    line = summary_line("2026-01-01", run, ("fetch", "search", "enrich", "pipeline"))
-    assert line.split()[4:14] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.75", "0", "2"], line
-    assert "write:6" in line, line
-    print("ok")
-
-
 def main() -> int:
     cmd, rest = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("summary", [])
-    if cmd == "--selftest":
-        selftest()
-        return 0
     return {"claude": cmd_claude, "summary": cmd_summary}[cmd](rest)
 
 

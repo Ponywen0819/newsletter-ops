@@ -1,6 +1,27 @@
 import { API_CACHE } from './cacheName'
 import { check } from './connectivity'
-import type { AuthHealth, AuthResult, AuthStatus, FeedbackTarget, FeedbackStats, Mark, ReportPayload, ReportSummary, SearchResult, Session, TodayPayload } from './types'
+import type {
+  AuthHealth,
+  AuthResult,
+  AuthStatus,
+  FeedbackStats,
+  FeedbackTarget,
+  KgEntities,
+  KgEntityPayload,
+  KgFlag,
+  KgItemPayload,
+  Mark,
+  MetricsPayload,
+  OpsConfig,
+  OpsKind,
+  OpsStatus,
+  ReportPayload,
+  ReportSummary,
+  RunStep,
+  SearchResult,
+  Session,
+  TodayPayload,
+} from './types'
 
 /** 伺服器回了非 2xx。message 是伺服器給的 error 文字（沒有就是狀態碼）。 */
 export class ApiError extends Error {
@@ -68,6 +89,15 @@ export const api = {
   feedbackTarget: (uid: string) => request<FeedbackTarget>(`/api/feedback/${encodeURIComponent(uid)}`),
   /** mark '' ＝ 取消。回傳伺服器實際記下的 mark。 */
   feedback,
+  /** 「事實有誤」／「確認可信」：flag '' ＝ 取消。不排隊，連不上就是失敗。 */
+  kgFlag: (uid: string, flag: KgFlag | '') => request<{ uid: string; flag: KgFlag | '' }>('/api/kg-flag', { uid, flag }),
+  /** 知識圖譜：不進離線副本，連不上就是失敗 */
+  kg: {
+    item: (uids: string[], depth: 1 | 2) =>
+      request<KgItemPayload>(`/api/kg/item/${uids.map(encodeURIComponent).join(',')}?depth=${depth}`),
+    entity: (key: string, days: number) => request<KgEntityPayload>(`/api/kg/entity/${encodeURIComponent(key)}?days=${days}`),
+    entities: (q: string) => request<KgEntities>(`/api/kg/entities?q=${encodeURIComponent(q)}`),
+  },
   /** 對每個 uid 各送一次。成功的不會收回，畫面要以 saved 為準。 */
   feedbackAll: async (uids: string[], mark: Mark) => {
     const results = await Promise.allSettled(uids.map((uid) => feedback(uid, mark)))
@@ -79,5 +109,14 @@ export const api = {
     saveToken: (token: string) => request<AuthResult>('/api/auth/token', { token }),
     test: () => request<AuthResult>('/api/auth/test', {}),
     revoke: () => request<AuthResult>('/api/auth/revoke', {}),
+  },
+  /** /ops 維運：和 /api/auth* 一樣只限本機（nginx 擋），不進離線副本 */
+  ops: {
+    status: () => request<OpsStatus>('/api/ops'),
+    /** 轉給 worker 立刻開始；from 只有 run 用。worker 正在跑時 409 */
+    request: (kind: OpsKind, from?: RunStep) =>
+      request<{ started_at: string; id: string }>('/api/ops/request', from ? { kind, from } : { kind }),
+    metrics: (days: number, all: boolean) => request<MetricsPayload>(`/api/ops/metrics?days=${days}${all ? '&all=1' : ''}`),
+    config: () => request<OpsConfig>('/api/ops/config'),
   },
 }

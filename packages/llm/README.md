@@ -12,7 +12,7 @@ src/newsletter_llm/
 
 ```bash
 uv run --project packages/llm newsletter-llm --auth-check     # 只驗證儲存的 token（一次最小的呼叫）
-uv run --project packages/llm newsletter-llm --selftest
+npx nx run llm:test                                           # tests/ 底下的 pytest，SDK 換成假的
 ```
 
 `--auth-check` 的 exit code：`0` 通過、`1` 其他失敗（含用了 API key）、`2` 沒有 token 或沒裝 SDK、`5` 授權失敗、`6` 額度用完。
@@ -28,7 +28,7 @@ uv run --project packages/llm newsletter-llm --selftest
    （極小的請求）驗證，**通過才儲存**到 `state/oauth_token.json`（權限 600、不進版控）；貼錯的 token 不會蓋掉原本可用的。
    頁面也顯示授權狀態與預計到期日（以一年效期推算，剩 30 天內會提醒），並可「測試連線」或「刪除已存的 token」
    （刪除只移除本機檔案，token 在 Anthropic 端仍然有效）。`/auth` 的使用限制見 [web-server/README.md](../../apps/web-server/README.md)。
-3. Docker 部署：在 host 本機的瀏覽器開管理 port `http://127.0.0.1:8788/auth`（主 port 上的 `/auth` 開不了），見 [deploy/README.md](../../deploy/README.md)。
+3. Docker 部署：在家裡區網或 VPN 開 `http://<host 的 IP>:8788/auth`（nginx 的區網入口；經 Tunnel 開不了），見 [deploy/README.md](../../deploy/README.md)。
 
 - **token 的來源只有 `state/oauth_token.json`**（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑）。**沒有就直接 exit 2**，
   不會退回本機 `claude` 的登入，也不會用 API key。儲存與讀取由 [shared](../shared/README.md) 的 `auth_store.py` 負責。

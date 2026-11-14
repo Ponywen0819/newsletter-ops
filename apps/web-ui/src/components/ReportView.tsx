@@ -1,17 +1,32 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { groupReport, type Unit } from '../reportUnits'
-import type { Adjacent, Block, ListItem, Mark, Marks, Report } from '../types'
+import type { Adjacent, Block, Flags, KgFlag, ListItem, Mark, Marks, Report } from '../types'
 import { isWide, useSectionNav } from '../useSectionNav'
+import { FactFlagButton } from './FactFlagButton'
 import { FeedbackButtons } from './FeedbackButtons'
 import { EXTERNAL, Inline } from './Inline'
 import { ReaderShell } from './ReaderShell'
 
 type OnMark = (uid: string, mark: Mark) => void
+type OnFlag = (uid: string, flag: KgFlag | '') => void
 
 interface Votes {
   marks: Marks
   onMark: OnMark
+  flags: Flags
+  onFlag: OnFlag
+}
+
+function Actions({ uids, votes }: { uids: string[]; votes: Votes }) {
+  return (
+    <FeedbackButtons uids={uids} marks={votes.marks} onChange={votes.onMark}>
+      <FactFlagButton uids={uids} flags={votes.flags} onChange={votes.onFlag} />
+      <Link className="fb-btn fb-kg" to={`/kg/item/${uids.join(',')}`} title="這則新聞的前因後果：知識圖譜裡相關的先前報導">
+        脈絡
+      </Link>
+    </FeedbackButtons>
+  )
 }
 
 function Items({ items, votable, votes }: { items: ListItem[]; votable: boolean; votes: Votes }) {
@@ -21,7 +36,7 @@ function Items({ items, votable, votes }: { items: ListItem[]; votable: boolean;
         <li key={i}>
           <Inline nodes={item.inline} />
           {item.children && <Items items={item.children} votable={votable} votes={votes} />}
-          {votable && item.uids?.length ? <FeedbackButtons uids={item.uids} marks={votes.marks} onChange={votes.onMark} /> : null}
+          {votable && item.uids?.length ? <Actions uids={item.uids} votes={votes} /> : null}
         </li>
       ))}
     </ul>
@@ -58,12 +73,11 @@ function BlockView({ block, votes }: { block: Block; votes: Votes }) {
     case 'list':
       return <Items items={block.items} votable={block.votable !== false} votes={votes} />
     case 'mark':
-      return block.votable !== false ? <FeedbackButtons uids={[block.uid]} marks={votes.marks} onChange={votes.onMark} /> : null
+      return block.votable !== false ? <Actions uids={[block.uid]} votes={votes} /> : null
   }
 }
 
-function UnitView({ unit, sources, marks, onMark }: { unit: Unit; sources: Report['sources']; marks: Marks; onMark: OnMark }) {
-  const votes: Votes = { marks, onMark }
+function UnitView({ unit, sources, votes }: { unit: Unit; sources: Report['sources']; votes: Votes }) {
   // 用 data-unit 而不是 id：自己捲動才能避開 sticky 標頭
   return (
     <section className="unit" data-unit={unit.id}>
@@ -119,9 +133,10 @@ function AdjacentNav({ prev, next }: Adjacent) {
   )
 }
 
-type ViewProps = { report: Report; marks: Marks; adjacent?: Adjacent; banner?: ReactNode }
+type ViewProps = { report: Report; marks: Marks; flags?: Flags; adjacent?: Adjacent; banner?: ReactNode }
 
-export function ReportView({ report, marks, onMark, adjacent = {}, banner }: ViewProps & { onMark: OnMark }) {
+export function ReportView({ report, marks, onMark, flags = {}, onFlag = () => {}, adjacent = {}, banner }: ViewProps & { onMark: OnMark; onFlag?: OnFlag }) {
+  const votes: Votes = { marks, onMark, flags, onFlag }
   const grouped = useMemo(() => groupReport(report), [report])
   const ids = useMemo(() => grouped.units.map((u) => u.id), [grouped])
   const articleRef = useRef<HTMLElement>(null)
@@ -152,7 +167,7 @@ export function ReportView({ report, marks, onMark, adjacent = {}, banner }: Vie
       <ReaderShell
         side={
           <>
-            {grouped.title && <BlockView block={grouped.title} votes={{ marks, onMark }} />}
+            {grouped.title && <BlockView block={grouped.title} votes={votes} />}
             <nav ref={navRef} className="reader-nav" aria-label="新聞目錄">
               {navGroups.map((group, gi) => (
                 <div key={gi}>
@@ -178,7 +193,7 @@ export function ReportView({ report, marks, onMark, adjacent = {}, banner }: Vie
         }
       >
         {banner}
-        {grouped.callout && <BlockView block={grouped.callout} votes={{ marks, onMark }} />}
+        {grouped.callout && <BlockView block={grouped.callout} votes={votes} />}
         {grouped.groups.map((group, gi) => (
           <div key={gi} className="group">
             {group.heading && (
@@ -187,11 +202,11 @@ export function ReportView({ report, marks, onMark, adjacent = {}, banner }: Vie
               </h2>
             )}
             {group.units.map((unit) => (
-              <UnitView key={unit.id} unit={unit} sources={report.sources} marks={marks} onMark={onMark} />
+              <UnitView key={unit.id} unit={unit} sources={report.sources} votes={votes} />
             ))}
           </div>
         ))}
-        {grouped.sources && <UnitView unit={grouped.sources} sources={report.sources} marks={marks} onMark={onMark} />}
+        {grouped.sources && <UnitView unit={grouped.sources} sources={report.sources} votes={votes} />}
         {(adjacent.prev || adjacent.next) && <AdjacentNav {...adjacent} />}
       </ReaderShell>
     </article>
@@ -199,8 +214,14 @@ export function ReportView({ report, marks, onMark, adjacent = {}, banner }: Vie
 }
 
 /** 晨報加上標記狀態，以伺服器回傳的結果更新。 */
-export function ReportPanel({ marks: initial, ...rest }: ViewProps) {
+export function ReportPanel({ marks: initial, flags: initialFlags = {}, ...rest }: ViewProps) {
   const [marks, setMarks] = useState(initial)
+  const [flags, setFlags] = useState(initialFlags)
   const onMark: OnMark = (uid, mark) => setMarks((current) => ({ ...current, [uid]: mark }))
-  return <ReportView {...rest} marks={marks} onMark={onMark} />
+  const onFlag: OnFlag = (uid, flag) =>
+    setFlags((current) => {
+      const { [uid]: _, ...others } = current
+      return flag ? { ...others, [uid]: flag } : others
+    })
+  return <ReportView {...rest} marks={marks} onMark={onMark} flags={flags} onFlag={onFlag} />
 }

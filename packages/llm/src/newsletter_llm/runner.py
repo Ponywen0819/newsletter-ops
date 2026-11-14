@@ -2,7 +2,6 @@
 """用 OAuth（訂閱額度）跑 Claude Agent SDK 的共用執行器：認證、執行、失敗分類、用量紀錄。collect 的 search 與 writer 共用。
 
 用法：uv run --project packages/llm newsletter-llm --auth-check [--token-from-env]
-      uv run --project packages/llm newsletter-llm --selftest
 
 --auth-check 的結果是 stdout 的一行 JSON，其他訊息走 stderr。
 exit code：0 成功／1 失敗／2 環境問題（沒 SDK、沒 token）／5 授權失敗／6 額度用完
@@ -269,7 +268,6 @@ def log_usage(usage: Usage, wall: float, status: str, stage: str, tag: str) -> N
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Claude Agent SDK 共用執行器")
-    ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--auth-check", action="store_true", help="只驗證 OAuth token（最小的一次呼叫）")
     ap.add_argument("--token-from-env", action="store_true",
                     help=f"搭配 --auth-check：只用環境變數 {auth_store.TOKEN_ENV}（驗證尚未儲存的 token）")
@@ -277,208 +275,10 @@ def main(argv: list[str] | None = None) -> int:
     if sdk is None:
         print("缺 claude-agent-sdk：請用 `uv run --project packages/llm newsletter-llm` 執行（或先 `uv sync`）", file=sys.stderr)
         return 2
-    if args.selftest:
-        selftest()
-        return 0
     if args.auth_check:
         return auth_check(args.token_from_env)
     ap.print_usage(sys.stderr)
     return 2
-
-
-def selftest() -> None:
-    u = Usage()
-    u.feed(sdk.AssistantMessage(content=[sdk.ToolUseBlock("t1", "WebSearch", {"query": "x"})], model="m", message_id="a1"), now=10)
-    u.feed(sdk.UserMessage(content=[sdk.ToolResultBlock("t1", "ok")]), now=18)
-    u.feed(sdk.AssistantMessage(content=[sdk.TextBlock("done")], model="m", message_id="a1"), now=19)
-    u.feed(sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=3,
-                             session_id="s", total_cost_usd=0.5, result="ok",
-                             usage={"input_tokens": 5, "cache_creation_input_tokens": 7,
-                                    "cache_read_input_tokens": 100, "output_tokens": 9}))
-    rec = u.record(30.0)
-    assert rec["tokens"] == {"input": 5, "cache_write": 7, "cache_read": 100, "output": 9}, rec
-    assert rec["tools"] == {"WebSearch": {"calls": 1, "seconds": 8.0}}, rec
-    assert u.calls == [{"tool": "WebSearch", "input": {"query": "x"}}], u.calls
-    assert rec["models"] == {"m": 1} and rec["api_turns"] == 3 and rec["total_cost_usd"] == 0.5, rec
-    assert rec["tool_seconds"] == 8.0 and rec["non_tool_seconds"] == 22.0 and rec["runner"] == "sdk", rec
-    assert failure(u, None) is None
-    selftest_run()
-    selftest_auth()
-    selftest_probe()
-    print("ok")
-
-
-def selftest_run() -> None:
-    import contextlib
-    import io
-    from unittest import mock
-
-    ok_result = sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1,
-                                  session_id="s", result="ok")
-    # run()：只開指定的工具，其他看不到；SDK 在結果之後丟的例外要回報但保留用量
-    def tool_stream(*msgs, raises=None):
-        async def q(prompt, options):
-            assert options.tools == ["WebSearch"] and options.allowed_tools == ["WebSearch"], options
-            assert options.setting_sources == [] and options.env[auth_store.TOKEN_ENV] == "tok"
-            for m in msgs:
-                yield m
-            if raises:
-                raise raises
-        return q
-    with mock.patch.object(sdk, "query", tool_stream(ok_result, raises=RuntimeError("after result"))), \
-            contextlib.redirect_stderr(io.StringIO()):
-        usage, error, _ = run("p", tools=["WebSearch"], max_turns=3, token="tok", tag="t")
-    assert usage.result is ok_result and error == "RuntimeError: after result", error
-
-    async def skills(prompt, options):
-        assert options.setting_sources == ["project"], options
-        yield ok_result
-    with mock.patch.object(sdk, "query", skills), contextlib.redirect_stderr(io.StringIO()):
-        assert run("p", tools=["Skill", "Read"], max_turns=3, token="tok", tag="t")[0].result is ok_result
-
-    # 執行中 init 說用了 API key：馬上中止、不再讀後面的訊息，判成需要人處理的失敗
-    async def keyed(prompt, options):
-        yield sdk.SystemMessage(subtype="init", data={"apiKeySource": "ANTHROPIC_API_KEY"})
-        raise AssertionError("不該讀到這裡")
-    with mock.patch.object(sdk, "query", keyed), contextlib.redirect_stderr(io.StringIO()):
-        usage, error, _ = run("p", tools=["Read"], max_turns=3, token="tok", tag="t")
-    assert error.startswith("ApiKeyInUse") and failure(usage, error)[:2] == (EXIT_AUTH, "api_key"), error
-    u = Usage()
-    u.feed(sdk.SystemMessage(subtype="init", data={"apiKeySource": "none"}))
-    u.feed(ok_result)
-    assert failure(u, None) is None
-
-
-def selftest_auth() -> None:
-    import contextlib
-    import io
-    import tempfile
-    from pathlib import Path
-    from unittest import mock
-
-    def failed(error, text="", http=None) -> Usage:
-        u = Usage()
-        u.feed(sdk.AssistantMessage(content=[sdk.TextBlock(text)], model="<synthetic>", error=error))
-        u.feed(sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=True, num_turns=1,
-                                 session_id="s", api_error_status=http))
-        return u
-
-    # 失敗種類：授權失敗與額度用完要和一般失敗分開（對應 exit 5／6）
-    u = failed("authentication_failed", "Failed to authenticate. API Error: 401 OAuth access token is invalid.", 401)
-    assert u.failure_kind() == "auth" and "401" in u.error_text
-    assert failure(u, None)[:2] == (EXIT_AUTH, "auth_failed")
-    assert failed(None, http=401).failure_kind() == "auth"
-    assert failed("rate_limit").failure_kind() == "quota" and failed("billing_error").failure_kind() == "quota"
-    assert failure(failed(None, http=429), None)[:2] == (EXIT_QUOTA, "quota_exhausted")
-    assert failed(None, http=403).failure_kind() == "other"  # 代理或沙箱擋網路也是 403，不能叫人重貼 token
-    assert failed("server_error", http=529).failure_kind() == "other" and failed(None).failure_kind() == "other"
-    assert failure(Usage(), "boom")[:2] == (1, "agent_failed")
-
-    env = agent_env("tok")
-    # 不要加 CLAUDE_CODE_SUBPROCESS_ENV_SCRUB：它要求系統有 bubblewrap，沒有就整個 CLI 啟動失敗
-    assert env == {auth_store.TOKEN_ENV: "tok", "NEWSLETTER_RUNNER": "sdk"}, env
-    assert not set(env) & set(auth_store.SHADOWING_ENV)
-
-    secret = "sk-ant-oat01-" + "Qw7" * 12
-    with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {}, clear=True):
-        os.environ[auth_store.TOKEN_FILE_ENV] = str(Path(d) / "oauth_token.json")
-
-        def run_main(argv):
-            out, err = io.StringIO(), io.StringIO()
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                code = main(argv)
-            return code, out.getvalue(), err.getvalue()
-
-        def quiet_pick():
-            err = io.StringIO()
-            with contextlib.redirect_stderr(err):
-                return pick_auth("t"), err.getvalue()
-
-        # 只有 API key 時不算有認證：不使用 key、不退回本機登入，也不動環境
-        os.environ["ANTHROPIC_API_KEY"] = "sk-ant-api03-must-not-be-used"
-        auth, err = quiet_pick()
-        assert auth is None and "OAuth token" in err and "must-not-be-used" not in err, err
-        assert os.environ["ANTHROPIC_API_KEY"]
-        code, out, err = run_main(["--auth-check"])
-        assert code == 2 and json.loads(out) == {"ok": False, "kind": "env", "message": "沒有可驗證的 OAuth token",
-                                                  "source": None}, out
-
-        # 環境變數裡的 OAuth token 不算來源：沒有儲存的檔就是沒有認證，並提示它已不再讀取
-        os.environ.update({auth_store.TOKEN_ENV: secret, "KEEP_ME": "1"})
-        auth, err = quiet_pick()
-        assert auth is None and "已不再讀取" in err and secret not in err, err
-        code, out, err = run_main(["--auth-check"])
-        assert code == 2 and json.loads(out)["kind"] == "env", out
-
-        # 有儲存的 token：排在它前面的來源被移除，其他變數保留；環境裡的 token 不影響選擇
-        os.environ.update({"ANTHROPIC_AUTH_TOKEN": "t"})
-        stored = "stored-" + "z" * 30
-        auth_store.save(stored, auth_store.token_path())
-        auth, _ = quiet_pick()
-        assert auth == auth_store.Auth("stored-token", stored)
-        assert "ANTHROPIC_API_KEY" not in os.environ and "ANTHROPIC_AUTH_TOKEN" not in os.environ
-        assert os.environ["KEEP_ME"] == "1"
-
-        # --auth-check：假的 probe 驗證輸出與 exit code，token 不能出現在 stdout／stderr
-        async def fake(result):
-            return result
-        this = sys.modules[__name__]
-        for result, want in (({"ok": True, "kind": "ok", "message": "驗證通過"}, 0),
-                             ({"ok": False, "kind": "auth", "message": "401"}, EXIT_AUTH),
-                             ({"ok": False, "kind": "quota", "message": "429"}, EXIT_QUOTA),
-                             ({"ok": False, "kind": "other", "message": "boom"}, 1)):
-            with mock.patch.object(this, "probe", lambda token, r=result: fake(r)):
-                code, out, err = run_main(["--auth-check", "--token-from-env"])
-            assert code == want and json.loads(out) == {**result, "source": "env-token"}, (code, out)
-            assert secret not in out + err
-        with mock.patch.object(this, "probe", lambda token: fake({"ok": True, "kind": "ok", "message": ""})):
-            code, out, _ = run_main(["--auth-check"])  # 不帶 --token-from-env：驗證實際會用的來源（儲存的 token）
-        assert json.loads(out)["source"] == "stored-token"
-
-
-
-def selftest_probe() -> None:
-    from unittest import mock
-
-    secret = "sk-ant-oat01-" + "Qw7" * 12
-
-    # probe 本身：成功、失敗訊息要遮掉 token、錯誤結果後 SDK 丟的例外不能蓋掉分類
-    def stream(*msgs, raises=None):
-        async def q(prompt, options):
-            assert options.tools == [] and options.max_turns == 1 and options.setting_sources == []
-            assert options.env == {auth_store.TOKEN_ENV: secret}
-            for m in msgs:
-                yield m
-            if raises:
-                raise raises
-        return q
-
-    ok = sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1,
-                           session_id="s", result="ok")
-    bad = sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=True, num_turns=1,
-                            session_id="s", api_error_status=401)
-    auth_msg = sdk.AssistantMessage(content=[sdk.TextBlock(f"Failed to authenticate: {secret}")],
-                                    model="<synthetic>", error="authentication_failed")
-    with mock.patch.object(sdk, "query", stream(ok)):
-        assert asyncio.run(probe(secret)) == {"ok": True, "kind": "ok", "message": "驗證通過", "api_key_source": None}
-    with mock.patch.object(sdk, "query", stream(auth_msg, bad, raises=RuntimeError("ResultError"))):
-        res = asyncio.run(probe(secret))
-    assert res["ok"] is False and res["kind"] == "auth" and secret not in res["message"] and "***" in res["message"], res
-    with mock.patch.object(sdk, "query", stream(raises=RuntimeError("spawn failed"))):
-        res = asyncio.run(probe(secret))
-    assert res == {"ok": False, "kind": "other", "message": "RuntimeError: spawn failed", "api_key_source": None}, res
-
-    # apiKeySource：init 說沒用 API key（none）才算通過；用了 API key 就算呼叫成功也是失敗
-    def init(src):
-        return sdk.SystemMessage(subtype="init", data={"apiKeySource": src})
-    with mock.patch.object(sdk, "query", stream(init("none"), ok)):
-        assert asyncio.run(probe(secret)) == {"ok": True, "kind": "ok", "message": "驗證通過", "api_key_source": "none"}
-    with mock.patch.object(sdk, "query", stream(init("ANTHROPIC_API_KEY"), ok)):
-        res = asyncio.run(probe(secret))
-    assert res["ok"] is False and res["kind"] == "api_key" and res["api_key_source"] == "ANTHROPIC_API_KEY", res
-    with mock.patch.object(sdk, "query", stream(init("none"), auth_msg, bad, raises=RuntimeError("ResultError"))):
-        res = asyncio.run(probe(secret))  # 認證失敗但沒用 API key：照原本分類，並帶出 apiKeySource
-    assert res["kind"] == "auth" and res["api_key_source"] == "none", res
 
 
 if __name__ == "__main__":

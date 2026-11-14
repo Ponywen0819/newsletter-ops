@@ -3,7 +3,17 @@
 tunnel: <TUNNEL_UUID>
 credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
 
+# web 不做身分驗證：/auth 在這裡擋掉，Access JWT 也在這裡驗（team、AUD tag 見 deploy/README.md 步驟 2）
+originRequest:
+  access:
+    required: true
+    teamName: <team>
+    audTag: [<Application Audience tag>]
+
 ingress:
   - hostname: news.example.com        # 換成你的網域；DNS 用 `cloudflared tunnel route dns newsletter news.example.com`
+    path: ^/(auth|api/auth)(/|$)
+    service: http_status:404
+  - hostname: news.example.com
     service: http://127.0.0.1:8787
   - service: http_status:404           # 其餘一律 404，必須有這條 catch-all

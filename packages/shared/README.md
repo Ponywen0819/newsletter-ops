@@ -12,6 +12,9 @@ src/newsletter_shared/
   metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量（newsletter-metrics）
   auth_store.py          OAuth token 的儲存與來源解析，llm 與 web 共用
   auth_health.py         最近一次認證驗證的結果（state/auth_health.json）與驗證子程序，worker 與 web 共用
+  kg_flags.py            使用者對新聞事實的判定（state/kg_flags.jsonl）：網頁的「事實有誤／確認可信」與 newsletter-kg --flag
+  kg_store.py            知識圖譜（state/kg.sqlite）的資料表、實體 key 的正規化、事件狀態與來源數的算法；
+                         writer 的 KG（寫入、產生背景）與 web 的脈絡圖（唯讀）共用，兩邊的判定才會一致
 ```
 
 ## 檔案鎖（`lock.py`）
@@ -37,12 +40,14 @@ with lock.locked(path, timeout=0):    # 搶不到就丟 lock.LockBusy；給「�
   | 檔案 | 讀寫者 | 鎖 |
   | --- | --- | --- |
   | `state/feedback.jsonl` | web、`newsletter-feedback` | `locked`（讀＋append） |
+  | `state/kg_flags.jsonl` | web、`newsletter-kg --flag`（寫）、writer 的 KG（讀） | `locked`（`kg_flags.py`） |
+  | `state/kg.sqlite` | writer 的 KG（寫）、web 的脈絡圖（讀） | writer：`locked`（萃取、比對、重建整段）；web 用 SQLite 唯讀連線（`kg_store.open_readonly`），寫入中最多等 5 秒 |
   | `state/oauth_token.json` | web（存／刪）、llm（讀） | `locked`（存／刪）；讀不鎖，靠原子替換 |
   | `state/auth_health.json` | worker、web（寫）、web（讀） | 沒有（整檔原子替換，最後寫的算數） |
   | `state/seen.json` | `newsletter-collect` | 沒有（只有一個寫入者，原子寫入） |
 
 ```bash
-uv run --project packages/shared python -m newsletter_shared.lock --selftest   # 排隊、逾時、巢狀、程序被殺後放鎖
+npx nx run shared:test   # tests/test_lock.py：排隊、逾時、巢狀、程序被殺後放鎖
 ```
 
 ## 報告格式（`report_data.py`）
@@ -50,11 +55,7 @@ uv run --project packages/shared python -m newsletter_shared.lock --selftest   #
 報告格式（`SKILL.md` 規定的 Markdown 子集）有改動時**只改 `report_data.py`**：網頁與 email 共用同一個解析器。哪些條目可以投票
 （`list`／`mark` 區塊的 `votable`：主要新聞才有、「其餘收錄」沒有）也在那裡決定，兩邊版型只負責照畫。
 
-```bash
-uv run --project packages/shared python -m newsletter_shared.report_data --selftest   # 驗證解析與 votable
-```
-
-`uv run --project packages/notify newsletter-render --selftest` 驗證 email 輸出，見 [notify/README.md](../notify/README.md)。
+解析與 votable 的測試在 `tests/test_report_data.py`；email 輸出的測試見 [notify/README.md](../notify/README.md)。
 
 ## 回饋標記（`feedback.py`）
 
@@ -72,7 +73,7 @@ uv run --project packages/shared python -m newsletter_shared.report_data --selft
 每則只算最後一次標記、取消的不算。只是給調 `config/` 與 `interests.md` 時參考，不改任何設定。
 
 網頁（[web-server/README.md](../../apps/web-server/README.md)）與 `feedback.py` 可以同時跑：兩邊都只 append、不改寫舊內容，並用 `state/feedback.jsonl.lock` 排隊（見[檔案鎖](#檔案鎖lockpy)）。
-`uv run --project packages/shared newsletter-feedback --selftest` 涵蓋這部分（含併發 append）。
+`tests/test_feedback.py` 涵蓋這部分（含併發 append）。
 
 ## 量測（debug）
 
@@ -90,7 +91,7 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run --project packages/collect n
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
 - worker 跑的每筆紀錄帶 `run_id`（`NEWSLETTER_RUN_ID`，子程序繼承），summary 依它分列，`?from=write` 補跑也自成一列；沒有 `run_id` 的（舊紀錄、手動跑）每遇到一筆 `fetch` 算新的一次。
 - summary 的 `s+` 是搜尋補進幾則（`search_yield`，用來判斷 `search.always` 值不值得）；`usd` 是 writer 加搜尋的估算；`miss`／`nm` 是 coverage；`result` 是 `ok` 或 `<步驟>:<exit code>`。
-- selftest 不記（nx 的 selftest 與 `worker --selftest` 都設 `NEWSLETTER_DEBUG=0`）。
+- 測試不記（nx 的 `test` 任務設 `NEWSLETTER_DEBUG=0`）。
 - token 只含主 session 的 API 回合；工具內部用的小模型不在紀錄裡，所以不計。
 - `non_tool_seconds` 是總時間扣掉工具時間，含模型生成、串流與排隊。
 - 用 SDK 跑時（writer、搜尋）的用量紀錄見 [llm/README.md](../llm/README.md)「用量與成本」。
@@ -101,6 +102,4 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run --project packages/collect n
 
 - **來源只有一個**：`state/oauth_token.json`（頁面存的；`NEWSLETTER_TOKEN_FILE` 可改路徑，權限 600、不進版控）。不讀環境變數 `CLAUDE_CODE_OAUTH_TOKEN`，理由見 [llm/README.md](../llm/README.md)「認證」。
 
-```bash
-uv run --project packages/shared python -m newsletter_shared.auth_store --selftest
-```
+測試在 `tests/test_auth_store.py`。
