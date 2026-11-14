@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -117,7 +118,10 @@ def judge(usage: runner.Usage, sdk_error: str | None, stamp: str, started: float
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="依當日 curated JSON 寫晨報")
     ap.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS)
+    ap.add_argument("--date", help="重寫哪天的報告（YYYY-MM-DD，要有那天的 curated），預設今天；測試區比較改寫結果用")
     args = ap.parse_args(argv)
+    if args.date is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.date):
+        ap.error("--date 要是 YYYY-MM-DD")
     if runner.sdk is None:
         print("缺 claude-agent-sdk：請用 `uv run --project packages/writer newsletter-write` 執行（或先 `uv sync`）", file=sys.stderr)
         return 2
@@ -125,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     if auth is None:
         return 2
 
-    stamp = f"{datetime.now(metrics.TZ):%Y-%m-%d}"
+    stamp = args.date or f"{datetime.now(metrics.TZ):%Y-%m-%d}"
     kg.prepare(stamp, auth.token)
     started = time.time()
     allow, deny = permissions(ROOT)

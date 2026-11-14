@@ -232,9 +232,40 @@ New-NetFirewallRule -DisplayName "newsletter-ops test" -Direction Inbound -Proto
 
 - repo 的 `.gitattributes` 讓 `*.sh` 保持 LF；clone 之前就改過 `core.autocrlf` 也沒關係。
 - token：在這台機器上用 `claude setup-token` 另外產生一個，在區網任一台開 `http://<這台的 IP>:18787/auth` 貼上。和正式區用不同的 token，這邊被換掉或撤銷都不影響正式區（額度是同一個訂閱）。
-- 要寄信就在 repo 根放 `.env`，設 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（`NEWSLETTER_MAIL_TO` 預設寄給自己）；沒設的話流程停在寄信那步（exit 2），報告照樣寫好。
+- 信預設不寄：寫成 volume 的 `logs/outbox/*.eml`（`NEWSLETTER_MAIL_OUTBOX=logs/outbox`），用 `npm run devtools -- outbox` 取回來看。
+  要真的寄，在 repo 根的 `.env` 設 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（`NEWSLETTER_MAIL_TO` 預設寄給自己），並加一行 `NEWSLETTER_MAIL_OUTBOX=`（空的）。
 - 跑一次：`curl.exe -X POST http://<這台的 IP>:18790/run`，或 `?from=write` 只重寫報告；`GET /status` 看進度。
 - 更新：`git pull` 後再跑一次 `up -d --build`。區網連不到時，先在這台用 `localhost:18787` 試，再查防火牆與網路設定檔是不是「私人」。
+
+## 開發工具（devtools）
+
+[`deploy/devtools.py`](devtools.py) 把正式區、測試區、本機三邊串起來。在 repo 根執行 `npm run devtools -- <指令>`（等於 `uv run --project packages/shared python deploy/devtools.py`），`--help` 看全部參數。
+
+| 指令 | 做什麼 |
+|---|---|
+| `snapshot` | 正式區的報告、curated、知識圖譜、回饋複製到測試區（`--to-local` 改成本機）；快照留在 `.devtools/snapshots/`，`--from <檔>` 可以重複匯入 |
+| `compare <日期>` | 測試區用正式區那天的 curated 重寫報告，和正式區那份比主旨、頭條、各段收了哪幾則；逐行比較存成 `.devtools/compare/<日期>.html`。改 skill、提示或篩選後先在這裡看差異。會用 Claude 額度；`--no-run` 只比較不重寫 |
+| `outbox` | 測試區「寄出」的信（見上面 Windows 一節）存成 `.devtools/outbox/*.html`，瀏覽器直接開 |
+| `seed` | 本機開發用的三天範例資料（[`sample-data/`](sample-data)，虛構內容），日期平移到今天，接著 `npm run dev` 就有東西看；也可以 `npm run seed` |
+| `status` | 兩區的 worker 狀態、最近一次執行、token 剩幾天、報告與回饋數 |
+| `restore-feedback <檔>` | 回饋備份信的附件還原到測試區（或 `--to-local`）：先檢查每一列、和最新快照比少了幾則，寫入後再比對內容。定期做一次，確認備份真的能用 |
+
+設定放在 repo 根的 `.env`（compose 不會讀這幾個）或環境變數：
+
+```bash
+NEWSLETTER_PROD_SSH=me@home-host      # 正式機；用 ~/.ssh/config 的別名也行。snapshot、status 會用到
+# NEWSLETTER_TEST_SSH=me@test-host    # 測試區不在跑 devtools 的這台時才設
+# NEWSLETTER_PROD_RUNTIME=docker      NEWSLETTER_TEST_RUNTIME=podman（預設：這台有 podman 就用）
+# NEWSLETTER_PROD_PROJECT=newsletter-ops   NEWSLETTER_TEST_PROJECT=newsletter-ops-test
+```
+
+- **怎麼連**：用 ssh 在正式機上 `docker exec` 進 worker 容器，跑 devtools 送進去的一小段 Python（`python -c`），所以正式區不用先部署新版。
+  正式機的帳號要能執行 docker（在 `docker` 群組），ssh 要能免密碼登入（金鑰或 agent）。
+- **對正式區只讀**：打包時拿 pipeline 鎖（每日流程在跑就 exit 75，等它跑完再試），回饋、知識圖譜也各自拿鎖，`kg.sqlite` 用 SQLite 的 backup 複製，不會抄到寫一半的檔。
+- **不搬的**：`oauth_token.json`（兩區的 token 本來就分開）、`auth_health.json`、`last_job.json`、`logs/`、`data/raw/`。
+  測試區的這些目錄（`reports/`、`data/curated|kg|search/`）會變成和正式區一模一樣：測試區自己多出來的報告會被刪掉。
+- 快照、比較結果、取回的信都在 `.devtools/`，不進版控；快照裡有真實的回饋，不要外流。
+- `compare` 經 worker 的 `POST /job?kind=rewrite&date=YYYY-MM-DD` 重寫，這個工作只有測試區（`NEWSLETTER_SCHEDULE=off`）接受，正式區回 403。
 
 ## 不用 Docker：systemd + cloudflared
 

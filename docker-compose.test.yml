@@ -50,7 +50,9 @@ services:
     environment:
       <<: *env
       NEWSLETTER_SCHEDULE: "off"
-      # 沒設 GMAIL_* 時流程停在寄信那步（exit 2），報告照樣寫好
+      # 信預設不寄，寫成 volume 的 logs/outbox/*.eml（npm run devtools -- outbox 取回來看）。
+      # 要真的寄：.env 設 GMAIL_*，並設 NEWSLETTER_MAIL_OUTBOX=（空的）
+      NEWSLETTER_MAIL_OUTBOX: ${NEWSLETTER_MAIL_OUTBOX-logs/outbox}
       GMAIL_USER: ${GMAIL_USER:-}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
       NEWSLETTER_MAIL_TO: ${NEWSLETTER_MAIL_TO:-${GMAIL_USER:-}}

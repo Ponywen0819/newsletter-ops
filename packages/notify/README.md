@@ -19,6 +19,8 @@ uv run --project packages/notify newsletter-render | uv run --project packages/n
 
 `send_email.py` 讀環境變數 `GMAIL_USER`、`GMAIL_APP_PASSWORD`（Google 帳號的應用程式密碼，需先開兩步驟驗證）、
 `NEWSLETTER_MAIL_TO`（逗號分隔，沒設就寄給自己）。加 `--dry-run` 只印標頭不寄。
+設了 `NEWSLETTER_MAIL_OUTBOX`（相對資料根目錄的目錄，測試區預設 `logs/outbox`）就不連 SMTP，把整封信寫成那裡的 `<時間>-report.eml`／`-notice.eml`；
+這時沒設 `GMAIL_USER` 也行（寄件人記成 `newsletter@localhost`）。
 
 ## 版型
 

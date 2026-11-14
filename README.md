@@ -139,7 +139,9 @@ npx nx run web-ui:dev        # 只起其中一個；web-server:dev、worker:dev 
 
 - 前端的 `/api` 由 Vite 代理到 web-server；web-server 與 worker 以 repo 根目錄為資料根目錄（讀寫這裡的 `reports/`、`state/` 等）。
 - `worker:dev` 綁 `127.0.0.1`、**不排程**（`NEWSLETTER_SCHEDULE=off`）：不會自己跑每日流程或寄信，只有手動 `POST /run` 才會跑；要跑正式排程用 `worker:start`。
-- Python 的部分只能在 Linux／macOS（或 WSL）跑：`newsletter_shared.lock` 用 `fcntl`，Windows 原生的 Python 沒有。
+- Linux、macOS、Windows 都能跑（`newsletter_shared.lock` 在 Windows 用 `msvcrt`）。
+- 沒有資料時先 `npm run seed`：寫入三天的範例報告、curated 與回饋（虛構內容，日期平移到今天）。要真實資料就用 `npm run devtools -- snapshot --to-local` 從正式區複製一份；
+  其他開發工具（正式區 → 測試區同步、重寫報告比較、測試區的信、兩區狀態）見 [deploy/README.md](deploy/README.md)「開發工具」。
 
 ## 快速開始
 
