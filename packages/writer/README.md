@@ -14,6 +14,7 @@ src/newsletter_writer/
 ```bash
 uv run --project packages/writer newsletter-write                  # 依 skill 寫報告並驗收，約數分鐘
 uv run --project packages/writer newsletter-write --max-turns 50   # 預設 30 回合（實測 8～11），超過視為失敗
+uv run --project packages/writer newsletter-write --date 2026-11-02   # 用那天的 curated 重寫那天的報告（測試區比較改寫結果用）
 ```
 
 與在對話裡打 `/news-digest` 用**同一份** skill、結果一致；對話裡 curated JSON 不存在時 skill 會先跑 `newsletter-collect`，

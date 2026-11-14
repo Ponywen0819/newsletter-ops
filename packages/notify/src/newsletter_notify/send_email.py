@@ -6,6 +6,7 @@
       notice 可加 "attachments": [{"path": "…", "filename": "…"}]（worker 的回饋備份）
 
 環境變數：GMAIL_USER、GMAIL_APP_PASSWORD（應用程式密碼）、NEWSLETTER_MAIL_TO（逗號分隔，預設寄給自己）
+         NEWSLETTER_MAIL_OUTBOX：設了就不寄，把整封信寫成這個目錄（相對資料根目錄）下的 .eml（測試區預設 logs/outbox）
 """
 from __future__ import annotations
 
@@ -13,8 +14,11 @@ import json
 import os
 import smtplib
 import sys
+from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
+
+from newsletter_shared import ROOT
 
 
 def build(meta: dict, sender: str, to: list[str]) -> EmailMessage:
@@ -41,17 +45,38 @@ def build_notice(meta: dict, sender: str, to: list[str]) -> EmailMessage:
     return msg
 
 
+OUTBOX_ENV = "NEWSLETTER_MAIL_OUTBOX"
+OUTBOX_SENDER = "newsletter@localhost"  # 寫進 outbox 又沒設 GMAIL_USER 時的寄件人
+
+
+def write_outbox(msg: EmailMessage, outbox: Path, kind: str, now: datetime | None = None) -> Path:
+    """整封信寫成 outbox/<時間>-<kind>.eml；同一秒寄兩封就加序號。"""
+    outbox.mkdir(parents=True, exist_ok=True)
+    stem = f"{(now or datetime.now()):%Y%m%d-%H%M%S}-{kind}"
+    path, n = outbox / f"{stem}.eml", 1
+    while path.exists():
+        n += 1
+        path = outbox / f"{stem}-{n}.eml"
+    path.write_bytes(msg.as_bytes())
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     meta = json.loads(sys.stdin.read())
-    sender = os.environ.get("GMAIL_USER", "")
-    to = [a.strip() for a in os.environ.get("NEWSLETTER_MAIL_TO", sender).split(",") if a.strip()]
+    outbox = os.environ.get(OUTBOX_ENV, "").strip()
+    sender = os.environ.get("GMAIL_USER", "") or (OUTBOX_SENDER if outbox else "")
+    to = [a.strip() for a in (os.environ.get("NEWSLETTER_MAIL_TO") or sender).split(",") if a.strip()]  # 空字串也算沒設
     if not sender or not to:
         print("缺 GMAIL_USER（或 NEWSLETTER_MAIL_TO），不寄", file=sys.stderr)
         return 2
     msg = build_notice(meta, sender, to) if "--notice" in argv else build(meta, sender, to)
     if "--dry-run" in argv:
         print(f"From: {msg['From']}\nTo: {msg['To']}\nSubject: {msg['Subject']}")
+        return 0
+    if outbox:
+        path = write_outbox(msg, ROOT / outbox, "notice" if "--notice" in argv else "report")
+        print(f"[send] {OUTBOX_ENV} 有設，不寄，寫到 {path}", file=sys.stderr)
         return 0
     password = os.environ.get("GMAIL_APP_PASSWORD")
     if not password:

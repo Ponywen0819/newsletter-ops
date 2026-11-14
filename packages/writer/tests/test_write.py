@@ -86,9 +86,13 @@ def setup(tmp_path, monkeypatch):
     return tmp_path, stamp, prepare
 
 
-def run_main(setup, monkeypatch, capsys, written: str | None):
-    """main() 在 agent 成功之後依序驗收：報告有更新（exit 3）、格式正確（exit 4）；stdout 一律是空的。"""
+def run_main(setup, monkeypatch, capsys, written: str | None, date: str | None = None):
+    """main() 在 agent 成功之後依序驗收：報告有更新（exit 3）、格式正確（exit 4）；stdout 一律是空的。
+    date：用 --date 重寫那天（setup 的 curated 也會複製一份到那天）。"""
     root, stamp, prepare = setup
+    if date is not None:
+        (root / "data" / "curated" / f"{date}.json").write_text('{"items": [{"uid": "x"}]}', encoding="utf-8")
+        stamp = date
     result = runner.sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1,
                                       session_id="s", total_cost_usd=0.1, result="ok",
                                       usage={"input_tokens": 1, "output_tokens": 1})
@@ -96,13 +100,14 @@ def run_main(setup, monkeypatch, capsys, written: str | None):
     def fake_run(prompt, *, tools, max_turns, token, tag, **options):
         assert tools == TOOLS and token == SECRET and set(options) == {"allowed_tools", "disallowed_tools", "mcp_servers"}
         assert (options["allowed_tools"], options["disallowed_tools"]) == permissions(root)
+        assert f"今天（{stamp}）" in prompt
         if written is not None:
             (root / "reports" / f"{stamp}.md").write_text(written, encoding="utf-8")
         usage = runner.Usage()
         usage.feed(result)
         return usage, None, 1.0
     monkeypatch.setattr(runner, "run", fake_run)
-    code = main([])
+    code = main([] if date is None else ["--date", date])
     prepare.assert_called_once_with(stamp, SECRET)  # 寫報告前先產生 KG 背景
     cap = capsys.readouterr()
     return code, cap.out, cap.err
@@ -111,6 +116,16 @@ def run_main(setup, monkeypatch, capsys, written: str | None):
 def test_main_ok(setup, monkeypatch, capsys):
     code, out, err = run_main(setup, monkeypatch, capsys, GOOD)
     assert (code, out) == (0, "") and "漏掉 1 則" in err
+
+
+def test_main_date(setup, monkeypatch, capsys):
+    """--date：重寫指定那天（KG 背景、提示、驗收都用那天）；測試區比較改寫結果用。"""
+    root = setup[0]
+    code, out, _ = run_main(setup, monkeypatch, capsys, GOOD, date="2026-01-05")
+    assert (code, out) == (0, "") and (root / "reports" / "2026-01-05.md").exists()
+    with pytest.raises(SystemExit) as exc:
+        main(["--date", "2026/01/05"])
+    assert exc.value.code == 2
 
 
 def test_main_bad_format(setup, monkeypatch, capsys):

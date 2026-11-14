@@ -37,6 +37,8 @@
 !/deploy/*.py
 !/deploy/*.sh
 !/deploy/cloudflare-tunnel.json
+# 開發工具的範例資料（虛構內容，devtools seed 用）；工具的輸出在 .devtools/，不放行
+!/deploy/sample-data/**
 
 # 模組（apps/、packages/、web/ 底下一個目錄一個）：Nx 專案檔
 !/*/*/project.json
