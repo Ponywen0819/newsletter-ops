@@ -12,7 +12,7 @@ src/newsletter_shared/
   metrics.py             量測層：debug 開啟時記錄各階段耗時與 Claude token 用量（newsletter-metrics）
   auth_store.py          OAuth token 的儲存與來源解析，llm 與 web 共用
   auth_health.py         最近一次認證驗證的結果（state/auth_health.json）與驗證子程序，worker 與 web 共用
-  kg_flags.py            使用者對新聞事實的判定（state/kg_flags.jsonl）：網頁的「事實有誤」與 newsletter-kg --flag
+  kg_flags.py            使用者對新聞事實的判定（state/kg_flags.jsonl）：網頁的「事實有誤／確認可信」與 newsletter-kg --flag
   kg_store.py            知識圖譜（state/kg.sqlite）的資料表、實體 key 的正規化、事件狀態與來源數的算法；
                          writer 的 KG（寫入、產生背景）與 web 的脈絡圖（唯讀）共用，兩邊的判定才會一致
 ```

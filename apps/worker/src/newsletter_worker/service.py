@@ -9,7 +9,8 @@
 今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 從失敗的那步自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
 認證的驗證只看 auth_health.json 的時間：今天排定時間之後驗過（web 的 /auth 測試也算）就不再驗。
 token 剩 REMIND_DAYS 裡的天數時（推算的到期日），在驗證時間寄一封提醒。
-NEWSLETTER_SCHEDULE=off（測試區）：不排程、不補跑、不驗認證、不寄提醒與備份，只接受 POST /run。
+NEWSLETTER_SCHEDULE=off（測試區）：不排程、不補跑、不驗認證、不寄提醒與備份，只接受 POST /run 與 POST /job。
+手動的執行（POST /run、POST /job）記在 state/last_job.json：web 的維運頁（/ops）經 HTTP 呼叫這裡，讀這個檔顯示結果與 log。
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import contextlib
 import json
 import os
 import re
+import secrets
 import signal
 import subprocess
 import sys
@@ -36,6 +38,12 @@ from . import daily
 DEFAULT_PORT = 8790
 CATCHUP_AFTER = timedelta(minutes=5)  # 晚於排定時間這麼久才開始＝補跑
 TICK = 30  # 秒；每次醒來重讀牆上時鐘，不怕主機睡眠、校時
+# POST /job?kind= 可以發起的工作：模組、參數、時限（秒）。同一把 pipeline 鎖，不會和每日流程重疊
+JOBS = {
+    "kg-rebuild": ("newsletter_writer.kg", ("--rebuild",), 4 * 3600),  # 依日期重跑全部 curated，會用訂閱額度
+    "sources-check": ("newsletter_collect.run", ("--dry-run", "--no-search"), 30 * 60),  # 只抓不寫，不用 Claude
+}
+JOB_LABEL = "ops"  # 這些工作的 metrics 標籤：不混進每日執行的統計（summary 預設只看 prod）
 TAIL = 20  # 失敗時印出本次 log 的最後幾行
 HHMM_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
 AUTH_EXIT = {5: "auth", 6: "quota"}  # newsletter-write 的授權失敗／額度用完（其他步驟不用 5、6）
@@ -191,30 +199,48 @@ class Service:
         self.backed_up: str | None = None  # 這週寄過備份了沒（ISO 週）；重啟後讀 state/backup_week
         self.reminded: str | None = None  # 今天檢查過到期提醒了沒（日期）；重啟後同一天可能再寄一次
         self.stop = threading.Event()
-        self.current: dict | None = None  # {trigger, started_at}
+        self.current: dict | None = None  # {kind, trigger, started_at}
         self._mu = threading.Lock()
         self._worker: threading.Thread | None = None
+        self.root = self.health.parent.parent  # state/ 的上一層；job 的 log 路徑相對於它
+        self.job_path = self.state / "last_job.json"
 
-    def start(self, trigger: str, first: str | None = None) -> dict | None:
-        """背景跑一次；已經在跑（這個服務或別的程序）就回 None。first：從哪一步開始（沒給就依 trigger 決定）。"""
+    def start(self, trigger: str, first: str | None = None, job: dict | None = None) -> dict | None:
+        """背景跑一次；已經在跑（這個服務或別的程序）就回 None。first：從哪一步開始（沒給就依 trigger 決定）。
+        job：手動的執行（POST /run），開始與結束都寫進 state/last_job.json。"""
         with self._mu:
             if self.current is not None or lock_held():
                 return None
-            self.current = {"trigger": trigger, "started_at": daily.now_iso()}
+            self.current = {"kind": "run", "trigger": trigger, "started_at": daily.now_iso()}
             # 自動重跑從失敗的那步開始：send 沒寄出不必再花 token 重寫報告
             if first is None:
                 first = daily.resume_from((daily.read_record() or {}).get("step")) if trigger == "retry" else "collect"
-            self._worker = threading.Thread(target=self._work, args=(trigger, first))
+            self._worker = threading.Thread(target=self._work, args=(trigger, first, job))
             self._worker.start()
             return self.current
 
-    def _work(self, trigger: str, first: str = "collect") -> None:
+    def _rel(self, path: Path) -> str:
+        try:
+            return path.relative_to(self.root).as_posix()
+        except ValueError:
+            return str(path)
+
+    def _record_job(self, job: dict, **fields) -> dict:
+        record = {**job, **fields}
+        atomic.write_text(self.job_path, json.dumps(record, ensure_ascii=False))
+        return record
+
+    def _work(self, trigger: str, first: str = "collect", job: dict | None = None) -> None:
         say(f"開始（{trigger}）" if first == "collect" else f"開始（{trigger}，從 {first} 起）")
+        code: int | None = None
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             path = self.log_dir / f"{datetime.now(self.tz):%Y-%m}.log"  # 月份以開始時間為準
             with path.open("a+", encoding="utf-8") as log:
                 start = log.tell()
+                if job is not None:  # 網頁只顯示這次的部分：從 offset 開始讀
+                    job = self._record_job(job, started_at=self.current["started_at"] if self.current else daily.now_iso(),
+                                           finished_at=None, exit_code=None, log=self._rel(path), offset=start)
                 code = daily.run_pipeline([], log, trigger=trigger, stop=self.stop, start=first)
                 log.seek(start)
                 tail = log.read().splitlines()[-TAIL:]
@@ -229,14 +255,61 @@ class Service:
                 self.notifier(failure_notice(code, daily.read_record(), tail, retried=trigger == "retry"))
                 self.beat(False)
         finally:
+            if job is not None:
+                with contextlib.suppress(OSError):
+                    self._record_job(job, finished_at=daily.now_iso(), exit_code=code if code is not None else 1)
+            with self._mu:
+                self.current = None
+
+    def start_job(self, job: dict) -> dict | None:
+        """背景跑 JOBS 裡的一項；已經有東西在跑（這個服務或別的程序）就回 None。"""
+        with self._mu:
+            if self.current is not None or lock_held():
+                return None
+            self.current = {"kind": job["kind"], "trigger": "manual", "started_at": daily.now_iso()}
+            self._worker = threading.Thread(target=self._job, args=(job,))
+            self._worker.start()
+            return self.current
+
+    def _job(self, job: dict) -> None:
+        kind = job["kind"]
+        module, args, limit = JOBS[kind]
+        say(f"開始（{kind}）")
+        code: int | None = None
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            path = self.log_dir / f"ops-{kind}.log"  # 每次覆寫，只留最近一次
+            job = self._record_job(job, started_at=self.current["started_at"] if self.current else daily.now_iso(),
+                                   finished_at=None, exit_code=None, log=self._rel(path), offset=0)
+            with path.open("w", encoding="utf-8") as log:
+                try:
+                    with lock.locked(daily.LOCK, timeout=0):
+                        daily.say(log, " ".join([module, *args]))
+                        env = {**os.environ, "NEWSLETTER_RUN_LABEL": JOB_LABEL}
+                        code, _ = daily.spawn(log, module, *args, limit=limit, stop=self.stop, env=env)
+                        daily.say(log, "完成" if code == 0 else f"失敗，exit {code}")
+                except lock.LockBusy:
+                    daily.say(log, "已有另一條 pipeline 在跑（state/pipeline.lock 被占用），這次不執行")
+                    code = daily.EXIT_BUSY
+            say(f"結束（{kind}），exit {code}")
+        finally:
+            with contextlib.suppress(OSError):
+                self._record_job(job, finished_at=daily.now_iso(), exit_code=code if code is not None else 1)
             with self._mu:
                 self.current = None
 
     def status(self) -> dict:
         nxt = next_run_at(datetime.now(timezone.utc), self.at, self.tz).isoformat() if self.scheduled else None
         current = self.current
-        return {"state": "running" if current else "idle", "next_run_at": nxt,
-                "current": current, "last": daily.read_record()}
+        return {"state": "running" if current else "idle", "scheduled": self.scheduled, "run_at": f"{self.at:%H:%M}",
+                "next_run_at": nxt, "current": current, "last": daily.read_record(), "job": self.last_job()}
+
+    def last_job(self) -> dict | None:
+        try:
+            job = json.loads(self.job_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return job if isinstance(job, dict) else None
 
     def check_auth(self) -> None:
         result = self.checker()
@@ -285,7 +358,7 @@ class Service:
         if self.scheduled:
             say(f"下次執行：{next_run_at(datetime.now(timezone.utc), self.at, self.tz):%Y-%m-%d %H:%M %Z}")
         else:
-            say("排程關閉（NEWSLETTER_SCHEDULE=off），只接受 POST /run")
+            say("排程關閉（NEWSLETTER_SCHEDULE=off），只接受 POST /run 與 POST /job")
         while not self.stop.is_set():
             self.tick(datetime.now(timezone.utc))
             self.stop.wait(TICK)
@@ -321,15 +394,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         url = urlsplit(self.path)
-        step = parse_qs(url.query).get("from", ["collect"])[0]
-        if url.path != "/run":
-            self._send(404, {"error": "not found"})
-        elif step not in daily.STEPS:
-            self._send(400, {"error": f"from 只能是 {'、'.join(daily.STEPS)}"})
-        elif (started := self.server.service.start("manual", daily.resume_from(step))) is None:  # type: ignore[attr-defined]
-            self._send(409, {"error": "pipeline 正在跑"})
+        query = parse_qs(url.query)
+        service: Service = self.server.service  # type: ignore[attr-defined]
+        job = {"id": secrets.token_hex(6), "requested_at": daily.now_iso()}
+        if url.path == "/run":
+            step = query.get("from", ["collect"])[0]
+            if step not in daily.STEPS:
+                self._send(400, {"error": f"from 只能是 {'、'.join(daily.STEPS)}"})
+                return
+            started = service.start("manual", daily.resume_from(step), job={**job, "kind": "run", "from": step})
+        elif url.path == "/job":
+            kind = query.get("kind", [""])[0]
+            if kind not in JOBS:
+                self._send(400, {"error": f"kind 只能是 {'、'.join(JOBS)}"})
+                return
+            started = service.start_job({**job, "kind": kind})
         else:
-            self._send(202, {"started_at": started["started_at"]})
+            self._send(404, {"error": "not found"})
+            return
+        if started is None:
+            self._send(409, {"error": "已有工作在跑，等它結束再試"})
+        else:
+            self._send(202, {"started_at": started["started_at"], "id": job["id"]})
 
 
 def make_server(service: Service, host: str, port: int, quiet: bool = False) -> ThreadingHTTPServer:

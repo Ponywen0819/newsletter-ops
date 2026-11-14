@@ -1,7 +1,7 @@
 """知識圖譜的唯讀檢視：讀 state/kg.sqlite（writer 的 newsletter-kg 寫入），給網頁畫脈絡圖。
 
 只用唯讀連線，不建表、不寫入；事件狀態用 shared 的 kg_store.statuses 算，與 writer 寫背景時同一套規則，
-並套用 state/kg_flags.jsonl（使用者在網頁上標的「事實有誤」）。
+並套用 state/kg_flags.jsonl（使用者在網頁上標的「事實有誤」／「確認可信」）。
 摘要、引句、標題都是從外部網頁萃取的文字，前端只當純文字顯示。
 """
 from __future__ import annotations
@@ -77,7 +77,7 @@ class Graph:
                 WHERE src IN ({marks}) AND dst IN ({marks}) ORDER BY date, src, dst""", ids + ids)]
         uids = {e["uid"] for e in events}
         return {"events": events, "links": links,
-                "flags": {u: f for u, f in flags.items() if u in uids and f == "wrong"}}
+                "flags": {u: f for u, f in flags.items() if u in uids}}  # wrong 與 trusted
 
     def item(self, uids: list[str], depth: str) -> dict:
         """以這幾則（併了多篇的新聞）的事件為中心，沿連結往外 depth 層。"""

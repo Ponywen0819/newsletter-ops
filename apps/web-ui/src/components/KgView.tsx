@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { edgePath, layoutEvents, RADIUS, shortDate, shortLabel } from '../kgLayout'
-import type { Flags, KgEntityType, KgEvent, KgGraph, KgKind, KgLink, KgStatus } from '../types'
+import type { Flags, KgEntityType, KgEvent, KgFlag, KgGraph, KgKind, KgLink, KgStatus } from '../types'
 import { FactFlagButton } from './FactFlagButton'
 import { EXTERNAL } from './Inline'
 
@@ -149,7 +149,7 @@ interface DetailProps {
   graph: KgGraph
   byId: Map<number, KgEvent>
   flags: Flags
-  onFlag: (uid: string, flag: 'wrong' | '') => void
+  onFlag: (uid: string, flag: KgFlag | '') => void
   onSelect: (id: number) => void
   centered: boolean
 }
@@ -188,6 +188,7 @@ function Detail({ event, graph, byId, flags, onFlag, onSelect, centered }: Detai
       {event.report && (
         <div className="fb">
           <FactFlagButton uids={[event.uid]} flags={flags} onChange={onFlag} />
+          <FactFlagButton uids={[event.uid]} flags={flags} onChange={onFlag} kind="trusted" />
         </div>
       )}
     </section>
@@ -198,7 +199,7 @@ interface Props {
   graph: KgGraph
   /** 圖的中心（單則脈絡時是那幾則自己的事件）；畫粗框，預設選中最新的一個 */
   seeds?: number[]
-  /** 標了「事實有誤」之後：狀態要重算，由頁面重新載入 */
+  /** 標了「事實有誤」／「確認可信」之後：狀態要重算，由頁面重新載入 */
   onFlagged?: () => void
 }
 
@@ -216,7 +217,7 @@ export function KgView({ graph, seeds = [], onFlagged = () => {} }: Props) {
     setSeenFlags(graph.flags)
     setFlags(graph.flags)
   }
-  const onFlag = (uid: string, flag: 'wrong' | '') => {
+  const onFlag = (uid: string, flag: KgFlag | '') => {
     setFlags((current) => {
       const { [uid]: _, ...others } = current
       return flag ? { ...others, [uid]: flag } : others

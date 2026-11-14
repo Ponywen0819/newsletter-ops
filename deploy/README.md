@@ -8,7 +8,7 @@ host 上不用裝 Python、uv、cloudflared，也不用開任何對外 port。�
 家裡區網／VPN ─────────────────────────────────────────────────────────────▶ host:8788 ─▶ nginx:8788 ──────┤
                                                                                                          ▼
                                                                           web 容器（只在 app 網路，不 publish）
-worker 容器：每天 08:00 跑每日流程（自己的 be 網路，其他容器連不到）；web 與 worker 共用一個 volume：newsletter-data
+worker 容器：每天 08:00 跑每日流程（be 網路，只有 web 連得到）；web 與 worker 共用一個 volume：newsletter-data
 ```
 
 - `Dockerfile`：一個檔、兩個 target，建出兩個映像：`newsletter-ops-web`（`--target web`）與 `newsletter-ops-worker`（`--target worker`）。
@@ -16,12 +16,12 @@ worker 容器：每天 08:00 跑每日流程（自己的 be 網路，其他容�
   非 root 執行，兩邊共用 base 層（使用者、`config/`、volume 連結）。web 另外帶前端：先用 Node 建置 `apps/web-ui/`，只把 `dist` 帶進映像，
   所以 host 與映像裡都不需要 Node；worker 另外帶 `.claude/`（寫報告的 skill）。`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`worker`、`nginx`、`cloudflared` 四個服務與 volume。`worker` 跑 `worker`（見 [apps/worker/README.md](../apps/worker/README.md)），
-  它的 `/status`、`/run` 不 publish，而且只在 `be` 網路：`/run` 會燒額度、寄信，其他容器都碰不到。`cloudflared` 用 Tunnel token 執行，
+  它的 `/status`、`/run`、`/job` 不 publish，而且只在 `be` 網路：`/run` 會燒額度、寄信，只有 web 的維運頁（`/ops`，只有區網入口開得到）連得到，nginx、cloudflared 都碰不到。`cloudflared` 用 Tunnel token 執行，
   不需要 `cert.pem`、憑證檔或 `config.yml`；對外的主機名稱在 Cloudflare 後台設定。
 - **web 不做任何身分驗證**（讀寫、`/auth` 都是），誰能連進來全由前面決定，所以 web 不 publish、只在 `app` 網路，只有 nginx 連得到；
   cloudflared 在另一個 `edge` 網路，碰不到 web。不要為了方便 publish web 的 8787，那等於整站（含 `/auth`）不設防。
 - **nginx（[docker/nginx.conf](../docker/nginx.conf)）是唯一的閘門**，兩個入口：
-  - `8080`：只給 cloudflared。身分由 Cloudflare Access 驗（Tunnel 也要開「驗 Access JWT」，步驟 2）；`/auth`、`/api/auth*` 一律 404，`/api/session` 回 `{"local": false}`（不顯示授權頁）。
+  - `8080`：只給 cloudflared。身分由 Cloudflare Access 驗（Tunnel 也要開「驗 Access JWT」，步驟 2）；`/auth`、`/ops` 與 `/api/auth*`、`/api/ops*` 一律 404，`/api/session` 回 `{"local": false}`（不顯示授權與維運頁）。
   - `8788`：publish 到 host 的 IPv4（`0.0.0.0:8788`），給家裡區網／VPN 直接連，`/auth` 在這裡。只放行私有位址的來源（`geo $lan`），
     `Host` 必須是 IP 或 localhost（擋 DNS rebinding），有 `Origin` 的話也要是同一類位址。VPN 分到的網段不在私有位址裡（例如 Tailscale 的 `100.64.0.0/10`）就加進 `geo $lan`。
     路由器不要轉發 8788；只綁 IPv4 是因為 IPv6 經 docker-proxy 進來時來源會變成 bridge 閘道（私有位址），繞過來源檢查。
@@ -88,7 +88,7 @@ docker compose ps        # web、nginx 要是 healthy、cloudflared 是 Up；POR
 | 登入後按一則的「有用」 | `docker compose exec web tail -n1 state/feedback.jsonl` 多一行 |
 | 裝成 PWA、離線、Access 逾時 | 照 [apps/web-ui/README.md](../apps/web-ui/README.md)「PWA」一節的「正式站驗收」表 |
 | `.env` 設了 `NEWSLETTER_BASE_URL` 後寄一封信，在手機點信裡的「👍 有用」連結 | 先經 Access 登入，再看到「確認標為 有用」頁；**這時 `feedback.jsonl` 還沒變**，按了確認才多一行 |
-| `docker network inspect newsletter-ops_be --format '{{range .Containers}}{{.Name}} {{end}}'` | 只有 worker 的容器 |
+| `docker network inspect newsletter-ops_be --format '{{range .Containers}}{{.Name}} {{end}}'` | 只有 worker 與 web 的容器 |
 | `docker compose run --rm worker newsletter-llm --auth-check` | 只驗證 OAuth token（一次最小的呼叫，不跑晨報），通過才表示每天的排程跑得起來 |
 
 頁面上要有晨報可看，`reports/<date>.md` 得先存在：還沒到 08:00 的話，先手動跑一次（見下，會呼叫 Claude、用掉訂閱額度）。
@@ -98,6 +98,10 @@ Access 登入逾時後按「有用」會顯示「儲存失敗」，重新整理�
 （週期 1 天、寬限 1～2 小時），把 ping 網址寫進 `.env` 的 `NEWSLETTER_HEARTBEAT_URL`，`docker compose up -d` 生效。說明見 [worker/README.md](../apps/worker/README.md)「heartbeat」。
 
 **5. 日常操作**
+
+從區網開 `http://<host 的 IP>:8788/ops`（頁首「維運」）就能做大部分的事：看排程與上次結果、手動執行（可選從哪一步開始）、試抓來源、重建知識圖譜，
+以及最近幾天的耗時與用量、目前的來源與興趣設定（唯讀）。按下去是 web 直接呼叫 worker 的 `/run`、`/job`（見 [worker/README.md](../apps/worker/README.md)）。
+經 Tunnel 從外面連看不到這一頁。指令列的做法：
 
 ```bash
 docker compose logs -f worker                  # 排程輸出：下次執行時間、開始、結束；失敗時附上 logs/ 的最後 20 行

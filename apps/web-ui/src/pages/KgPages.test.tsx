@@ -148,6 +148,32 @@ describe('知識圖譜', () => {
     expect(detail().getByRole('heading', { name: 'Acme 完成收購' })).toBeInTheDocument()
   })
 
+  it('/kg/item：確認可信與事實有誤互斥，按另一個就換過去，再按一次取消', async () => {
+    let flags: KgItemPayload['flags'] = { [UID_A]: 'wrong' }
+    const net = open(`/kg/item/${UID_A}`, {
+      [`GET /api/kg/item/${UID_A}?depth=1`]: () => ({ json: item({ flags }) }),
+      'POST /api/kg-flag': (body) => {
+        const { uid, flag } = body as { uid: string; flag: 'wrong' | 'trusted' | '' }
+        flags = flag ? { [uid]: flag } : {}
+        return { json: body }
+      },
+    })
+    await screen.findByRole('heading', { name: '事件列表' })
+    const trusted = () => detail().getByRole('button', { name: '確認可信' })
+    const wrong = () => detail().getByRole('button', { name: '事實有誤' })
+    expect(wrong()).toHaveAttribute('aria-pressed', 'true')
+    expect(trusted()).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(trusted())
+    await waitFor(() => expect(trusted()).toHaveAttribute('aria-pressed', 'true'))
+    expect(wrong()).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(trusted())
+    await waitFor(() => expect(trusted()).toHaveAttribute('aria-pressed', 'false'))
+    expect(sent(net).filter((c) => c.method === 'POST').map((c) => c.body)).toEqual([
+      { uid: UID_A, flag: 'trusted' },
+      { uid: UID_A, flag: '' },
+    ])
+  })
+
   it('/kg/item：沒有事件、找不到、其他錯誤', async () => {
     open(`/kg/item/${UID_A}`, { [`GET /api/kg/item/${UID_A}?depth=1`]: () => ({ json: item({ events: [], links: [], seeds: [] }) }) })
     expect(await screen.findByText(/沒有萃取出具體事件/)).toBeInTheDocument()

@@ -194,6 +194,9 @@ def test_kg_flags_change_status(req, root: Path, kg_db: Path) -> None:
     two = _get(req, f"/api/kg/item/{UID_A}?depth=2")[1]
     assert {e["id"]: e["status"] for e in two["events"]} == {1: "active", 2: "invalid", 3: "active"}
     assert two["flags"] == {U1: "wrong"}
+    # 確認可信也帶回去（知識圖譜頁要顯示按鈕的狀態）；同一則以最後一筆為準
+    kg_flags.append(U1, "trusted", root / "state" / "kg_flags.jsonl")
+    assert _get(req, f"/api/kg/item/{UID_A}?depth=2")[1]["flags"] == {U1: "trusted"}
 
 
 @pytest.mark.parametrize("path", [
@@ -272,7 +275,11 @@ def test_etag(req, uid_a: str) -> None:
     status, _, text = req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": "wrong"})
     assert status == 200 and json.loads(text) == {"uid": uid_a, "flag": "wrong"}, text
     assert json.loads(req("GET", path)[2])["flags"] == {uid_a: "wrong"}
-    assert req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": "trusted"})[0] == 400  # 網頁只能標有誤或取消
+    # 確認可信（知識圖譜頁用）：蓋掉有誤；晨報的 payload 只帶有誤，可信不帶
+    status, _, text = req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": "trusted"})
+    assert status == 200 and json.loads(text)["flag"] == "trusted"
+    assert json.loads(req("GET", path)[2])["flags"] == {}
+    assert req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": "maybe"})[0] == 400
     assert req("POST", "/api/kg-flag", json_h, {"uid": "e" * 16, "flag": "wrong"})[0] == 404
     assert req("POST", "/api/kg-flag", json_h, {"uid": uid_a})[0] == 400
     req("POST", "/api/kg-flag", json_h, {"uid": uid_a, "flag": ""})
