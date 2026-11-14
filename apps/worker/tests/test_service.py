@@ -326,6 +326,7 @@ with fake_steps(Path(sys.argv[1])):
 """
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows 沒有 SIGTERM：送出去就是 TerminateProcess，程序沒機會收尾")
 def test_sigterm(tmp_path):
     """真的程序收 SIGTERM：子程序被終止、紀錄寫好、期限內離開。"""
     proc = subprocess.Popen([sys.executable, "-c", SIGTERM_CHILD, str(tmp_path), str(Path(__file__).parent)],

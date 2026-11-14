@@ -41,12 +41,12 @@ def run_check(token: str | None = None, root: Path = ROOT) -> dict:
     """跑 `newsletter-llm --auth-check`（同一個 venv 要裝著 newsletter-llm），回傳 {ok, kind, message}。
     token 為 None 時驗證儲存的 token；有給就驗證它（走環境變數，不上命令列）。"""
     cmd = [sys.executable, "-m", "newsletter_llm.runner", "--auth-check"]
-    env = dict(os.environ)
+    env = {**os.environ, "PYTHONUTF8": "1"}  # 子程序的 stdout 一律 UTF-8（Windows 預設是系統編碼）
     if token is not None:
         cmd.append("--token-from-env")
         env[auth_store.TOKEN_ENV] = token
     try:
-        p = subprocess.run(cmd, cwd=root, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False,
+        p = subprocess.run(cmd, cwd=root, env=env, stdin=subprocess.DEVNULL, capture_output=True, encoding="utf-8", errors="replace", check=False,
                            timeout=CHECK_TIMEOUT)
     except subprocess.TimeoutExpired:
         return {"ok": False, "kind": "timeout", "message": f"驗證逾時（超過 {CHECK_TIMEOUT} 秒）"}

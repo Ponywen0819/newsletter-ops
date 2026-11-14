@@ -575,7 +575,7 @@ def test_auth_token(t) -> None:
     assert status == 200 and body["message"] == "驗證通過，已儲存", body
     assert checked == [secret] and body["status"]["state"] == "ok" and body["status"]["tail"] == secret[-4:]
     assert auth_store.load(site.auth.token_path)["token"] == secret
-    assert stat.S_IMODE(site.auth.token_path.stat().st_mode) == 0o600
+    assert os.name == "nt" or stat.S_IMODE(site.auth.token_path.stat().st_mode) == 0o600  # Windows 沒有 POSIX 權限位
     assert get("/api/auth")[1] == body["status"] and secret not in req("GET", "/api/auth")[1]
     status, health = get("/api/auth-health")
     assert status == 200 and health["state"] == "ok" and health["kind"] == "ok" and health["checked_at"], health

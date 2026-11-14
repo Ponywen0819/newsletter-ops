@@ -85,6 +85,15 @@ logs/<YYYY-MM>.log             排程執行紀錄
 Python 版本與依賴由 [uv](https://docs.astral.sh/uv/) 管理：`.python-version` 固定直譯器（3.11，所有模組共用），每個模組的 `uv.lock` 鎖定它自己的依賴。
 安裝 uv 後不必自己建 venv，`uv run --project <模組>` 第一次執行會在該模組底下建 `.venv` 並裝好依賴；沒有該版本的 Python 時 uv 會自動下載。
 
+第一次 clone 之後（之後 lock 檔有變也一樣）：
+
+```bash
+npm ci                                           # 根目錄：只有 Nx
+npm run setup                                    # = nx run-many -t install：每個 Python 模組 uv sync --locked，前端 npm install
+```
+
+單一模組用 `npx nx run <模組>:install`，或直接用 uv：
+
 ```bash
 uv sync --project apps/worker                    # 依該模組的 uv.lock 同步它的環境
 uv add --project packages/collect <套件>              # 替某個模組新增依賴（改它的 pyproject.toml 與 uv.lock，一起 commit）
@@ -96,7 +105,7 @@ uv lock --project packages/collect --upgrade         # 升級該模組鎖定的�
 指令都在 repo 根目錄執行：程式讀寫的 `config/`、`reports/`、`data/`、`state/`、`logs/` 以**工作目錄**為根（`newsletter_shared.ROOT`），
 要放別處就設環境變數 `NEWSLETTER_ROOT`。
 
-所有模組的 lint 與測試（Python 是各模組 `tests/` 底下的 pytest，前端是 vitest）都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先在根目錄與 `apps/web-ui` 各 `npm ci`：
+所有模組的 lint 與測試（Python 是各模組 `tests/` 底下的 pytest，前端是 vitest）都由 Nx 跑（main 上的 CI 也跑這一行）。第一次先照上面裝好依賴：
 
 ```bash
 npx nx run-many -t lint typecheck test            # 全部模組；改成 `nx affected -t …` 只跑受影響的
@@ -120,6 +129,17 @@ git config core.hooksPath .githooks
 
 抓取、整理、寄信都只用標準庫，只有 `llm` 模組需要第三方套件（`claude-agent-sdk`），collect 的搜尋與 writer 經由它用 Claude。
 skill 裡呼叫的指令都是 `uv run --locked --project <模組> …`，要在 repo 根目錄、有 uv 的環境下執行。
+
+## 開發
+
+```bash
+npm run dev                  # = nx run-many -t dev：前端（Vite，http://localhost:5173）、web-server（8787）、worker（8790）一起起來
+npx nx run web-ui:dev        # 只起其中一個；web-server:dev、worker:dev 同理
+```
+
+- 前端的 `/api` 由 Vite 代理到 web-server；web-server 與 worker 以 repo 根目錄為資料根目錄（讀寫這裡的 `reports/`、`state/` 等）。
+- `worker:dev` 綁 `127.0.0.1`、**不排程**（`NEWSLETTER_SCHEDULE=off`）：不會自己跑每日流程或寄信，只有手動 `POST /run` 才會跑；要跑正式排程用 `worker:start`。
+- Python 的部分只能在 Linux／macOS（或 WSL）跑：`newsletter_shared.lock` 用 `fcntl`，Windows 原生的 Python 沒有。
 
 ## 快速開始
 

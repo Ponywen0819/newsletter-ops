@@ -67,6 +67,8 @@ def spawn(log: IO[str], module: str, *args: str, limit: float | None = None, inp
     """`python -m module` 一次，回傳 (exit code, stdout)。stdout 只有 capture 時才收；否則和 stderr 一起進 log。
     stop 被設起來、或跑超過 limit 秒，就對子程序送 SIGTERM；KILL_AFTER 秒後還在就 SIGKILL。超時回 EXIT_TIMEOUT。
     env 沒給就繼承目前的環境變數。"""
+    # PYTHONUTF8：子程序的 stdin/stdout/stderr 也用 UTF-8，和這裡、log 檔一致（Windows 預設是系統編碼）
+    env = {**(os.environ if env is None else env), "PYTHONUTF8": "1"}
     proc = subprocess.Popen([sys.executable, "-m", module, *args], cwd=ROOT, encoding="utf-8", env=env,
                             stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
                             stdout=subprocess.PIPE if capture else log, stderr=log)
@@ -90,6 +92,8 @@ def spawn(log: IO[str], module: str, *args: str, limit: float | None = None, inp
     if timed_out:
         return EXIT_TIMEOUT, out
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
+    if os.name == "nt" and termed_at is not None and code:
+        code = EXIT_STOPPED  # Windows 沒有訊號：terminate()／kill() 都是 TerminateProcess，exit code 固定是 1
     return code, out
 
 

@@ -94,7 +94,7 @@ def test_status(req, root: Path, worker: FakeWorker) -> None:
     (root / "state" / "last_run.json").write_text(json.dumps(
         {"date": "2026-09-28", "trigger": "schedule", "started_at": "a", "finished_at": "b", "exit_code": 4, "step": "write"}))
     (root / "logs").mkdir()
-    (root / "logs" / "2026-09.log").write_text("舊的一行\n=== 這次 ===\n第二行\n", encoding="utf-8")
+    (root / "logs" / "2026-09.log").write_text("舊的一行\n=== 這次 ===\n第二行\n", encoding="utf-8", newline="\n")  # offset 以 \n 計
     (root / "state" / "last_job.json").write_text(json.dumps(
         {"id": "j1", "kind": "run", "from": "write", "log": "logs/2026-09.log",
          "offset": len("舊的一行\n".encode()), "exit_code": None, "finished_at": None}), encoding="utf-8")

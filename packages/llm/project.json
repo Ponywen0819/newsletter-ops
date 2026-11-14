@@ -6,6 +6,9 @@
     "lang:py"
   ],
   "targets": {
+    "install": {
+      "command": "uv sync --locked --project {projectRoot}"
+    },
     "test": {
       "command": "uv run --locked --project {projectRoot} pytest -q {projectRoot}"
     },
