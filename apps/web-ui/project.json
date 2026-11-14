@@ -4,5 +4,13 @@
   "tags": [
     "type:app",
     "lang:ts"
-  ]
+  ],
+  "targets": {
+    "install": {
+      "command": "npm install --no-audit --no-fund",
+      "options": {
+        "cwd": "{projectRoot}"
+      }
+    }
+  }
 }
