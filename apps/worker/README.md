@@ -8,7 +8,7 @@
 ```
 src/newsletter_worker/
   daily.py             run_pipeline()：鎖 → 紀錄 → 四步 → 失敗語意
-  service.py           入口 worker：每日時鐘、補跑、GET /status、POST /run，以及 --once（Docker 的 worker 容器、systemd 的 newsletter-worker.service 跑它）
+  service.py           入口 worker：每日時鐘、補跑、GET /status、POST /run、POST /job，以及 --once（Docker 的 worker 容器、systemd 的 newsletter-worker.service 跑它）
 tests/                 pytest；helpers.py 的假步驟取代四步，不連網、不寄信
 ```
 
@@ -82,12 +82,24 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 
 | 介面 | 回應 |
 | --- | --- |
-| `GET /status` | `{state: idle\|running, next_run_at（排程關閉時 null）, current: {trigger, started_at} \| null, last: last_run.json \| null}` |
-| `POST /run[?from=<步驟>]` | 202 `{started_at}`；已經在跑（這裡或別的程序握著鎖）回 409。不收 body。`from`（collect／write／render／send，預設 collect）從那一步開始，前面的產出要今天已經有；send 會從 render 起；其他值回 400 |
+| `GET /status` | `{state: idle\|running, scheduled, run_at（HH:MM）, next_run_at（排程關閉時 null）, current: {kind, trigger, started_at} \| null, last: last_run.json \| null, job: last_job.json \| null}`；`kind` 是 `run`、`kg-rebuild` 或 `sources-check` |
+| `POST /job?kind=<工作>` | 見下面「手動的工作」 |
+| `POST /run[?from=<步驟>]` | 202 `{started_at, id}`；已經在跑（這裡或別的程序握著鎖）回 409。不收 body。`from`（collect／write／render／send，預設 collect）從那一步開始，前面的產出要今天已經有；send 會從 render 起；其他值回 400 |
 
-沒有登入，靠網路隔離：compose 不 publish 這個 port，`worker` 只在自己的 `be` 網路；systemd 版綁 `127.0.0.1`（見 [deploy/README.md](../../deploy/README.md)）。
+沒有登入，靠網路隔離：compose 不 publish 這個 port，`be` 網路只有 `worker` 與 `web`（web 的 `/ops` 只有區網入口開得到）；systemd 版綁 `127.0.0.1`（見 [deploy/README.md](../../deploy/README.md)）。
 輸出進 `logs/<YYYY-MM>.log`（月份以開始時間為準），服務自己的訊息印 stdout；失敗時附上這次 log 的最後 20 行。
 SIGTERM：轉給執行中的那一步、等它結束、紀錄記成 143，然後離開；被打斷的那天下次啟動會補跑。
+
+**手動的工作**：`POST /job?kind=` 跑每日流程以外的工作，web 的維運頁（`/ops`）也是呼叫這兩個介面：
+
+| `kind` | 做什麼 |
+| --- | --- |
+| `sources-check` | `newsletter-collect --dry-run --no-search`：抓一次所有來源、印統計，不寫檔、不用 Claude（時限 30 分鐘） |
+| `kg-rebuild` | `newsletter-kg --rebuild`：清掉 `state/kg.sqlite`，依日期重跑全部 curated（用訂閱額度，時限 4 小時） |
+
+和每日流程握同一把 pipeline 的鎖，同時只會有一個；在跑時回 409，不合法的 `kind` 回 400。輸出在 `logs/ops-<kind>.log`（每次覆寫），metrics 標籤是 `ops`，不混進每日執行的統計。
+`POST /run` 與 `POST /job` 開始時回 202 `{started_at, id}`，開始與結束都寫進 `state/last_job.json`（`id, kind, from, requested_at, started_at, finished_at, exit_code, log, offset`；
+`run` 的輸出在當月 log，`offset` 是這次開始的位置），web 從 volume 讀它顯示結果與 log。排程跑的不記在這裡（看 `last_run.json`）。
 
 ## 加一個步驟
 

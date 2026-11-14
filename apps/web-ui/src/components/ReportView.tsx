@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { groupReport, type Unit } from '../reportUnits'
-import type { Adjacent, Block, Flags, ListItem, Mark, Marks, Report } from '../types'
+import type { Adjacent, Block, Flags, KgFlag, ListItem, Mark, Marks, Report } from '../types'
 import { isWide, useSectionNav } from '../useSectionNav'
 import { FactFlagButton } from './FactFlagButton'
 import { FeedbackButtons } from './FeedbackButtons'
@@ -9,7 +9,7 @@ import { EXTERNAL, Inline } from './Inline'
 import { ReaderShell } from './ReaderShell'
 
 type OnMark = (uid: string, mark: Mark) => void
-type OnFlag = (uid: string, flag: 'wrong' | '') => void
+type OnFlag = (uid: string, flag: KgFlag | '') => void
 
 interface Votes {
   marks: Marks

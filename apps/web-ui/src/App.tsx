@@ -19,6 +19,12 @@ const kgPage = (name: 'KgIndexPage' | 'KgItemPage' | 'KgEntityPage') =>
 const KgIndexPage = kgPage('KgIndexPage')
 const KgItemPage = kgPage('KgItemPage')
 const KgEntityPage = kgPage('KgEntityPage')
+// 維運頁只有本機會用到，也另外打包
+const opsPage = (name: 'OpsPage' | 'OpsMetricsPage' | 'OpsConfigPage') =>
+  lazy(() => import('./pages/OpsPages').then((m) => ({ default: m[name] })))
+const OpsPage = opsPage('OpsPage')
+const OpsMetricsPage = opsPage('OpsMetricsPage')
+const OpsConfigPage = opsPage('OpsConfigPage')
 const later = (page: ReactNode) => <Suspense fallback={<Loading />}>{page}</Suspense>
 
 // 這幾條路由要和 apps/web-server 的 SPA_ROUTES 一致：後端對它們回 index.html，其他路徑回 404 的 index.html。
@@ -41,6 +47,9 @@ export function App() {
             <Route path="kg/item/:uids" element={later(<KgItemPage />)} />
             <Route path="kg/entity/:key" element={later(<KgEntityPage />)} />
             <Route path="auth" element={<AuthPage />} />
+            <Route path="ops" element={later(<OpsPage />)} />
+            <Route path="ops/metrics" element={later(<OpsMetricsPage />)} />
+            <Route path="ops/config" element={later(<OpsConfigPage />)} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>

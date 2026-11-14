@@ -66,26 +66,28 @@ def curl(gate, net: str, url: str, *args: str) -> tuple[int, str]:
     return int(code), body
 
 
-@pytest.mark.parametrize("path", ["/api/auth", "/api/auth/token", "/api/auth/", "//api/auth", "/api/./auth"])
+@pytest.mark.parametrize("path", ["/api/auth", "/api/auth/token", "/api/auth/", "//api/auth", "/api/./auth",
+                                  "/api/ops", "/api/ops/request", "/api/ops/metrics?days=7", "//api/ops", "/api/./ops/config"])
 def test_tunnel_blocks_auth_api(gate, path):
     code, body = curl(gate, "lan", f"http://NGINX:8080{path}")
     assert code == 404 and json.loads(body) == {"error": "not found"}
 
 
-def test_tunnel_auth_page_is_not_found(gate):
-    code, body = curl(gate, "lan", "http://NGINX:8080/auth")
+@pytest.mark.parametrize("path", ["/auth", "/ops", "/ops/metrics", "/ops/config"])
+def test_tunnel_auth_page_is_not_found(gate, path):
+    code, body = curl(gate, "lan", f"http://NGINX:8080{path}")
     assert code == 200 and json.loads(body)["path"] == "/not-found"  # 前端顯示找不到
 
 
 def test_tunnel_session_and_passthrough(gate):
     assert curl(gate, "lan", "http://NGINX:8080/api/session") == (200, '{"local": false}')
-    for path in ("/api/auth-health", "/api/today", "/auth-not-really", "/reports/2026-01-01"):
+    for path in ("/api/auth-health", "/api/today", "/auth-not-really", "/ops-not-really", "/reports/2026-01-01"):
         code, body = curl(gate, "lan", f"http://NGINX:8080{path}")
         assert code == 200 and json.loads(body)["path"] == path, path
 
 
 def test_lan_reaches_auth(gate):
-    for path in ("/auth", "/api/auth", "/api/session"):
+    for path in ("/auth", "/api/auth", "/api/session", "/ops", "/ops/metrics", "/api/ops"):
         code, body = curl(gate, "lan", f"http://NGINX:8788{path}")
         assert code == 200 and json.loads(body)["path"] == path, path
     code, _ = curl(gate, "lan", "http://NGINX:8788/api/auth/token", "-X", "POST", "-H", "Origin: http://192.168.1.20:8788")

@@ -11,6 +11,7 @@ import './styles/report-list.css'
 import './styles/auth.css'
 import './styles/reader.css'
 import './styles/kg.css'
+import './styles/ops.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

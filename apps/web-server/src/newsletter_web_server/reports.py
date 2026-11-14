@@ -193,9 +193,9 @@ class Reports:
         return row
 
     def record_flag(self, uid: str, flag: str) -> dict:
-        """「事實有誤」：flag 'wrong'，'' ＝ 取消。只收報告裡出現過的 uid。"""
-        if flag not in ("wrong", ""):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "flag 只能是 wrong 或空字串（取消）")
+        """事實判定：'wrong'＝事實有誤、'trusted'＝確認可信（不被自動判定失效），'' ＝ 取消。只收報告裡出現過的 uid。"""
+        if flag not in ("wrong", "trusted", ""):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "flag 只能是 wrong、trusted 或空字串（取消）")
         if not UID_RE.fullmatch(uid):
             raise ApiError(HTTPStatus.BAD_REQUEST, "uid 格式不符")
         if self._find_report(uid) is None:

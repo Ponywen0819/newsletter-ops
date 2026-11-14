@@ -19,6 +19,7 @@ from .auth import Auth
 from .errors import ApiError, NotFound
 from .kg import DEFAULT_DAYS as DEFAULT_KG_DAYS
 from .kg import Graph
+from .ops import Ops
 from .reports import Reports
 
 DEFAULT_HOST = "127.0.0.1"
@@ -26,6 +27,7 @@ DEFAULT_PORT = 8787
 MAX_BODY = 4096
 # 與 apps/web-ui/src/App.tsx 的路由同步
 SPA_ROUTES = re.compile(r"/|/reports|/reports/\d{4}-\d{2}-\d{2}|/feedback/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/stats|/auth"
+                        r"|/ops|/ops/metrics|/ops/config"
                         r"|/kg|/kg/item/[0-9a-f]{16}(?:,[0-9a-f]{16})*|/kg/entity/[^/]+")
 # 離線副本同步的對象：回 ETag，If-None-Match 相符回 304（前端自己帶，所以照舊 no-store）
 ETAG_PATHS = re.compile(r"/api/today|/api/reports|/api/reports/\d{4}-\d{2}-\d{2}")
@@ -52,17 +54,19 @@ STATIC_TYPES = {  # 副檔名白名單
 IMMUTABLE = "public, max-age=31536000, immutable"
 CSP = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-POST_ROUTES = {"/api/feedback", "/api/kg-flag", "/api/auth/token", "/api/auth/test", "/api/auth/revoke"}
+POST_ROUTES = {"/api/feedback", "/api/kg-flag", "/api/auth/token", "/api/auth/test", "/api/auth/revoke",
+               "/api/ops/request"}
 
 
 class Site:
     """Handler 用到的全部狀態。root 可換掉，測試用暫存目錄。"""
 
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
-                 checker: Callable[[str], dict] | None = None):
+                 checker: Callable[[str], dict] | None = None, worker_url: str | None = None):
         self.reports = Reports(root, today)
         self.kg = Graph(root, self.reports.today, self.reports.uid_dates)
         self.auth = Auth(root, checker)
+        self.ops = Ops(root, self.reports.today, worker_url)
         self.dist = root / "apps" / "web-ui" / "dist"
 
     def index_html(self) -> bytes | None:
@@ -153,6 +157,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/auth-health": self.site.auth.health,
             "/api/auth": self.site.auth.status,
             "/api/feedback-stats": self.site.reports.feedback_stats,
+            # 維運（只限本機，由 nginx 擋）
+            "/api/ops": self.site.ops.status,
+            "/api/ops/config": self.site.ops.config,
         }
         if path in fixed:
             return fixed[path]()
@@ -161,6 +168,8 @@ class Handler(BaseHTTPRequestHandler):
         if m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
             return self.site.reports.feedback_target(m[1])
         query = parse_qs(urlsplit(self.path).query)
+        if path == "/api/ops/metrics":
+            return self.site.ops.metrics(query.get("days", ["14"])[0], query.get("all", ["0"])[0])
         if path == "/api/search":
             return self.site.reports.search(query.get("q", [""])[0])
         if path.startswith("/api/kg/"):
@@ -229,6 +238,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.site.auth.submit_token(data["token"])
         if path == "/api/auth/test":
             return self.site.auth.test_token()
+        if path == "/api/ops/request":
+            return self.site.ops.request(data)
         return self.site.auth.revoke_token()  # /api/auth/revoke
 
     def do_POST(self) -> None:

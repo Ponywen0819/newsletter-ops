@@ -45,8 +45,11 @@ export interface FeedbackTarget {
 /** uid → 目前的標記；沒標或已取消的不在裡面 */
 export type Marks = Record<string, Mark>
 
-/** uid → 'wrong'（使用者標了「事實有誤」）；沒標的不在裡面 */
-export type Flags = Record<string, 'wrong'>
+/** 事實判定：wrong＝事實有誤（不再當背景）、trusted＝確認可信（不被自動判定失效） */
+export type KgFlag = 'wrong' | 'trusted'
+
+/** uid → 使用者的判定；沒標的不在裡面。晨報頁只會有 wrong，知識圖譜兩種都有 */
+export type Flags = Record<string, KgFlag>
 
 /** 前一份（更舊）／下一份（更新）的日期；沒有是 null。舊的離線副本沒有這兩欄 */
 export interface Adjacent {
@@ -187,7 +190,7 @@ export interface KgGraph {
   events: KgEvent[]
   /** 只含兩端都在 events 裡的 */
   links: KgLink[]
-  /** 圖裡被標了「事實有誤」的則 */
+  /** 圖裡被標了「事實有誤」或「確認可信」的則 */
   flags: Flags
   /** 超過上限被截斷 */
   truncated: boolean
@@ -227,4 +230,91 @@ export interface KgEntities {
   available: boolean
   since: string | null
   entities: (KgEntityRef & { count: number; last: string })[]
+}
+
+/* ---------- /ops 維運（只限本機） ---------- */
+
+export type OpsKind = 'run' | 'kg-rebuild' | 'sources-check'
+export type RunStep = 'collect' | 'write' | 'render' | 'send'
+
+export interface OpsCurrent {
+  kind: OpsKind
+  trigger: string
+  started_at: string
+}
+
+/** worker 的 GET /status；連不上時只有 online: false */
+export interface OpsWorker {
+  online: boolean
+  scheduled?: boolean
+  /** 每日執行時間 HH:MM */
+  run_at?: string
+  /** 排程關閉時是 null */
+  next_run_at?: string | null
+  state?: 'idle' | 'running'
+  current?: OpsCurrent | null
+}
+
+/** 最近一次手動執行（worker 的 state/last_job.json） */
+export interface OpsJob {
+  id: string
+  kind: OpsKind
+  /** 只有 run 有 */
+  from?: RunStep
+  requested_at: string
+  started_at?: string
+  /** 還在跑時是 null */
+  finished_at?: string | null
+  exit_code?: number | null
+}
+
+export interface OpsStatus {
+  worker: OpsWorker
+  job: OpsJob | null
+  /** job 的 log 最後幾行 */
+  log: string[]
+  last_run: (RunRecord & { date: string }) | null
+}
+
+export interface MetricsRun {
+  date: string
+  time: string
+  label: string
+  trigger: string | null
+  /** 沒有 pipeline 紀錄（手動跑單一步驟）是 null */
+  result: { exit_code: number; step: string | null } | null
+  /** 階段 → 秒數（fetch、curate、search、enrich、claude、render、pipeline） */
+  seconds: Record<string, number>
+  /** input 含快取讀寫 */
+  tokens: { input: number; output: number } | null
+  turns: number | null
+  usd: number | null
+  items: number | null
+}
+
+export interface MetricsPayload {
+  days: number
+  all: boolean
+  /** config.json 的 debug；關著時不會有新的紀錄 */
+  debug: boolean
+  /** 新到舊 */
+  runs: MetricsRun[]
+}
+
+export interface SourceFeed {
+  name: string
+  type: string
+  url?: string
+  note?: string
+  [key: string]: unknown
+}
+
+export type SourceFile =
+  | { file: string; error: string }
+  | { file: string; topic?: string; label?: string; defaults: Record<string, unknown>; feeds: SourceFeed[] }
+
+export interface OpsConfig {
+  config: Record<string, unknown> | null
+  sources: SourceFile[]
+  interests: string | null
 }

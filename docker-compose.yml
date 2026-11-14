@@ -18,9 +18,12 @@ services:
     <<: *app
     build: {context: ., target: web}
     image: ghcr.io/ponywen0819/newsletter-ops-web:${NEWSLETTER_TAG:-latest}
-    # 不做身分驗證，只能經 nginx 連：不 publish、只在 app 網路（cloudflared 碰不到）
+    # 不做身分驗證，只能經 nginx 連：不 publish、只在 app 網路（cloudflared 碰不到）。
+    # 也在 be 網路：維運頁（/ops，只有區網入口開得到）呼叫 worker 的 /status、/run、/job
     command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787"]
-    networks: [app]
+    networks: [app, be]
+    environment:
+      NEWSLETTER_WORKER_URL: http://worker:8790
     # 用 CMD-SHELL：podman 會把 CMD 陣列裡含空格的參數拆開
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)\""]
@@ -32,7 +35,7 @@ services:
     <<: *app
     build: {context: ., target: worker}
     image: ghcr.io/ponywen0819/newsletter-ops-worker:${NEWSLETTER_TAG:-latest}
-    # 映像的 CMD 是 worker --port 8790：每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run 不 publish，只在 be 網路
+    # 映像的 CMD 是 worker --port 8790：每天 NEWSLETTER_RUN_AT 跑一次、啟動時補跑今天錯過的；/status、/run、/job 不 publish，只在 be 網路
     networks: [be]
     # 停止時要等執行中的步驟收尾、寫好紀錄
     stop_grace_period: 2m
@@ -93,7 +96,8 @@ volumes:
   newsletter-data:
 
 networks:
-  # 只有 worker：web、nginx、cloudflared 都不該連得到 /run
+  # worker 與 web：/run、/job 會用額度、寄信，nginx、cloudflared 都不該連得到。
+  # web 能連（維運頁），所以「誰能觸發」由 nginx 決定：/ops、/api/ops* 只有區網入口開得到
   be:
   # cloudflared ↔ nginx
   edge:

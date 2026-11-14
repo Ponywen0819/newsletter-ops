@@ -57,10 +57,17 @@ def say(log: IO[str], message: str) -> None:
 
 def step(log: IO[str], key: str, *args: str, input: str | None = None, capture: bool = False,
          stop: threading.Event | None = None) -> tuple[int, str]:
-    """跑 MODULES[key] 一步，回傳 (exit code, stdout)。stdout 只有 capture 時才收；否則和 stderr 一起進 log。
-    stop 被設起來、或跑超過 TIMEOUTS[key] 秒，就對子程序送 SIGTERM；KILL_AFTER 秒後還在就 SIGKILL。超時回 EXIT_TIMEOUT。"""
-    module, limit = MODULES[key], TIMEOUTS.get(key)
-    proc = subprocess.Popen([sys.executable, "-m", module, *args], cwd=ROOT, encoding="utf-8",
+    """跑 MODULES[key] 一步，回傳 (exit code, stdout)。逾時是 TIMEOUTS[key]，其餘見 spawn。"""
+    return spawn(log, MODULES[key], *args, limit=TIMEOUTS.get(key), input=input, capture=capture, stop=stop)
+
+
+def spawn(log: IO[str], module: str, *args: str, limit: float | None = None, input: str | None = None,  # noqa: PLR0913 都是 keyword-only
+          capture: bool = False, stop: threading.Event | None = None,
+          env: dict[str, str] | None = None) -> tuple[int, str]:
+    """`python -m module` 一次，回傳 (exit code, stdout)。stdout 只有 capture 時才收；否則和 stderr 一起進 log。
+    stop 被設起來、或跑超過 limit 秒，就對子程序送 SIGTERM；KILL_AFTER 秒後還在就 SIGKILL。超時回 EXIT_TIMEOUT。
+    env 沒給就繼承目前的環境變數。"""
+    proc = subprocess.Popen([sys.executable, "-m", module, *args], cwd=ROOT, encoding="utf-8", env=env,
                             stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
                             stdout=subprocess.PIPE if capture else log, stderr=log)
     out, sent, t0 = "", False, time.monotonic()

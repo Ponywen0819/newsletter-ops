@@ -1,0 +1,238 @@
+/* /ops：維運（只限本機）。顏色只用 base.css 的變數，亮暗主題自動跟著換 */
+.ops-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 20px;
+  border-bottom: 1px solid var(--rule);
+}
+.ops-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  color: var(--link);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px; /* 選中的底線蓋在分隔線上 */
+}
+.ops-nav a[aria-current='page'] {
+  color: var(--heading);
+  font-weight: 600;
+  border-bottom-color: var(--link);
+}
+
+.ops-section {
+  margin: 0 0 28px;
+}
+.ops-section h2 {
+  margin: 0 0 8px;
+}
+
+/* 狀態表：手機 dt 在上、dd 在下；平板以上兩欄（同 .auth-status） */
+.ops-dl {
+  display: grid;
+  gap: 2px 0;
+  margin: 8px 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ops-dl dt {
+  color: var(--muted);
+}
+.ops-dl dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ops-dl dd + dt {
+  margin-top: 10px;
+}
+@media (min-width: 768px) {
+  .ops-dl {
+    grid-template-columns: max-content 1fr;
+    gap: 6px 16px;
+  }
+  .ops-dl dd + dt {
+    margin-top: 0;
+  }
+}
+
+.ops-ok {
+  color: var(--ok);
+}
+.ops-bad,
+.ops-err {
+  color: var(--danger);
+}
+.ops-warn {
+  color: var(--warn);
+}
+.ops-hint {
+  color: var(--muted);
+  font-size: var(--fs-small);
+  font-weight: normal;
+}
+.ops-note {
+  margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.ops-note.ops-warn {
+  color: var(--warn);
+}
+.ops-msg {
+  min-height: 1.5em;
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.ops-msg.ops-ok {
+  color: var(--ok);
+}
+.ops-msg.ops-err {
+  color: var(--danger);
+}
+
+/* 一列控制項：放不下就換行，不撐出水平捲軸 */
+.ops-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+.ops-row select {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+}
+.ops-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ops-btn {
+  padding: 8px 14px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+.ops-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.ops-primary {
+  background: var(--link);
+  border-color: var(--link);
+  color: var(--on-link);
+}
+.ops-danger {
+  color: var(--danger);
+}
+
+.ops-jobs {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.ops-jobs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 0 0 10px;
+}
+.ops-jobs li span {
+  flex: 1 1 240px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.ops-jobs .ops-btn {
+  flex: none;
+  min-width: 8em;
+}
+
+/* log 與純文字：自己捲，不撐開卡片 */
+.ops-log,
+.ops-pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  max-height: 24em;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--page);
+  font: 12px/1.5 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 寬表格：在卡片裡水平捲動，頁面本身不會有水平捲軸 */
+.ops-table-wrap {
+  overflow-x: auto;
+  margin: 8px 0 16px;
+}
+.ops-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.ops-table th,
+.ops-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+  text-align: right;
+}
+.ops-table th[scope='row'],
+.ops-table thead th:first-child {
+  text-align: left;
+}
+.ops-table thead th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.ops-feeds th,
+.ops-feeds td {
+  text-align: left;
+}
+.ops-feeds td.ops-url {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 16em;
+}
+
+.ops-source h3 {
+  margin: 16px 0 4px;
+  font-size: 16px;
+}
+details summary {
+  cursor: pointer;
+  color: var(--link);
+}
+
+@media (pointer: coarse) {
+  .ops-btn,
+  .ops-row select,
+  .ops-nav a {
+    min-height: 44px;
+  }
+}
+
+/* 知識圖譜詳情的「確認可信」：按下去是綠色，和「事實有誤」分得出來 */
+.fb-btn.fb-flag-trusted[aria-pressed='true'] {
+  color: var(--ok);
+  border-color: var(--ok);
+  background: transparent;
+}
