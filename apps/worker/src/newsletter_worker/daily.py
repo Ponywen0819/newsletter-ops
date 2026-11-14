@@ -60,7 +60,9 @@ def step(log: IO[str], key: str, *args: str, input: str | None = None, capture: 
     """跑 MODULES[key] 一步，回傳 (exit code, stdout)。stdout 只有 capture 時才收；否則和 stderr 一起進 log。
     stop 被設起來、或跑超過 TIMEOUTS[key] 秒，就對子程序送 SIGTERM；KILL_AFTER 秒後還在就 SIGKILL。超時回 EXIT_TIMEOUT。"""
     module, limit = MODULES[key], TIMEOUTS.get(key)
+    # PYTHONUTF8：子程序的 stdin/stdout/stderr 也用 UTF-8，和這裡、log 檔一致（Windows 預設是系統編碼）
     proc = subprocess.Popen([sys.executable, "-m", module, *args], cwd=ROOT, encoding="utf-8",
+                            env={**os.environ, "PYTHONUTF8": "1"},
                             stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
                             stdout=subprocess.PIPE if capture else log, stderr=log)
     out, sent, t0 = "", False, time.monotonic()
@@ -83,6 +85,8 @@ def step(log: IO[str], key: str, *args: str, input: str | None = None, capture: 
     if timed_out:
         return EXIT_TIMEOUT, out
     code = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
+    if os.name == "nt" and termed_at is not None and code:
+        code = EXIT_STOPPED  # Windows 沒有訊號：terminate()／kill() 都是 TerminateProcess，exit code 固定是 1
     return code, out
 
 

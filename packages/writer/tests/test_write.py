@@ -21,23 +21,23 @@ def test_verify_and_coverage(tmp_path):
     (root / "reports").mkdir()
     curated, report = root / "data" / "curated" / f"{stamp}.json", root / "reports" / f"{stamp}.md"
     assert "找不到" in verify(root, stamp, now)
-    curated.write_text('{"items": []}')
+    curated.write_text('{"items": []}', encoding="utf-8")
     assert "沒有收錄" in verify(root, stamp, now)
-    curated.write_text('{"items": [{"uid": "x"}]}')
+    curated.write_text('{"items": [{"uid": "x"}]}', encoding="utf-8")
     assert "沒有產出" in verify(root, stamp, now)
-    report.write_text("# 報告")
+    report.write_text("# 報告", encoding="utf-8")
     os.utime(report, (now - 100, now - 100))
     assert "舊檔" in verify(root, stamp, now)
     os.utime(report, (now + 1, now + 1))
     assert verify(root, stamp, now) is None
     assert "格式不符" in check_format(root, stamp)
-    report.write_text(GOOD)
+    report.write_text(GOOD, encoding="utf-8")
     assert check_format(root, stamp) is None and report_check(root, stamp) is None
     assert "找不到" in report_check(root, "2026-01-02")
     a, b, c = "a" * 16, "b" * 16, "c" * 16
-    curated.write_text(json.dumps({"items": [{"uid": a}, {"uid": b}], "near_misses": [{"uid": "d" * 16}]}))
+    curated.write_text(json.dumps({"items": [{"uid": a}, {"uid": b}], "near_misses": [{"uid": "d" * 16}]}), encoding="utf-8")
     report.write_text(f"{GOOD}\n## 段\n\n- 一\n<!-- mark:    uid={a} -->\n"
-                      f"- 二\n<!-- mark:    uid={c} -->\n- 三\n<!-- mark:    uid={'d' * 16} -->\n")
+                      f"- 二\n<!-- mark:    uid={c} -->\n- 三\n<!-- mark:    uid={'d' * 16} -->\n", encoding="utf-8")
     assert coverage(root, stamp) == ([b], [c], ["d" * 16])
 
 
@@ -52,7 +52,10 @@ def test_permissions_follow_symlinks(tmp_path):
         (vol / sub).mkdir(parents=True)
     root.mkdir()
     for sub in ("data", "reports", "state"):
-        (root / sub).symlink_to(vol / sub)
+        try:
+            (root / sub).symlink_to(vol / sub, target_is_directory=True)
+        except OSError as exc:  # Windows 要開發人員模式或管理員權限才能建 symlink
+            pytest.skip(f"無法建立 symlink：{exc}")
     allow, deny = permissions(root)
     real = vol.resolve()
     assert f"Edit(/{real}/reports/**)" in allow and f"Read(/{real}/data/curated/**)" in allow
@@ -71,7 +74,7 @@ def setup(tmp_path, monkeypatch):
     stamp = f"{datetime.now(metrics.TZ):%Y-%m-%d}"
     (tmp_path / "data" / "curated").mkdir(parents=True)
     (tmp_path / "reports").mkdir()
-    (tmp_path / "data" / "curated" / f"{stamp}.json").write_text('{"items": [{"uid": "x"}]}')
+    (tmp_path / "data" / "curated" / f"{stamp}.json").write_text('{"items": [{"uid": "x"}]}', encoding="utf-8")
     auth_store.save(SECRET, tmp_path / "oauth_token.json")
     for k in list(os.environ):
         monkeypatch.delenv(k)

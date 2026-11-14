@@ -136,6 +136,7 @@ def send_notice(notice: dict) -> bool:
     try:
         proc = subprocess.run([sys.executable, "-m", "newsletter_notify.send_email", "--notice"], cwd=ROOT,
                               input=json.dumps(notice, ensure_ascii=False), encoding="utf-8",
+                              env={**os.environ, "PYTHONUTF8": "1"},  # 子程序也用 UTF-8 讀 stdin（Windows 預設是系統編碼）
                               capture_output=True, timeout=120, check=False)
         ok = proc.returncode == 0
         detail = proc.stderr.strip().splitlines()[-1:] if not ok else []

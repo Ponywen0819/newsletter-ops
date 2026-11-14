@@ -20,6 +20,11 @@ def path(tmp_path):
     return tmp_path / "state" / "oauth_token.json"
 
 
+def private(path):
+    """權限 600。Windows 沒有 POSIX 權限位（stat 只會回 666/444），只在 POSIX 上檢查。"""
+    return os.name == "nt" or stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def files(path):
     return [p.name for p in path.parent.iterdir() if p.name != path.name + ".lock"]
 
@@ -35,7 +40,7 @@ def test_save_load_status(path):
     assert load(path) is None and status(path, NOW) == {"state": "missing"}
     assert delete(path) is False
     save(SECRET, path, NOW)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert private(path)
     assert load(path)["token"] == SECRET
     assert files(path) == [path.name]
     st = status(path, NOW)
@@ -55,7 +60,7 @@ def test_overwrite_and_failed_write(path, monkeypatch):
     """覆寫：權限仍是 600；寫入失敗不能動到舊檔、也不留暫存檔。"""
     save(SECRET, path, NOW)
     save(SECRET + "2", path, NOW)
-    assert load(path)["token"] == SECRET + "2" and stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert load(path)["token"] == SECRET + "2" and private(path)
 
     def boom(*a, **k):
         raise OSError("disk full")

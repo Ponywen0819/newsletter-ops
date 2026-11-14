@@ -46,7 +46,8 @@ def test_step_failure(run, steps):
     code, _ = run(fail="collect:3")
     assert code == 3 and ran(steps, "collect") and not ran(steps, "write")
     code, _ = run(fail="render:kill")
-    assert code == 128 + 9 and ran(steps, "render") and not ran(steps, "send") and read_record()["exit_code"] == 128 + 9
+    killed = 9 if os.name == "nt" else 128 + 9  # Windows 的 os.kill 是 TerminateProcess，exit code 就是那個數字
+    assert code == killed and ran(steps, "render") and not ran(steps, "send") and read_record()["exit_code"] == killed
     assert read_record()["step"] == "render"
 
 
