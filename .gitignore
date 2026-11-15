@@ -90,3 +90,6 @@ node_modules/
 # 放行規則之後再擋一次系統雜物（例如 .claude/skills/** 會連 .DS_Store 一起放行）
 .DS_Store
 __pycache__/
+
+# Claude Code 的 git worktree（完整 checkout，Nx 會重複讀到專案）
+/.claude/worktrees/

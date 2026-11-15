@@ -16,8 +16,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 import devtools
 from devtools import (
-    DevError, Target, check_feedback, compare_reports, eml_to_html, export_snapshot, format_status, import_snapshot,
-    load_env, py_c, remote_code, sample_files, shift_dates, snapshot_members,
+    BOOT, DevError, Target, check_feedback, compare_reports, eml_to_html, export_snapshot, format_status,
+    import_snapshot, load_env, remote_code, sample_files, shift_dates, snapshot_members, stdin_payload,
 )
 
 UID = "0123456789abcdef"
@@ -122,33 +122,35 @@ def test_remote_code_runs_standalone(tmp_path):
     prod, test = tmp_path / "prod", tmp_path / "test"
     make_prod(prod)
     test.mkdir()
-    out = subprocess.run([sys.executable, "-I", "-c", py_c(remote_code("export_snapshot(ROOT, sys.stdout.buffer)"))],
+    py = [sys.executable, "-I", "-c", BOOT]
+    out = subprocess.run(py, input=stdin_payload(remote_code("export_snapshot(ROOT, sys.stdout.buffer)")),
                          cwd=prod, capture_output=True, check=True).stdout
     assert snapshot_members(out) == snapshot_members(export(prod))
-    stats = subprocess.run([sys.executable, "-I", "-c",
-                            py_c(remote_code("print(json.dumps(import_snapshot(ROOT, sys.stdin.buffer)))"))],
-                           cwd=test, input=out, capture_output=True, check=True).stdout
+    stats = subprocess.run(py, input=stdin_payload(remote_code(
+                               "print(json.dumps(import_snapshot(ROOT, sys.stdin.buffer)))"), out),
+                           cwd=test, capture_output=True, check=True).stdout
     assert json.loads(stats)["files"] == 7 and (test / "state" / "kg.sqlite").exists()
-    missing = subprocess.run([sys.executable, "-I", "-c", py_c(remote_code("read_file(ROOT, 'nope.json')"))],
+    missing = subprocess.run(py, input=stdin_payload(remote_code("read_file(ROOT, 'nope.json')")),
                              cwd=test, capture_output=True, check=False)
     assert missing.returncode == 66
 
 
 def test_target_argv(monkeypatch):
     prod = Target("prod", "me@prod", "docker", "newsletter-ops")
-    argv = prod.argv("print(1)")
+    argv = prod.argv()
     assert argv[:3] == ["ssh", "-T", "me@prod"]
     assert "label=com.docker.compose.project=newsletter-ops " in argv[3] and "service=worker" in argv[3]
-    assert shlex.split(argv[3].rsplit("python -c ", 1)[1]) == [py_c("print(1)")]  # 遠端 shell 拆出來就是原本的參數
+    assert shlex.split(argv[3].rsplit("python -c ", 1)[1]) == [BOOT]  # 遠端 shell 拆出來就是原本的參數
+    assert len(argv[3]) < 1000  # dropbear 的指令長度上限 9000
     calls = []
     monkeypatch.setattr(devtools.subprocess, "run",
                         lambda a, **k: calls.append(a) or SimpleNamespace(stdout="abc123\nother\n"))
-    argv = Target("test", None, "podman", "newsletter-ops-test").argv("print(1)")
-    assert argv == ["podman", "exec", "-i", "abc123", "python", "-c", py_c("print(1)")]
+    argv = Target("test", None, "podman", "newsletter-ops-test").argv()
+    assert argv == ["podman", "exec", "-i", "abc123", "python", "-c", BOOT]
     assert "label=com.docker.compose.project=newsletter-ops-test" in calls[0]
     monkeypatch.setattr(devtools.subprocess, "run", lambda a, **k: SimpleNamespace(stdout=""))
     with pytest.raises(DevError, match="找不到"):
-        Target("test", None, "podman", "x").argv("print(1)")
+        Target("test", None, "podman", "x").argv()
 
 
 def test_load_env(tmp_path, monkeypatch):

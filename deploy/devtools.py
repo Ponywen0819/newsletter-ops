@@ -265,9 +265,12 @@ def remote_code(call: str) -> str:
     return "\n".join(head + consts + [inspect.getsource(f) for f in REMOTE_FUNCS] + [call, ""])
 
 
-def py_c(code: str) -> str:
-    """`python -c` 的參數：base64 包起來，經 ssh 的遠端 shell 也不用跳脫。"""
-    return f"import base64;exec(base64.b64decode('{base64.b64encode(code.encode('utf-8')).decode()}'))"
+# 程式走 stdin 第一行，不放指令列：dropbear 的指令長度上限 9000 bytes，超過直接斷線。資料接在後面，同一個 stdin.buffer 讀
+BOOT = "import base64,sys;exec(base64.b64decode(sys.stdin.buffer.readline()))"
+
+
+def stdin_payload(code: str, data: bytes = b"") -> bytes:
+    return base64.b64encode(code.encode("utf-8")) + b"\n" + data
 
 
 @dataclass
@@ -280,16 +283,16 @@ class Target:
     def label(self) -> str:
         return f"{self.name}（{self.ssh or '本機'}，{self.runtime}，{self.project}）"
 
-    def argv(self, code: str) -> list[str]:
+    def argv(self) -> list[str]:
         filters = (f"--filter label=com.docker.compose.project={self.project} "
                    "--filter label=com.docker.compose.service=worker")
         if self.ssh is None:
             cid = self.local_container(filters)
-            return [self.runtime, "exec", "-i", cid, "python", "-c", py_c(code)]
+            return [self.runtime, "exec", "-i", cid, "python", "-c", BOOT]
         rt = shlex.quote(self.runtime)
         remote = (f"cid=$({rt} ps -q {filters} | head -n1); "
                   f"[ -n \"$cid\" ] || {{ echo '找不到 {self.project} 的 worker 容器（沒在跑？）' >&2; exit 69; }}; "
-                  f"exec {rt} exec -i \"$cid\" python -c {shlex.quote(py_c(code))}")
+                  f"exec {rt} exec -i \"$cid\" python -c {shlex.quote(BOOT)}")
         return ["ssh", "-T", self.ssh, remote]
 
     def local_container(self, filters: str) -> str:
@@ -305,8 +308,8 @@ class Target:
     def run(self, call: str, data: bytes | None = None) -> bytes:
         """在 worker 容器裡跑 call，回傳 stdout；stderr 直接給使用者看。"""
         try:
-            proc = subprocess.run(self.argv(remote_code(call)), input=data, stdout=subprocess.PIPE,
-                                  stdin=None if data is not None else subprocess.DEVNULL, check=False)
+            proc = subprocess.run(self.argv(), input=stdin_payload(remote_code(call), data or b""),
+                                  stdout=subprocess.PIPE, check=False)
         except OSError as exc:
             raise DevError(f"執行失敗（{self.label()}）：{exc}") from None
         if proc.returncode:
