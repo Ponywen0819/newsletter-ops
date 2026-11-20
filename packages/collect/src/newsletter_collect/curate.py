@@ -325,6 +325,34 @@ def near_misses(fresh: list[dict], ranked: list[dict], config: dict) -> list[dic
     return out
 
 
+RESERVE = 5  # 每個主題留幾則候補
+
+
+def reserve(deduped: list[dict], ranked: list[dict]) -> list[dict]:
+    """過了門檻、但沒進配額的前幾則（每主題 RESERVE 則，arXiv 不留：論文的摘要就是內容，不會被拿掉）。
+    原文被擋、摘要又短的項目會被 enrich.settle 拿掉，空出來的名額由這裡依 rank 補。不記進 seen：沒用到的明天還能再出現。"""
+    picked = {i["uid"] for i in ranked}
+    out: list[dict] = []
+    count: dict[str, int] = {}
+    for item in sorted(deduped, key=lambda i: i["rank"], reverse=True):
+        topic = item["topic"]
+        if item["uid"] in picked or item["source"].startswith("arXiv") or count.get(topic, 0) >= RESERVE:
+            continue
+        out.append(item)
+        count[topic] = count.get(topic, 0) + 1
+    return out
+
+
+def mark_seen(uids: list[str]) -> None:
+    """事後補收的項目（搜尋補充、補位的候補）也記進 seen。"""
+    if not uids:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    seen = load_seen()
+    seen.update(dict.fromkeys(uids, now))
+    save_seen(seen)
+
+
 def source_boosts(config: dict) -> dict[str, float]:
     """來源 → rank 倍率，依網頁／報告上的回饋。p＝(正＋prior)/(總＋2·prior)，倍率＝1＋2·strength·(p−0.5)，
     範圍 1±strength；prior 讓少量回饋動得很少（預設 10 個 + 是 ×1.1、200 個 - 是 ×0.81）。strength 0 關閉。"""
@@ -355,7 +383,8 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
 
     min_relevance = config.get("min_relevance", 1.0)
     relevant = [i for i in fresh if i["relevance"] >= min_relevance]
-    ranked, dropped_by_quota = apply_quota(dedupe(relevant, name_topics=frozenset(config.get("same_story_topics", []))), config)
+    deduped = dedupe(relevant, name_topics=frozenset(config.get("same_story_topics", [])))
+    ranked, dropped_by_quota = apply_quota(deduped, config)
 
     now = datetime.now(timezone.utc).isoformat()
     for item in ranked:
@@ -370,6 +399,7 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
         "by_topic": {},
         "dropped_by_quota": dropped_by_quota,
         "near_misses": near_misses(fresh, ranked, config),  # run.py 會搬到 curated JSON 的頂層
+        "reserve": reserve(deduped, ranked),  # run.py 用來補內容不足被拿掉的名額，不寫進 curated
     }
     for item in ranked:
         stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1

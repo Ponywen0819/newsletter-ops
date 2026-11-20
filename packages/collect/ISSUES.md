@@ -1,6 +1,6 @@
 # collect 已知問題
 
-最後更新：2026-11-08。每則格式：現象 → 原因 → 建議。解決後移到文末「已解決」並寫日期。編號沿用原本根目錄 `ISSUES.md` 的，不重排。
+最後更新：2026-11-20。每則格式：現象 → 原因 → 建議。解決後移到文末「已解決」並寫日期。編號沿用原本根目錄 `ISSUES.md` 的，不重排。
 
 ## 未解決
 
@@ -53,6 +53,14 @@
 - 目前用社群專案 [Olshansk/rss-feeds](https://github.com/Olshansk/rss-feeds) 的 feed，因為官網沒有 RSS。
 - 它停止更新時，改抓 `https://www.anthropic.com/sitemap.xml`（裡面有 260 篇以上的 `/news/` 網址），但需要另外寫解析。
 - 偵測（2026-11-08）：最新一則超過 21 天，curated 的 `errors` 會出現「feed 可能停更」，報告的本期備註看得到。
+
+## 已解決（2026-11-20）
+
+- **報告出現只有標題的新聞**：2026-11-19 的頭條〈Anthropic prices initial public offering〉摘要就是標題、也沒抓原文，報告只能寫「現有資料只有標題」；
+  OpenAI、WSJ、Science 原文 403／401，報告寫「原文因付費牆未能取得，僅依 summary 判斷」；Nature 回反廣告攔截的擋板頁、經濟日報的付費牆加推薦文章被當成原文存進 `fulltext`。
+  原因：補原文只抓每主題前 3 則；擋板頁、付費牆沒有辨識；內容不足的項目照樣收錄。
+  改成每則新聞都抓原文、辨識擋板與付費牆、原文抓不到且摘要太短的不收並由同主題候補補位（collect README「補原文」）。
+  用正式區 2026-11-08～20 的資料回測：被拿掉的是 OpenAI News、WSJ Economy、Science News 原文被擋的項目、Nature 擋板頁的項目與 Anthropic IPO 那則。
 
 ## 已解決（2026-11-08）
 

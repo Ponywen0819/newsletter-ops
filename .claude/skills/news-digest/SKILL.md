@@ -43,7 +43,9 @@ exit code 的意思：
 讀 JSON。結構：`generated_at`、`stats`、`errors`、`search`、`items[]`，每則含 `uid`、`title`、`url`、`source`、`topic`、`published`、`summary`、`relevance`、`rank`、`matched_keywords`、`also_in`。
 另外可能有：
 
-- `fulltext`：collect 替最可能入選的項目抓好的原文開頭（約 3000 字；arXiv 論文是 HTML 版或 abs 頁，含作者機構）。抓失敗的會有 `fulltext_error`。
+- `fulltext`：collect 替每則新聞抓好的原文開頭（約 3000 字；arXiv 論文只有前幾篇，是 HTML 版或 abs 頁，含作者機構）。抓失敗的會有 `fulltext_error`；
+  付費牆只拿到開頭的會有 `fulltext_note`。原文被擋、摘要又短（只有標題）的新聞 collect 已經拿掉，`items` 裡每則都有足夠的內容。
+- 頂層的 `dropped`：因為內容不足沒收錄的項目，只供稽核，**不要寫進報告**；`errors` 已有一句總結，照例放進「本期備註」。
 - `origin: "search"`：RSS 弱的主題由 collect 用搜尋補來的項目，`query` 是找到它的搜尋字串，`source` 是「搜尋：網域」。
   它已經過程式驗收（網址連得到、標題對得上、時間在窗內），和 RSS 的項目一視同仁。
 - 頂層的 `search`：`gaps` 是這次要補的主題、`accepted`／`rejected` 是收下與退回的則數、`error` 是搜尋失敗的原因（沒失敗是 null）。
@@ -86,7 +88,7 @@ skill 裡不留任何硬編碼的興趣清單。檔裡分「核心 / 關注 / �
 ### 3. 判讀與挑選
 
 `summary` 常是 RSS 截斷的前幾句。要選為重點、或 summary 不足以判斷這則在講什麼時，讀它的 `fulltext`；
-沒有 `fulltext` 就只依 summary 判斷，不要自己去抓。
+沒有 `fulltext` 就只依 summary 判斷（collect 只留摘要夠長的），不要自己去抓。
 
 curated JSON 的 `topic` 對應到簡報的五個段落：
 

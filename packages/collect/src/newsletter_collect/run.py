@@ -107,16 +107,26 @@ def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: 
     if not no_search:
         found, search = search_mod.run(ranked, config, stamp, redo)
         ranked += found
-        for item in found:
-            stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1
-    enrich_mod.enrich(ranked, config)
 
-    near = stats.pop("near_misses")
+    # 補原文；原文被擋、摘要又短（只有標題）的拿掉，名額由同主題的候補補上
+    before = {i["uid"] for i in ranked}
+    ranked, dropped = enrich_mod.settle(ranked, stats.pop("reserve"), config)
+    curate_mod.mark_seen([i["uid"] for i in ranked if i["uid"] not in before])
+    near, dropped_near = enrich_mod.settle(stats.pop("near_misses"), [], config)
+    stats["by_topic"] = {}
+    for item in ranked:
+        stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1
     stats["near_misses"] = len(near)
+    stats["dropped_thin"] = len(dropped)
+    if note := enrich_mod.dropped_note(dropped):
+        errors = [*errors, note]
+        print(f"[enrich] {note}", file=sys.stderr)
     payload = {
         "generated_at": datetime.now(ZoneInfo(config.get("timezone") or DEFAULT_TZ)).isoformat(),
         "stats": stats,
         "errors": errors,
+        "dropped": [{k: i.get(k) for k in ("uid", "title", "url", "source", "topic", "dropped_reason")}
+                    for i in dropped + dropped_near],
         "search": search,
         "near_misses": near,
         "config_digest": {k: config[k] for k in
