@@ -30,6 +30,8 @@ VERSION = 1                 # 萃取 prompt 或驗收規則改了就加一，舊
 MODEL = "claude-haiku-5-5"
 MAX_EVENTS, SUMMARY_LEN, QUOTE_LEN, NAME_LEN = 5, 120, 300, 60
 TEXT_LIMIT = 4000           # 每則送給模型的原文上限（字元）
+RELATE_BATCH = 40           # 一次比對幾個事件（原文只送這批用到的）
+EXTRACT_BATCH = 20          # 一次呼叫萃取幾則：加上別家報導後一天六、七十則，一次送完回覆太長
 MIN_QUOTE = 8               # 正規化後少於這個長度的引句不算證據
 RELATE_DAYS, CONTEXT_DAYS = 90, 30
 CANDIDATES, MAX_BACKGROUND = 5, 40
@@ -139,15 +141,20 @@ def extract(con: sqlite3.Connection, stamp: str, items: list[dict], ask: Ask) ->
     todo = {i["uid"]: i for i in items if i.get("uid") and i["uid"] not in done}
     if not todo:
         return {"items": 0, "extracted": 0, "dropped": 0}
-    payload = [{"uid": uid, "title": i.get("title", ""), "source": i.get("source", ""), "text": article(i)[:TEXT_LIMIT]}
-               for uid, i in todo.items()]
-    reply = ask(EXTRACT_PROMPT.format(max_events=MAX_EVENTS, summary_len=SUMMARY_LEN, quote_len=QUOTE_LEN,
-                                      payload=json.dumps({"items": payload}, ensure_ascii=False)), "kg_extract")
+    rows: list = []
+    uids = list(todo)
+    for start in range(0, len(uids), EXTRACT_BATCH):
+        chunk = uids[start:start + EXTRACT_BATCH]
+        payload = [{"uid": uid, "title": todo[uid].get("title", ""), "source": todo[uid].get("source", ""),
+                    "text": article(todo[uid])[:TEXT_LIMIT]} for uid in chunk]
+        reply = ask(EXTRACT_PROMPT.format(max_events=MAX_EVENTS, summary_len=SUMMARY_LEN, quote_len=QUOTE_LEN,
+                                          payload=json.dumps({"items": payload}, ensure_ascii=False)), "kg_extract")
+        rows += [r for r in reply.get("items") or [] if isinstance(r, dict) and r.get("uid") in chunk]
     kept = dropped = 0
     with con:
         for uid in todo:
             forget(con, uid)
-        for row in reply.get("items") or []:
+        for row in rows:
             item = todo.get(row.get("uid")) if isinstance(row, dict) else None
             if item is None:
                 continue
@@ -190,10 +197,13 @@ def relate(con: sqlite3.Connection, stamp: str, texts: dict[str, str], ask: Ask)
     links = rejected = 0
     if pairs:
         offered = {p["new"]: ({c["id"] for c in p["candidates"]}, p["uid"]) for p in pairs}
-        payload = {"pairs": pairs, "texts": {p["uid"]: texts.get(p["uid"], "")[:TEXT_LIMIT] for p in pairs}}
-        reply = ask(RELATE_PROMPT.format(payload=json.dumps(payload, ensure_ascii=False)), "kg_relate")
+        replies: list = []
+        for start in range(0, len(pairs), RELATE_BATCH):
+            chunk = pairs[start:start + RELATE_BATCH]
+            payload = {"pairs": chunk, "texts": {p["uid"]: texts.get(p["uid"], "")[:TEXT_LIMIT] for p in chunk}}
+            replies += ask(RELATE_PROMPT.format(payload=json.dumps(payload, ensure_ascii=False)), "kg_relate").get("links") or []
         rows = []
-        for link in reply.get("links") or []:
+        for link in replies:
             new, old, kind = (link.get(k) for k in ("new", "old", "kind")) if isinstance(link, dict) else (None,) * 3
             quote = str(link.get("quote") or "").strip()[:QUOTE_LEN] if isinstance(link, dict) else ""
             if new not in offered or old not in offered[new][0] or kind not in KINDS or (
@@ -254,8 +264,14 @@ def background(con: sqlite3.Connection, stamp: str, root: Path, flags: dict[str,
     return {"date": stamp, "note": NOTE, "events": events, "corrections": corrections}
 
 
+def items_of(curated: dict) -> list[dict]:
+    """收錄的新聞，加上 collect 留下的同一件事的別家報導（stories[].coverage）：它們的事件也要進圖譜，專題才串得起來。"""
+    covers = [c for s in curated.get("stories") or [] for c in s.get("coverage") or []]
+    return [*curated.get("items", []), *covers]
+
+
 def load_items(root: Path, stamp: str) -> list[dict]:
-    return json.loads((root / "data" / "curated" / f"{stamp}.json").read_text(encoding="utf-8")).get("items", [])
+    return items_of(json.loads((root / "data" / "curated" / f"{stamp}.json").read_text(encoding="utf-8")))
 
 
 def build(root: Path, stamp: str, ask: Ask) -> dict:
@@ -294,7 +310,7 @@ def rebuild(root: Path, ask: Ask) -> int:
         con = connect(db)
         try:
             for path in sorted((root / "data" / "curated").glob("*.json")):
-                items = json.loads(path.read_text(encoding="utf-8")).get("items", [])
+                items = items_of(json.loads(path.read_text(encoding="utf-8")))
                 stats = {**extract(con, path.stem, items, ask),
                          **relate(con, path.stem, {i["uid"]: article(i) for i in items}, ask)}
                 print(f"[kg] {path.stem} {json.dumps(stats, ensure_ascii=False)}", file=sys.stderr)

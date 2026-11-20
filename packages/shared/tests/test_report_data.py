@@ -122,6 +122,17 @@ def test_merged_marks():
     assert merged["blocks"][-1]["items"][-1]["uids"] == [UID_A, UID_B] and merged["blocks"][-1]["votable"] is True
 
 
+def test_story():
+    """專題：標題段落、導言段落、清單（句中多個來源連結），最後連著多行 mark；可投票，連結都進資料來源。"""
+    md = HEAD + ("## 專題報導\n\n**[一件事](https://a.example/1)**\n\n導言：兩三句。\n\n"
+                 "- 各方說法：甲說（[A](https://a.example/2)）；乙說（[B](https://b.example/3)）。\n"
+                 "- 為何重要：x\n<!-- mark:    uid=%s -->\n<!-- mark:    uid=%s -->\n" % (UID_A, UID_B))
+    report = parse_report(md)
+    assert [b["type"] for b in report["blocks"]] == ["callout", "heading", "paragraph", "paragraph", "list"]
+    assert report["blocks"][-1]["votable"] is True and report["blocks"][-1]["items"][-1]["uids"] == [UID_A, UID_B]
+    assert uids_of(report) == [UID_A, UID_B] and len(report["sources"]) == 3
+
+
 @pytest.mark.parametrize(("name", "code", "msg"), [
     ("good", 0, ""), ("no_subject", 1, "subject"), ("no_headline", 1, "今日頭條"), ("missing", 1, "找不到"),
 ])

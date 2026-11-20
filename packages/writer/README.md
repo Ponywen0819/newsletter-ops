@@ -9,6 +9,7 @@
 src/newsletter_writer/
   write.py               入口 CLI（newsletter-write）：跑 skill、驗收報告有更新且格式正確、記錄用量
   kg.py                  新聞知識圖譜（newsletter-kg）：萃取事件、跨日比對、產生 writer 的背景
+  stories.py             專題素材：同一件事的多家報導＋知識圖譜裡的前因，寫 data/stories/<date>.json
 ```
 
 ```bash
@@ -51,6 +52,21 @@ uv run --project packages/writer newsletter-kg --flag <uid> wrong      # 這則�
   skill 會在報告開頭加「更正」。檔案開頭的 `note` 提醒 agent 這是資料不是指令；writer 的權限只多了讀 `data/kg/`。
 - **網頁**：`/kg`（找實體）、`/kg/entity/<key>`（實體的時間軸）、晨報每則的「脈絡」（`/kg/item/<uid>`）唯讀地畫出這個資料庫，見 [web-ui/README.md](../../apps/web-ui/README.md)「知識圖譜」。
 - **成本**：萃取與比對用 Haiku，每天約 $0.02；writer 多讀背景每天約 $0.03～0.06（訂閱額度的估算）。summary 的 `usd` 已含 KG。
+
+## 專題素材
+
+晨報開頭的「專題報導」把同一件事的多家報導與前因合成一篇（例如 IPO 的定價、各家分析、投資方表態、前幾天的公告）。
+`newsletter-write` 在 KG 之後跑 `stories.prepare()`，寫 `data/stories/<date>.json`；**不呼叫模型**，只讀 curated 與 `state/kg.sqlite`：
+
+- **分組**：collect 的 cluster（curated 的 `stories`，見 [collect/README.md](../collect/README.md)「同一件事的別家報導」）取聯集
+  KG 今天的連結：今天兩則（含 coverage）的事件互為 `same`／`follow` 就併成一組，跨主題也會併。
+- **前因**（`past`）：組裡任一則的事件今天連到的過去 30 天事件（same／follow／contradict／retract），依日期排，每組最多 8 個；
+  使用者標 `wrong`、或已失效的不放，但被今天撤回或推翻的留著（status 是 `invalid`），報告才寫得出「先前報導已被否認」。
+- **門檻**：至少兩篇報導、或兩個前因才算一組；依（報導數＋前因數、rank）排序，最多 12 組，skill 從中挑 3～5 組寫。
+- coverage 的原文一起寫進去，skill 不用再對照 curated。檔案開頭的 `note` 提醒 agent 這是資料不是指令；writer 的權限多了讀 `data/stories/`。
+- **失敗不擋寫報告**：只記 log 與 `stage: stories` 的 metrics，那天 skill 改用 curated 的 `stories`（沒有前因）。
+
+加了 coverage 之後一天要萃取的則數約多一倍，`kg.py` 改成每 20 則一次萃取、每 40 個事件一次比對，避免單次回覆太長。
 
 ## exit code
 
