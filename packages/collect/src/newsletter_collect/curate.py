@@ -234,6 +234,7 @@ def dedupe(items: list[dict], threshold: float = 0.88, name_topics: frozenset[st
         match = next((k for k in kept if matches(item, k, norm)), None)
         if match:
             match.setdefault("also_in", []).append(item["source"])
+            match.setdefault("_dupes", []).append(item)  # 別家的報導：cluster 會把它們掛成同一件事的 coverage
         else:
             kept.append(item)
     for item in kept:
@@ -343,6 +344,13 @@ def reserve(deduped: list[dict], ranked: list[dict]) -> list[dict]:
     return out
 
 
+def pool(fresh: list[dict], ranked: list[dict]) -> list[dict]:
+    """沒收錄的新聞（不論分數，arXiv 除外），依 rank：同一件事的別家報導常常因為配額或分數沒進來。"""
+    picked = {i["uid"] for i in ranked}
+    return sorted((i for i in fresh if i["uid"] not in picked and not i["source"].startswith("arXiv")),
+                  key=lambda i: i["rank"], reverse=True)
+
+
 def mark_seen(uids: list[str]) -> None:
     """事後補收的項目（搜尋補充、補位的候補）也記進 seen。"""
     if not uids:
@@ -400,6 +408,7 @@ def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = fr
         "dropped_by_quota": dropped_by_quota,
         "near_misses": near_misses(fresh, ranked, config),  # run.py 會搬到 curated JSON 的頂層
         "reserve": reserve(deduped, ranked),  # run.py 用來補內容不足被拿掉的名額，不寫進 curated
+        "pool": pool(fresh, ranked),  # cluster 從這裡找同一件事的其他報導，不寫進 curated
     }
     for item in ranked:
         stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1

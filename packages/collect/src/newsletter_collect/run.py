@@ -3,7 +3,7 @@
 
 data/raw 只留 config.json 的 raw_retention_days 天（預設 30），沒有程式讀舊的 raw。
 
-抓取 → 整理 → 搜尋補 RSS 弱的主題 → 補原文，寫 data/curated/<date>.json。
+抓取 → 整理 → 搜尋補 RSS 弱的主題 → 補原文 → 同一件事的別家報導（cluster），寫 data/curated/<date>.json。
 exit code：0 成功／2 來源設定有誤／3 一則都沒抓到。搜尋與補原文失敗只警告。
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from newsletter_collect import cluster as cluster_mod
 from newsletter_collect import curate as curate_mod
 from newsletter_collect import enrich as enrich_mod
 from newsletter_collect import fetch as fetch_mod
@@ -93,7 +94,7 @@ def prune_raw(stamp: str, days: int, raw_dir: Path = RAW) -> list[str]:
 
 
 def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: bool) -> None:
-    """整理 → 搜尋 → 補原文，寫 data/curated/<stamp>.json。"""
+    """整理 → 搜尋 → 補原文 → 同一件事的別家報導，寫 data/curated/<stamp>.json。"""
     curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
     redo = prior_uids(curated_path)
     if redo:
@@ -112,12 +113,17 @@ def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: 
     before = {i["uid"] for i in ranked}
     ranked, dropped = enrich_mod.settle(ranked, stats.pop("reserve"), config)
     curate_mod.mark_seen([i["uid"] for i in ranked if i["uid"] not in before])
-    near, dropped_near = enrich_mod.settle(stats.pop("near_misses"), [], config)
+    # 同一件事的別家報導留下來（不佔配額），writer 合成專題；用到的記進 seen
+    stories, story_stats = cluster_mod.cluster(ranked, stats.pop("pool"), config)
+    covered = {c["uid"] for s in stories for c in s["coverage"]}
+    curate_mod.mark_seen(sorted(covered | {i["uid"] for i in ranked if i.get("origin") == "cluster"}))
+    near, dropped_near = enrich_mod.settle([i for i in stats.pop("near_misses") if i["uid"] not in covered], [], config)
     stats["by_topic"] = {}
     for item in ranked:
         stats["by_topic"][item["topic"]] = stats["by_topic"].get(item["topic"], 0) + 1
     stats["near_misses"] = len(near)
     stats["dropped_thin"] = len(dropped)
+    stats["cluster"] = {k: story_stats[k] for k in ("stories", "coverage", "promoted", "coverage_thin", "error")}
     if note := enrich_mod.dropped_note(dropped):
         errors = [*errors, note]
         print(f"[enrich] {note}", file=sys.stderr)
@@ -132,6 +138,7 @@ def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: 
         "config_digest": {k: config[k] for k in
                           ("lookback_hours", "min_relevance", "quota", "max_items_in_report")},
         "items": ranked,
+        "stories": stories,  # 放最後：coverage 的原文很長，writer 讀 data/stories/ 那份就好，不必讀到這裡
     }
     curated_path.parent.mkdir(parents=True, exist_ok=True)
     curated_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -10,7 +10,7 @@ export interface Unit {
   id: string
   /** 左清單上的文字 */
   label: string
-  /** story＝段落＋緊接的清單；list＝沒有前導段落的整張清單；paragraph＝後面不接清單的段落；callout＝第二個以後的 callout（第一個是 Grouped.callout） */
+  /** story＝段落（專題多一段導言）＋緊接的清單；list＝沒有前導段落的整張清單；paragraph＝後面不接清單的段落；callout＝第二個以後的 callout（第一個是 Grouped.callout） */
   kind: 'callout' | 'story' | 'list' | 'paragraph' | 'sources'
   blocks: Block[]
 }
@@ -68,9 +68,14 @@ export function groupReport(report: Report): Grouped {
         break
       case 'paragraph': {
         const next = blocks[i + 1]
+        const after = blocks[i + 2]
         if (next?.type === 'list') {
           add(i, 'story', plainText(block.inline), [block, next])
           i++
+        } else if (next?.type === 'paragraph' && after?.type === 'list') {
+          // 專題：標題段落、導言段落、清單，是同一則
+          add(i, 'story', plainText(block.inline), [block, next, after])
+          i += 2
         } else {
           add(i, 'paragraph', plainText(block.inline), [block])
         }

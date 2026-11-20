@@ -8,7 +8,7 @@ import pytest
 
 from newsletter_llm import runner
 from newsletter_shared import auth_store, metrics
-from newsletter_writer import kg, write
+from newsletter_writer import kg, stories, write
 from newsletter_writer.write import CHECK_TOOL, TOOLS, check_format, coverage, main, permissions, report_check, verify
 
 GOOD = "> **今日頭條：** x\n<!-- subject: s -->\n"
@@ -66,7 +66,7 @@ def test_permissions_follow_symlinks(tmp_path):
 def test_permissions_plain(tmp_path):
     (tmp_path / "reports").mkdir()
     assert permissions(tmp_path)[0] == ["Skill", CHECK_TOOL, "Edit(./reports/**)", "Read(./reports/**)",
-                                        "Read(./data/curated/**)", "Read(./data/kg/**)"]
+                                        "Read(./data/curated/**)", "Read(./data/kg/**)", "Read(./data/stories/**)"]
 
 
 @pytest.fixture
@@ -83,6 +83,7 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(metrics, "record", lambda *a, **k: None)
     prepare = mock.Mock()
     monkeypatch.setattr(kg, "prepare", prepare)
+    monkeypatch.setattr(stories, "prepare", mock.Mock())
     return tmp_path, stamp, prepare
 
 
@@ -109,6 +110,7 @@ def run_main(setup, monkeypatch, capsys, written: str | None, date: str | None =
     monkeypatch.setattr(runner, "run", fake_run)
     code = main([] if date is None else ["--date", date])
     prepare.assert_called_once_with(stamp, SECRET)  # 寫報告前先產生 KG 背景
+    stories.prepare.assert_called_once_with(stamp, root)  # 再串成專題素材
     cap = capsys.readouterr()
     return code, cap.out, cap.err
 
