@@ -42,7 +42,11 @@ TICK = 30  # 秒；每次醒來重讀牆上時鐘，不怕主機睡眠、校時
 JOBS = {
     "kg-rebuild": ("newsletter_writer.kg", ("--rebuild",), 4 * 3600),  # 依日期重跑全部 curated，會用訂閱額度
     "sources-check": ("newsletter_collect.run", ("--dry-run", "--no-search"), 30 * 60),  # 只抓不寫，不用 Claude
+    # 用某天的 curated 重寫那天的報告（覆蓋 reports/<date>.md），會用訂閱額度；devtools compare 用來比較改寫結果
+    "rewrite": ("newsletter_writer.write", ("--date", "{date}"), 60 * 60),
 }
+JOB_PARAMS = {"rewrite": {"date": re.compile(r"\d{4}-\d{2}-\d{2}")}}  # 要帶的參數（query string）與格式
+TEST_ONLY = {"rewrite"}  # 只在測試區（NEWSLETTER_SCHEDULE=off）開放：正式區的報告不該被覆蓋
 JOB_LABEL = "ops"  # 這些工作的 metrics 標籤：不混進每日執行的統計（summary 預設只看 prod）
 TAIL = 20  # 失敗時印出本次 log 的最後幾行
 HHMM_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
@@ -274,6 +278,7 @@ class Service:
     def _job(self, job: dict) -> None:
         kind = job["kind"]
         module, args, limit = JOBS[kind]
+        args = tuple(a.format(**job) for a in args)  # JOB_PARAMS 已驗過格式
         say(f"開始（{kind}）")
         code: int | None = None
         try:
@@ -408,7 +413,15 @@ class Handler(BaseHTTPRequestHandler):
             if kind not in JOBS:
                 self._send(400, {"error": f"kind 只能是 {'、'.join(JOBS)}"})
                 return
-            started = service.start_job({**job, "kind": kind})
+            if kind in TEST_ONLY and service.scheduled:
+                self._send(403, {"error": f"{kind} 只在測試區（NEWSLETTER_SCHEDULE=off）開放"})
+                return
+            params = {k: query.get(k, [""])[0] for k in JOB_PARAMS.get(kind, {})}
+            bad = [k for k, v in params.items() if not JOB_PARAMS[kind][k].fullmatch(v)]
+            if bad:
+                self._send(400, {"error": f"{kind} 需要參數 {'、'.join(bad)}（格式不對或沒給）"})
+                return
+            started = service.start_job({**job, "kind": kind, **params})
         else:
             self._send(404, {"error": "not found"})
             return

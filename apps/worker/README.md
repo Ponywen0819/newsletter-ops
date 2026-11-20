@@ -82,7 +82,7 @@ npx nx run worker:start --port 9000      # 參數直接接在後面
 
 | 介面 | 回應 |
 | --- | --- |
-| `GET /status` | `{state: idle\|running, scheduled, run_at（HH:MM）, next_run_at（排程關閉時 null）, current: {kind, trigger, started_at} \| null, last: last_run.json \| null, job: last_job.json \| null}`；`kind` 是 `run`、`kg-rebuild` 或 `sources-check` |
+| `GET /status` | `{state: idle\|running, scheduled, run_at（HH:MM）, next_run_at（排程關閉時 null）, current: {kind, trigger, started_at} \| null, last: last_run.json \| null, job: last_job.json \| null}`；`kind` 是 `run`、`kg-rebuild`、`sources-check` 或 `rewrite` |
 | `POST /job?kind=<工作>` | 見下面「手動的工作」 |
 | `POST /run[?from=<步驟>]` | 202 `{started_at, id}`；已經在跑（這裡或別的程序握著鎖）回 409。不收 body。`from`（collect／write／render／send，預設 collect）從那一步開始，前面的產出要今天已經有；send 會從 render 起；其他值回 400 |
 
@@ -96,8 +96,9 @@ SIGTERM：轉給執行中的那一步、等它結束、紀錄記成 143，然後
 | --- | --- |
 | `sources-check` | `newsletter-collect --dry-run --no-search`：抓一次所有來源、印統計，不寫檔、不用 Claude（時限 30 分鐘） |
 | `kg-rebuild` | `newsletter-kg --rebuild`：清掉 `state/kg.sqlite`，依日期重跑全部 curated（用訂閱額度，時限 4 小時） |
+| `rewrite`（要帶 `&date=YYYY-MM-DD`） | `newsletter-write --date <日期>`：用那天的 curated 重寫那天的報告（用訂閱額度，時限 1 小時）。**只有測試區**（`NEWSLETTER_SCHEDULE=off`）接受，正式區回 403；`devtools compare` 用它（見 [deploy/README.md](../../deploy/README.md)「開發工具」），維運頁沒有按鈕 |
 
-和每日流程握同一把 pipeline 的鎖，同時只會有一個；在跑時回 409，不合法的 `kind` 回 400。輸出在 `logs/ops-<kind>.log`（每次覆寫），metrics 標籤是 `ops`，不混進每日執行的統計。
+和每日流程握同一把 pipeline 的鎖，同時只會有一個；在跑時回 409，不合法的 `kind` 或參數回 400。輸出在 `logs/ops-<kind>.log`（每次覆寫），metrics 標籤是 `ops`，不混進每日執行的統計。
 `POST /run` 與 `POST /job` 開始時回 202 `{started_at, id}`，開始與結束都寫進 `state/last_job.json`（`id, kind, from, requested_at, started_at, finished_at, exit_code, log, offset`；
 `run` 的輸出在當月 log，`offset` 是這次開始的位置），web 從 volume 讀它顯示結果與 log。排程跑的不記在這裡（看 `last_run.json`）。
 

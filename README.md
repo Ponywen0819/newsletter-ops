@@ -26,7 +26,7 @@ collect 與 writer 互不依賴：蒐集只寫 `data/curated/<date>.json`，寫�
 | --- | --- | --- | --- | --- |
 | [packages/shared/](packages/shared/) | `newsletter-shared` | Python | 共用底層（標準庫）：repo 路徑、報告格式的解析與驗證、回饋標記、量測、OAuth token 儲存 | [README](packages/shared/README.md) |
 | [packages/llm/](packages/llm/) | `newsletter-llm` | Python | Claude Agent SDK 的共用執行器：OAuth 認證、只開指定工具、失敗分類、用量紀錄。唯一的第三方依賴 `claude-agent-sdk` 在這裡 | [README](packages/llm/README.md) |
-| [packages/collect/](packages/collect/) | `newsletter-collect` | Python | 蒐集：RSS／Atom／arXiv 抓取 → 整理評分 → LLM 搜尋補 RSS 弱的主題（程式驗收）→ 補原文，產出 curated JSON | [README](packages/collect/README.md) |
+| [packages/collect/](packages/collect/) | `newsletter-collect` | Python | 蒐集：RSS／Atom／arXiv 抓取 → 整理評分 → LLM 搜尋補 RSS 弱的主題（程式驗收）→ 補原文 → 同一件事的別家報導，產出 curated JSON | [README](packages/collect/README.md) |
 | [packages/writer/](packages/writer/) | `newsletter-writer` | Python | 寫報告：Claude 依 skill 把 curated JSON 寫成 `reports/<date>.md` 並驗收；不上網、**不認得 email** | [README](packages/writer/README.md) |
 | [packages/notify/](packages/notify/) | `newsletter-notify` | Python | 外圍：報告 → email → 寄出；之後加別的通知管道放這裡 | [README](packages/notify/README.md) |
 | [apps/web-server/](apps/web-server/) | `newsletter-web-server` | Python | 晨報網頁的後端 JSON API（指令 `newsletter-web`），並提供 web-ui 的建置結果；依賴 `llm` 只為了驗證 OAuth token | [README](apps/web-server/README.md) |
@@ -67,6 +67,7 @@ data/raw/<date>.jsonl          當日原始抓取（append，供回溯；只留 
 data/search/<date>.json        搜尋補充的稽核紀錄：缺口、query、LLM 原始回覆、收下與退回（含原因）
 data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入；不會自動刪，KG 重建靠它
 data/kg/<date>.json            知識圖譜給 writer 的背景：相關的舊事件與更正（writer/README.md「知識圖譜」）
+data/stories/<date>.json       專題素材：同一件事的多家報導與前因（writer/README.md「專題素材」）
 reports/<date>.md              最終報告
 reports/<date>.html            email 版（newsletter-render 產生；.txt 是信件的純文字部分）
 state/seen.json                30 天去重記憶
@@ -139,7 +140,9 @@ npx nx run web-ui:dev        # 只起其中一個；web-server:dev、worker:dev 
 
 - 前端的 `/api` 由 Vite 代理到 web-server；web-server 與 worker 以 repo 根目錄為資料根目錄（讀寫這裡的 `reports/`、`state/` 等）。
 - `worker:dev` 綁 `127.0.0.1`、**不排程**（`NEWSLETTER_SCHEDULE=off`）：不會自己跑每日流程或寄信，只有手動 `POST /run` 才會跑；要跑正式排程用 `worker:start`。
-- Python 的部分只能在 Linux／macOS（或 WSL）跑：`newsletter_shared.lock` 用 `fcntl`，Windows 原生的 Python 沒有。
+- Linux、macOS、Windows 都能跑（`newsletter_shared.lock` 在 Windows 用 `msvcrt`）。
+- 沒有資料時先 `npm run seed`：寫入三天的範例報告、curated 與回饋（虛構內容，日期平移到今天）。要真實資料就用 `npm run devtools -- snapshot --to-local` 從正式區複製一份；
+  其他開發工具（正式區 → 測試區同步、重寫報告比較、測試區的信、兩區狀態）見 [deploy/README.md](deploy/README.md)「開發工具」。
 
 ## 快速開始
 

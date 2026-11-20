@@ -1,0 +1,79 @@
+{
+ "generated_at": "2026-11-11T07:45:00+08:00",
+ "stats": {
+  "items": 4,
+  "dropped_by_quota": {}
+ },
+ "errors": [],
+ "search": {
+  "gaps": [],
+  "accepted": 0,
+  "rejected": 0,
+  "error": null
+ },
+ "items": [
+  {
+   "uid": "9f54443b90bd0ec6",
+   "title": "範例晶片設計公司推出低功耗推論晶片",
+   "url": "https://news.example.com/2026-11-11/1",
+   "source": "Example Chip News",
+   "topic": "semiconductor",
+   "published": "2026-11-11T00:30:00+08:00",
+   "summary": "虛構公司推出給手機用的推論晶片，同功耗下速度提升 40%。",
+   "relevance": 3.0,
+   "rank": 5.0,
+   "matched_keywords": [
+    "inference",
+    "edge ai"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "7884bc993255c9a6",
+   "title": "論文：以少量標註資料微調代理人",
+   "url": "https://news.example.com/2026-11-11/2",
+   "source": "arXiv（範例）",
+   "topic": "ai-research",
+   "published": "2026-11-11T01:30:00+08:00",
+   "summary": "虛構論文提出只用 500 筆軌跡微調工具使用代理人的方法。",
+   "relevance": 2.6,
+   "rank": 4.3,
+   "matched_keywords": [
+    "agent",
+    "fine-tuning"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "a7a97728effcd39a",
+   "title": "範例科技公司在台設立研發中心",
+   "url": "https://news.example.com/2026-11-11/3",
+   "source": "Example Taiwan Tech",
+   "topic": "taiwan-tech",
+   "published": "2026-11-11T02:30:00+08:00",
+   "summary": "虛構公司宣布在新竹設立研發中心，預計聘用 300 人。",
+   "relevance": 2.2,
+   "rank": 3.6,
+   "matched_keywords": [
+    "taiwan"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "d69ec6328940d83f",
+   "title": "虛構港口罷工影響航運",
+   "url": "https://news.example.com/2026-11-11/4",
+   "source": "Example World News",
+   "topic": "world",
+   "published": "2026-11-11T03:30:00+08:00",
+   "summary": "虛構港口工人罷工進入第三天，數十艘貨輪滯留外海。",
+   "relevance": 1.7999999999999998,
+   "rank": 2.9,
+   "matched_keywords": [
+    "shipping"
+   ],
+   "also_in": []
+  }
+ ],
+ "near_misses": []
+}

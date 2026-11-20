@@ -79,6 +79,16 @@ describe('groupReport', () => {
     expect(rest.blocks[1]).toMatchObject({ uid: UID_C })
   })
 
+  it('專題：標題段落＋導言段落＋清單是同一則，多個 uid 在最後一個項目', () => {
+    const lead: Block = { type: 'paragraph', inline: t('導言：這件事是…') }
+    const items: Block = { type: 'list', votable: true, items: [{ inline: t('最新進展') }, { inline: t('為何重要'), uids: [UID_A, UID_B] }] }
+    const g = groupReport(make([heading('專題報導'), para('台積電夾在 AI 投資與美中管制之間'), lead, items, heading('科技與 AI'), para('單則'), list({ text: 'x' })]))
+    expect(g.units.map((u) => [u.kind, u.label, u.blocks.length])).toEqual([
+      ['story', '台積電夾在 AI 投資與美中管制之間', 3],
+      ['story', '單則', 2],
+    ])
+  })
+
   it('後面不接清單的段落自成一個單位', () => {
     const g = groupReport(make([heading('H'), para('孤單的段落'), heading('H2'), list({ text: 'x' })]))
     expect(g.units.map((u) => [u.kind, u.label])).toEqual([

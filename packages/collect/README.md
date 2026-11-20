@@ -1,6 +1,6 @@
 # collect
 
-蒐集：抓取 → 整理 → 搜尋補 RSS 弱的主題 → 補原文，產出當日的 `data/curated/<date>.json`，寫報告的 [writer](../writer/README.md) 只讀這份檔。
+蒐集：抓取 → 整理 → 搜尋補 RSS 弱的主題 → 補原文 → 同一件事的別家報導，產出當日的 `data/curated/<date>.json`，寫報告的 [writer](../writer/README.md) 只讀這份檔。
 抓取與整理是純標準庫；只有搜尋經由 [llm](../llm/README.md) 用到 Claude。依賴 [shared](../shared/README.md)、llm，**不認得報告與 email**。
 專案全貌見[根目錄 README](../../README.md)，已知問題見 [ISSUES.md](ISSUES.md)。
 
@@ -11,6 +11,7 @@ src/newsletter_collect/
   curate.py              整理層：時間窗 → 跨日去重 → 近似標題合併 → 關鍵字+新鮮度評分
   search.py              搜尋層：RSS 弱的主題交給 Claude 用 WebSearch 補，程式驗收後併進 curated
   enrich.py              補原文：最可能入選的項目抓原文存進 fulltext，writer 不必上網
+  cluster.py             同一件事：留下別家的報導（coverage）、把講同一件事的收錄項目分成一組，給 writer 寫專題
   run.py                 入口 CLI（newsletter-collect）
 ```
 
@@ -50,10 +51,46 @@ RSS 弱的主題由 Claude 用 WebSearch 補，但**補哪些主題、收不收�
 
 writer 不上網，判讀需要的原文由這裡先抓好，存在項目的 `fulltext`（約 3000 字純文字；有 `<article>` 或 `<main>` 就只取它）：
 
-- 每個主題 `rank` 前 3 則（arXiv 除外）與搜尋補來的全部；
+- 所有新聞（含搜尋補來的與 `near_misses`）。同一網域依序抓、守 `request.delay_seconds` 的間隔，不同網域並行；
 - 還沒有主會議資訊的 arXiv 論文前 3 篇，讀 `arxiv.org/html/<id>`（開頭有作者機構），沒有 HTML 版就讀 abs 頁。
 
-抓不到的記在 `fulltext_error`（例如 OpenAI、WSJ 對非瀏覽器回 403），writer 就只依 summary 判斷。
+抓不到的記在 `fulltext_error`（例如 OpenAI、WSJ、Science 對非瀏覽器回 403／401）。
+
+### 擋板與付費牆
+
+抓得到、但不是內文的頁面不能當原文：
+
+- **擋板**：整頁只有「JavaScript is disabled… disable any ad blockers」（Nature）、Cloudflare 驗證這類訊息，記成 `fulltext_error`。
+  只看 1500 字以內的頁面，長文裡提到廣告攔截不算。
+- **付費牆**：「展開全文」「解鎖全文」「Subscribe to continue reading」之後全部丟掉（經濟日報的牆後面是一長串推薦文章）。
+  牆前面的開頭夠長（和摘要同一個門檻）就留下並標 `fulltext_note`，不夠就當抓不到。
+
+### 內容不足的不收
+
+原文抓不到、摘要又短的新聞，報告只能寫出標題，所以直接拿掉（`enrich.settle`）：
+
+- 有內容＝原文（去掉重複的標題）加權字數 ≥ `detail.min_fulltext`（200），或摘要 ≥ `detail.min_summary`（300）；中日韓字一字算 2。
+  arXiv 論文的摘要就是內容，不受影響。
+- 拿掉的名額由同主題沒進配額的候補（`curate.reserve`，每主題 5 則）依 rank 補上，候補也要抓得到內容；搜尋補來的不補位。
+- 拿掉的列在 curated 頂層的 `dropped`（含原因），`errors` 多一句「N 則原文被擋…沒有收錄：來源 則數」，writer 寫進本期備註。
+- 門檻在 `config.json` 的 `detail`。OpenAI News、WSJ Economy 的 RSS 摘要只有一句、原文又 403，幾乎每則都會被拿掉。
+
+## 同一件事的別家報導（cluster）
+
+晨報的專題要把同一件事的多家報導合起來寫，但資訊原本在兩個地方被篩掉：去重只留一家的內容（別家只剩 `also_in` 的名字），
+配額按「則」算（一天被砍掉的常常上百則，很多是同一件事的不同角度）。補原文之後，`cluster.py` 把它們撿回來：
+
+- **去重併掉的別家報導**（curate 的 `_dupes`）直接當這則的 coverage，不用模型。
+- **Haiku 分組**（`stage: cluster`）：收錄項目與沒收錄的候選（`curate.pool`：時間窗內、沒看過、非 arXiv，**不論分數**，依 rank 前 `stories.pool` 則）
+  的標題與摘要開頭送給 Haiku，回三種組：收錄項目之間講同一件事的併成一組；候選裡講同一件事（或它的直接後續與各方反應）的當 coverage；
+  候選裡至少 `stories.min_new` 家在報、卻一則都沒收錄的事件另成新的一組（最多 `stories.new_stories` 組），原文最長的那篇補進收錄（`origin: "cluster"`），其餘當 coverage。
+  2026-11-20 的 Anthropic 上市有 12 家報導，因為配額與每來源上限一則都沒進來，就是這種。
+- **驗收**：模型不給工具，回覆只能引用給它的 id（`p0`、`c12`），不存在或重複的丟掉（`rejected`）。模型或認證失敗只少了 Haiku 那部分，不擋蒐集。
+- coverage 一樣補原文，內容不足（見上一節）的拿掉；每組最多 `stories.per_story` 則。用到的記進 `state/seen.json`，明天不會再以單則出現。
+- 寫進 curated：頂層 `stories`（`id`、`uids`、`coverage`），收錄項目多一個 `story`；`stats.cluster` 是統計。coverage 不是收錄項目，不帶 mark、不算配額。
+  writer 的 KG 也會萃取 coverage，再和今天的連結、過去的事件串成專題素材（[writer/README.md](../writer/README.md)「專題素材」）。
+
+設定在 `config.json` 的 `stories`：`enabled`、`pool`（給模型看幾則候選，300 則約 2 萬 token）、`per_story`、`min_new`、`new_stories`。
 
 ## 調整來源
 

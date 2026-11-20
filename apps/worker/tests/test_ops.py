@@ -87,6 +87,23 @@ def test_jobs(api, jobs, kind, args):
     assert daily.read_record() is None  # 不是每日流程，不動 last_run.json
 
 
+def test_rewrite(api, jobs):
+    """重寫某天的報告：只在測試區（不排程）開放，要帶 YYYY-MM-DD 的 date。"""
+    service, req = api
+    status, body = req("POST", "/job?kind=rewrite&date=2026-11-02")
+    assert status == 403 and "測試區" in body["error"]
+    service.scheduled = False
+    for bad in ("", "&date=", "&date=2026-1-2", "&date=2026-11-02;rm"):
+        assert req("POST", f"/job?kind=rewrite{bad}")[0] == 400, bad
+    assert service.current is None
+    status, body = req("POST", "/job?kind=rewrite&date=2026-11-02")
+    assert status == 202
+    wait(lambda: finished(req) is not None)
+    job = finished(req)
+    assert job["id"] == body["id"] and job["kind"] == "rewrite" and job["date"] == "2026-11-02" and job["exit_code"] == 0
+    assert "job --date 2026-11-02 ops" in (jobs / "logs" / "ops-rewrite.log").read_text(encoding="utf-8")
+
+
 def test_job_failure(api, jobs, monkeypatch):
     _, req = api
     monkeypatch.setenv("FAKE_JOB_EXIT", "3")

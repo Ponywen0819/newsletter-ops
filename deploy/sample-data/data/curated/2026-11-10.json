@@ -1,0 +1,93 @@
+{
+ "generated_at": "2026-11-10T07:45:00+08:00",
+ "stats": {
+  "items": 5,
+  "dropped_by_quota": {}
+ },
+ "errors": [],
+ "search": {
+  "gaps": [],
+  "accepted": 0,
+  "rejected": 0,
+  "error": null
+ },
+ "items": [
+  {
+   "uid": "4e5c529caac47fc5",
+   "title": "範例 AI 公司發表新一代開源模型",
+   "url": "https://news.example.com/2026-11-10/1",
+   "source": "Example Tech Daily",
+   "topic": "ai-industry",
+   "published": "2026-11-10T00:30:00+08:00",
+   "summary": "一家虛構的 AI 公司釋出參數 700 億的開源模型，宣稱在程式碼基準測試上追平閉源模型。",
+   "relevance": 3.0,
+   "rank": 5.0,
+   "matched_keywords": [
+    "llm",
+    "open source"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "de46cae61ee9996c",
+   "title": "虛構國家舉行氣候協議談判",
+   "url": "https://news.example.com/2026-11-10/2",
+   "source": "Example World News",
+   "topic": "world",
+   "published": "2026-11-10T01:30:00+08:00",
+   "summary": "多國代表在虛構城市召開會議，討論減碳目標與資金分攤。",
+   "relevance": 2.6,
+   "rank": 4.3,
+   "matched_keywords": [
+    "climate"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "796e6ad19e175f60",
+   "title": "範例央行宣布維持利率不變",
+   "url": "https://news.example.com/2026-11-10/3",
+   "source": "Example Finance",
+   "topic": "economy",
+   "published": "2026-11-10T02:30:00+08:00",
+   "summary": "虛構央行連續第三次按兵不動，並暗示明年可能降息。",
+   "relevance": 2.2,
+   "rank": 3.6,
+   "matched_keywords": [
+    "interest rate"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "5a0c72162ca7f476",
+   "title": "研究團隊以新方法量測深海溫度",
+   "url": "https://news.example.com/2026-11-10/4",
+   "source": "Example Science",
+   "topic": "science",
+   "published": "2026-11-10T03:30:00+08:00",
+   "summary": "虛構研究團隊用光纖感測量測深海溫度變化，解析度比浮標高十倍。",
+   "relevance": 1.7999999999999998,
+   "rank": 2.9,
+   "matched_keywords": [
+    "ocean"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "f5ac3f64d863eb46",
+   "title": "範例晶圓廠公布新製程良率",
+   "url": "https://news.example.com/2026-11-10/5",
+   "source": "Example Chip News",
+   "topic": "semiconductor",
+   "published": "2026-11-10T04:30:00+08:00",
+   "summary": "虛構晶圓廠表示新製程良率已達量產門檻。",
+   "relevance": 1.4,
+   "rank": 2.2,
+   "matched_keywords": [
+    "foundry"
+   ],
+   "also_in": []
+  }
+ ],
+ "near_misses": []
+}

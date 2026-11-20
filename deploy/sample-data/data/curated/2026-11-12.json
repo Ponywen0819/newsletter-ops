@@ -1,0 +1,93 @@
+{
+ "generated_at": "2026-11-12T07:45:00+08:00",
+ "stats": {
+  "items": 5,
+  "dropped_by_quota": {}
+ },
+ "errors": [],
+ "search": {
+  "gaps": [],
+  "accepted": 0,
+  "rejected": 0,
+  "error": null
+ },
+ "items": [
+  {
+   "uid": "2bf12bf5a4bc4916",
+   "title": "範例雲端業者調降模型 API 價格",
+   "url": "https://news.example.com/2026-11-12/1",
+   "source": "Example Tech Daily",
+   "topic": "ai-industry",
+   "published": "2026-11-12T00:30:00+08:00",
+   "summary": "虛構雲端業者把旗下模型 API 價格調降一半，並延長免費額度。",
+   "relevance": 3.0,
+   "rank": 5.0,
+   "matched_keywords": [
+    "llm",
+    "pricing"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "23921bc0cf2a8b98",
+   "title": "範例電商公布雙十一銷售數字",
+   "url": "https://news.example.com/2026-11-12/2",
+   "source": "Example Finance",
+   "topic": "economy",
+   "published": "2026-11-12T01:30:00+08:00",
+   "summary": "虛構電商平台公布單日成交額，年增 8%，低於去年。",
+   "relevance": 2.6,
+   "rank": 4.3,
+   "matched_keywords": [
+    "e-commerce"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "15dd526112a3f392",
+   "title": "範例太空任務完成小行星取樣",
+   "url": "https://news.example.com/2026-11-12/3",
+   "source": "Example Science",
+   "topic": "science",
+   "published": "2026-11-12T02:30:00+08:00",
+   "summary": "虛構太空探測器完成小行星表面取樣，預計三年後返回。",
+   "relevance": 2.2,
+   "rank": 3.6,
+   "matched_keywords": [
+    "space"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "12ea58913d21b35a",
+   "title": "範例手機廠更新作業系統",
+   "url": "https://news.example.com/2026-11-12/4",
+   "source": "Example Tech Daily",
+   "topic": "tech-industry",
+   "published": "2026-11-12T03:30:00+08:00",
+   "summary": "虛構手機廠推送新版作業系統，加入裝置端摘要功能。",
+   "relevance": 1.7999999999999998,
+   "rank": 2.9,
+   "matched_keywords": [
+    "mobile"
+   ],
+   "also_in": []
+  },
+  {
+   "uid": "b2fdec331f5cb940",
+   "title": "虛構國家選舉結果出爐",
+   "url": "https://news.example.com/2026-11-12/5",
+   "source": "Example World News",
+   "topic": "world",
+   "published": "2026-11-12T04:30:00+08:00",
+   "summary": "虛構國家國會選舉開票完畢，執政黨維持過半。",
+   "relevance": 1.4,
+   "rank": 2.2,
+   "matched_keywords": [
+    "election"
+   ],
+   "also_in": []
+  }
+ ],
+ "near_misses": []
+}

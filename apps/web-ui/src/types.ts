@@ -234,7 +234,7 @@ export interface KgEntities {
 
 /* ---------- /ops 維運（只限本機） ---------- */
 
-export type OpsKind = 'run' | 'kg-rebuild' | 'sources-check'
+export type OpsKind = 'run' | 'kg-rebuild' | 'sources-check' | 'rewrite' // rewrite：測試區由 devtools compare 發起，頁面不提供按鈕
 export type RunStep = 'collect' | 'write' | 'render' | 'send'
 
 export interface OpsCurrent {

@@ -10,7 +10,12 @@ import { NotFoundPage } from './NotFoundPage'
 
 const STEPS: RunStep[] = ['collect', 'write', 'render', 'send']
 const STEP_LABEL: Record<RunStep, string> = { collect: '蒐集新聞', write: '撰寫報告', render: '排版', send: '寄信' }
-const KIND_LABEL: Record<OpsKind, string> = { run: '每日流程', 'kg-rebuild': '重建知識圖譜', 'sources-check': '試抓來源' }
+const KIND_LABEL: Record<OpsKind, string> = {
+  run: '每日流程',
+  'kg-rebuild': '重建知識圖譜',
+  'sources-check': '試抓來源',
+  rewrite: '重寫報告（devtools）',
+}
 const TRIGGER_LABEL: Record<string, string> = {
   schedule: '排程',
   catchup: '補跑',

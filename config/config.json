@@ -114,6 +114,8 @@
   },
   "min_relevance": 0.8,
   "same_story_topics": ["world"],
+  "detail": { "min_fulltext": 200, "min_summary": 300 },
+  "stories": { "enabled": true, "pool": 300, "per_story": 6 },
   "max_per_source": 2,
   "default_quota": 5,
   "quota": {
