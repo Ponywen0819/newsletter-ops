@@ -6,7 +6,7 @@ import pytest
 
 from newsletter_collect import curate as mod
 from newsletter_collect.curate import (
-    _hits, _names, _pick, curate, dedupe, load_seen, near_misses, save_seen, score, source_boosts, venue_of,
+    _hits, _names, _pick, curate, dedupe, load_seen, mark_seen, near_misses, save_seen, score, source_boosts, venue_of,
 )
 from newsletter_shared import ROOT
 
@@ -105,6 +105,18 @@ def test_rerun_same_day():
     assert uids(first) == {"u3", "u2"}
     assert uids(curate(batch(), cfg, redo=uids(first))) == uids(first)
     assert uids(curate(batch(), cfg)) == {"u1", "u0"}  # redo 之後的 seen 仍是對的
+
+
+def test_reserve_and_mark_seen():
+    """沒進配額的留作候補（不記進 seen，arXiv 不留）；補位用到的再用 mark_seen 記。"""
+    items = [*batch(), {**batch()[0], "uid": "px", "url": "https://arxiv.org/abs/1", "source": "arXiv cs.CV",
+                        "title": "echo paper"}]
+    ranked, stats = curate(items, {"min_relevance": 0.8, "quota": {"t": 2}})
+    assert [i["uid"] for i in ranked] == ["u3", "u2"]
+    assert [i["uid"] for i in stats["reserve"]] == ["u1", "u0"]
+    assert set(load_seen()) == {"u3", "u2"}
+    mark_seen(["u1"])
+    assert set(load_seen()) == {"u3", "u2", "u1"}
 
 
 def test_feedback_boosts():

@@ -50,10 +50,29 @@ RSS 弱的主題由 Claude 用 WebSearch 補，但**補哪些主題、收不收�
 
 writer 不上網，判讀需要的原文由這裡先抓好，存在項目的 `fulltext`（約 3000 字純文字；有 `<article>` 或 `<main>` 就只取它）：
 
-- 每個主題 `rank` 前 3 則（arXiv 除外）與搜尋補來的全部；
+- 所有新聞（含搜尋補來的與 `near_misses`）。同一網域依序抓、守 `request.delay_seconds` 的間隔，不同網域並行；
 - 還沒有主會議資訊的 arXiv 論文前 3 篇，讀 `arxiv.org/html/<id>`（開頭有作者機構），沒有 HTML 版就讀 abs 頁。
 
-抓不到的記在 `fulltext_error`（例如 OpenAI、WSJ 對非瀏覽器回 403），writer 就只依 summary 判斷。
+抓不到的記在 `fulltext_error`（例如 OpenAI、WSJ、Science 對非瀏覽器回 403／401）。
+
+### 擋板與付費牆
+
+抓得到、但不是內文的頁面不能當原文：
+
+- **擋板**：整頁只有「JavaScript is disabled… disable any ad blockers」（Nature）、Cloudflare 驗證這類訊息，記成 `fulltext_error`。
+  只看 1500 字以內的頁面，長文裡提到廣告攔截不算。
+- **付費牆**：「展開全文」「解鎖全文」「Subscribe to continue reading」之後全部丟掉（經濟日報的牆後面是一長串推薦文章）。
+  牆前面的開頭夠長（和摘要同一個門檻）就留下並標 `fulltext_note`，不夠就當抓不到。
+
+### 內容不足的不收
+
+原文抓不到、摘要又短的新聞，報告只能寫出標題，所以直接拿掉（`enrich.settle`）：
+
+- 有內容＝原文（去掉重複的標題）加權字數 ≥ `detail.min_fulltext`（200），或摘要 ≥ `detail.min_summary`（300）；中日韓字一字算 2。
+  arXiv 論文的摘要就是內容，不受影響。
+- 拿掉的名額由同主題沒進配額的候補（`curate.reserve`，每主題 5 則）依 rank 補上，候補也要抓得到內容；搜尋補來的不補位。
+- 拿掉的列在 curated 頂層的 `dropped`（含原因），`errors` 多一句「N 則原文被擋…沒有收錄：來源 則數」，writer 寫進本期備註。
+- 門檻在 `config.json` 的 `detail`。OpenAI News、WSJ Economy 的 RSS 摘要只有一句、原文又 403，幾乎每則都會被拿掉。
 
 ## 調整來源
 
