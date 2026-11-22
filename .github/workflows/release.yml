@@ -1,11 +1,9 @@
 name: release
 
-# main 或 v* tag 的 selftest 通過後，建 web、worker 兩個映像推到 GHCR：main 打 latest，tag 打同名版本號
+# 在 main 打 v* tag 時建一次 web、worker 兩個映像推到 GHCR，同一個映像打上版本號、latest、sha（selftest 已在 PR 跑過）
 on:
-  workflow_run:
-    workflows: [selftest]
-    types: [completed]
-    branches: [main, 'v*']   # tag push 時 head_branch 是 tag 名稱
+  push:
+    tags: ['v*']
 
 permissions:
   contents: read
@@ -16,7 +14,6 @@ env:
 
 jobs:
   image:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     # 自架 runner 是 x64，arm64 映像靠 QEMU 模擬建置（比原生慢）
     runs-on: [self-hosted, linux, x64, docker]
     strategy:
@@ -24,8 +21,6 @@ jobs:
         target: [web, worker]
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
@@ -42,7 +37,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ env.IMAGE }}-${{ matrix.target }}:${{ github.event.workflow_run.head_branch == 'main' && 'latest' || github.event.workflow_run.head_branch }}
-            ${{ env.IMAGE }}-${{ matrix.target }}:sha-${{ github.event.workflow_run.head_sha }}
+            ${{ env.IMAGE }}-${{ matrix.target }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}-${{ matrix.target }}:latest
+            ${{ env.IMAGE }}-${{ matrix.target }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
