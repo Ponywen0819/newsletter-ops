@@ -123,11 +123,11 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
 
 **6. 自動部署（GHCR）**
 
-`main` 每次更新、`selftest` 通過後，[release.yml](../.github/workflows/release.yml) 會建兩個映像推到
-`ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，tag 是 `latest` 與 `sha-<commit>`，只建 `linux/arm64`。
+發行時在 `main` 打 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`），[release.yml](../.github/workflows/release.yml) 會建一次兩個映像推到
+`ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，同一個映像打上 `v1.2.0`、`latest`、`sha-<commit>`，只建 `linux/arm64`。
+`selftest` 只在 PR 跑，合併到 `main` 與打 tag 都不再重跑；只合併不打 tag 不會出新映像。
 兩個 workflow 都跑在自架 runner（標籤 `self-hosted, linux, x64, docker`，Windows 的 WSL2），不用 GitHub 的分鐘數；x64 上建 arm64 映像靠 QEMU，比較慢。
 runner 關機時工作會排隊等它。repo 是公開的，fork 來的 PR 不會在 runner 上跑。
-發行時在 `main` 打的 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`）也會建一次，映像 tag 是同名的 `v1.2.0` 與 `sha-<commit>`。
 host 上的 timer 每 10 分鐘跑一次：先 `git pull --ff-only`（compose 檔跟著 repo），再拉映像，有新版才重建容器。repo 要停在 `main`。
 
 ```bash

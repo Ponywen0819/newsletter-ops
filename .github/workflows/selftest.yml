@@ -1,10 +1,7 @@
 name: selftest
 
-# 各模組的 lint、測試（pytest／vitest，不連網）都交給 Nx；PR 到 develop／main 時檢查，main 與 v* tag 的 push 之後 release.yml 接著建映像
+# 各模組的 lint、測試（pytest／vitest，不連網）都交給 Nx；只在 PR 到 develop／main 時檢查，合併後不重跑
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [develop, main]
 
@@ -14,7 +11,7 @@ permissions:
 jobs:
   selftest:
     # 自架 runner（Windows 的 WSL2）。repo 是公開的：fork 來的 PR 不在這台跑，免得陌生人的程式在家裡的機器上執行
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, docker]
     env:
       NX_NO_CLOUD: true
