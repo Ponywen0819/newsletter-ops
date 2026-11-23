@@ -1,10 +1,12 @@
 import json
+from datetime import datetime
 
 import pytest
 
 from newsletter_shared import kg_flags
 from newsletter_writer.kg import (
-    VERSION, _sources, background, build, connect, extract, grounded, norm, parse_json, prepare, relate, statuses,
+    VERSION, _sources, background, build, connect, edition, extract, grounded, grow_pool, norm, parse_json, prepare, relate,
+    statuses,
 )
 
 A, B, C, D = "a" * 16, "b" * 16, "c" * 16, "d" * 16
@@ -132,3 +134,30 @@ def test_prepare_failure_is_soft(root, monkeypatch):
     (root / "data" / "kg" / "2026-01-03.json").write_text("{}", encoding="utf-8")
     prepare("2026-01-03", "token", root, broken)
     assert not (root / "data" / "kg" / "2026-01-03.json").exists()
+
+
+def test_edition(monkeypatch):
+    monkeypatch.setenv("NEWSLETTER_RUN_AT", "08:00")
+    assert edition(datetime(2026, 1, 1, 7, 59)) == "2026-01-01"
+    assert edition(datetime(2026, 1, 1, 13, 0)) == "2026-01-02"
+    assert edition(datetime(2026, 1, 1, 23, 0)) == "2026-01-02"
+
+
+def test_grow_pool(root):
+    """候選池：有原文的才萃取，事件記在給的 edition；晨報 build 時不重抽。"""
+    con = connect(root / "state" / "kg.sqlite")
+    extract(con, "2026-01-01", DAY1, fake("2026-01-01"))
+    con.close()
+    (root / "data" / "pool.json").write_text(json.dumps({i["uid"]: i for i in DAY2}), encoding="utf-8")
+    calls: list[str] = []
+
+    def ask(prompt: str, stage: str) -> dict:
+        calls.append(stage)
+        return REPLIES["2026-01-02"] if stage == "kg_extract" else {"links": []}
+
+    assert grow_pool(root, "2026-01-02", ask) == {"items": 1, "extracted": 1, "dropped": 0, "compared": 1,
+                                                  "links": 0, "links_rejected": 0}
+    con = connect(root / "state" / "kg.sqlite")
+    assert list(con.execute("SELECT uid, date FROM events WHERE uid=?", (B,))) == [(B, "2026-01-02")]
+    con.close()
+    assert grow_pool(root, "2026-01-02", ask)["items"] == 0 and calls == ["kg_extract", "kg_relate"]

@@ -116,6 +116,7 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
 - 每天 08:00（`config/config.json` 的時區，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器啟動時，今天過了時間卻還沒跑過（或上次跑到一半被停掉）就補跑一次；
   只補同一天，跨日就算了。今天跑過但失敗了，30 分鐘後從失敗的那一步自動重跑**一次**（網路、來源暫時掛掉；寄信失敗不會重寫報告）；認證失效或額度用完不重跑（避免每次都燒一次），修好後用上面的 `/run` 補。
   手動跑的也算「今天跑過」，所以 08:00 前手動跑完，08:00 就不會再寄一次。`docker stop` 會等執行中的步驟收尾（最多 2 分鐘）。
+- 白天 13:00、18:00、23:00（`NEWSLETTER_ROUNDS`）各跑一輪 round：候選池與知識圖譜，會用 Haiku 的訂閱額度；錯過超過兩小時的那輪不補。
 - 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT`）worker 驗一次 Claude 認證（一次極小的呼叫），結果寫 `state/auth_health.json`，網頁的授權橫幅讀它。
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，`cloudflared` 靠服務名稱 `web` 重新連上，不必另外處理。
 - 三個容器都以唯讀根目錄、`cap_drop: [ALL]`、`no-new-privileges` 執行；web／worker 只有 volume、`/tmp`、`/home/app`（tmpfs，claude CLI 的設定與 session 紀錄，重啟就清掉）可寫。要在容器裡臨時寫檔請寫 `/tmp`。

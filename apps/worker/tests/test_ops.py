@@ -104,6 +104,28 @@ def test_rewrite(api, jobs):
     assert "job --date 2026-11-02 ops" in (jobs / "logs" / "ops-rewrite.log").read_text(encoding="utf-8")
 
 
+def test_round(api, jobs, monkeypatch):
+    """白天的一輪：tick 到了時間就跑 collect --pool 再 kg --pool，標籤照環境；同一輪不重跑；第一步失敗就不跑第二步。"""
+    service, req = api
+    monkeypatch.setattr(svc, "THEN", {"round": ("fake_job", ("--pool", "kg"), 30)})
+    monkeypatch.setenv("NEWSLETTER_RUN_LABEL", "test")
+    now = datetime.now(svc.ZoneInfo("Asia/Taipei"))
+    service.scheduled, service.rounds = True, (now.time(),)
+    service.at = (now + svc.timedelta(hours=1)).time()  # 晨報還沒到
+    service.tick(now)
+    wait(lambda: finished(req) is not None)
+    job = finished(req)
+    assert job["kind"] == "round" and job["trigger"] == "schedule" and job["exit_code"] == 0
+    log = (jobs / "logs" / "ops-round.log").read_text(encoding="utf-8")
+    assert "job --pool test" in log and "job --pool kg test" in log
+    service.tick(now)
+    assert service.current is None
+    monkeypatch.setenv("FAKE_JOB_EXIT", "3")
+    assert req("POST", "/job?kind=round")[0] == 202
+    wait(lambda: (finished(req) or {}).get("exit_code") == 3)
+    assert "kg" not in (jobs / "logs" / "ops-round.log").read_text(encoding="utf-8")
+
+
 def test_job_failure(api, jobs, monkeypatch):
     _, req = api
     monkeypatch.setenv("FAKE_JOB_EXIT", "3")

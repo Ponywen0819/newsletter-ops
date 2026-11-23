@@ -76,3 +76,11 @@ def test_prepare(tmp_path):
     setup(tmp_path, {"items": [item("a", "BBC")]})
     prepare(DAY, tmp_path)
     assert json.loads(stale.read_text(encoding="utf-8"))["stories"] == []
+
+
+def test_pool_event_same_day_is_past(tmp_path):
+    """白天候選池裡沒收錄的事件和晨報同一天：當前因，不能因為日期不早於今天就丟掉。"""
+    setup(tmp_path, {"items": [item("a", "technews")]},
+          [(1, "a", DAY, "T a", "technews"), (2, "p1", DAY, "下午的", "udn"), (3, "p2", DAY, "晚上的", "BBC")],
+          [(1, 2, "follow"), (1, 3, "follow")])
+    assert [p["summary"] for p in build(tmp_path, DAY)["stories"][0]["past"]] == ["事件 2", "事件 3"]
