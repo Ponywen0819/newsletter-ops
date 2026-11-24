@@ -549,7 +549,7 @@ def t(tmp_path):
 
 
 def test_auth_access(t) -> None:
-    """web 不做身分判斷（交給 nginx）：/auth、/api/auth* 照常提供，session 一律說可以管理。"""
+    """web 不做身分判斷（交給入口閘門）：/auth、/api/auth* 照常提供，session 一律說可以管理。"""
     req, get, post, uid, missing = t.req, t.get, t.post, t.uid, t.missing
     assert get("/api/session") == (200, {"local": True})
     assert get("/api/auth") == (200, {"state": "missing"})

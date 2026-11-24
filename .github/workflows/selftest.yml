@@ -36,7 +36,7 @@ jobs:
       - run: npm ci
         working-directory: apps/web-ui
       # 自架 runner 本身跑在 Docker 容器裡，services publish 的 port 在 Docker host、不在 runner 的 127.0.0.1
-      # （跟 deploy/test_nginx.py 不從 runner 直連容器是同一個原因）；讓 Postgres 共用 runner 容器的網路並聽 55432
+      # 所以讓 Postgres 共用 runner 容器的網路並聽 55432
       - name: Start test Postgres
         shell: bash
         run: |
@@ -69,7 +69,6 @@ jobs:
         env:
           GMAIL_USER: a
           GMAIL_APP_PASSWORD: b
-          TUNNEL_TOKEN: c
           NEWSLETTER_DATABASE_URL: postgresql://x@db/personal
       - name: Stop test Postgres
         if: always()

@@ -28,15 +28,13 @@
 !/docker-compose.test.yml
 !/.env.example
 !/docker/*.sh
-!/docker/*.conf
 
-# 部署範本（systemd 單元、cloudflared 設定、env 範本；真正的機密不放這裡）
+# 部署範本（systemd 單元、env 範本；真正的機密不放這裡）
 !/deploy/*.service
 !/deploy/*.timer
 !/deploy/*.example
 !/deploy/*.py
 !/deploy/*.sh
-!/deploy/cloudflare-tunnel.json
 # 開發工具的範例資料（虛構內容，devtools seed 用）；工具的輸出在 .devtools/，不放行
 !/deploy/sample-data/**
 
