@@ -73,7 +73,7 @@ reports/<date>.md              最終報告
 reports/<date>.html            email 版（newsletter-render 產生；.txt 是信件的純文字部分）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
-state/kg.sqlite                新聞知識圖譜：事件、實體、事件之間的關係（可用 newsletter-kg --rebuild 從 curated 重建）
+state/kg.lock                  知識圖譜（Postgres，NEWSLETTER_DATABASE_URL）的寫入鎖（可用 newsletter-kg --rebuild 從 curated 重建）
 state/kg_flags.jsonl           「事實有誤」的標記（網頁按鈕、newsletter-kg --flag）
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
 state/auth_health.json         最近一次 Claude 認證驗證的結果（worker 每天寫、web 讀來顯示橫幅）
@@ -115,12 +115,12 @@ npx nx run collect:test                             # 單一模組的單一任�
 npx nx graph                                      # 模組依賴圖
 ```
 
-Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是 oxlint（規則在 apps/web-ui/.oxlintrc.json）。不屬於任何模組的檢查另外跑：
+Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是 oxlint（規則在 apps/web-ui/.oxlintrc.json）。跑需要資料庫的測試要設環境變數 `NEWSLETTER_TEST_DATABASE_URL`（沒設會自動 skip；CI 沒設會直接失敗）。不屬於任何模組的檢查另外跑：
 
 ```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
 uv run --no-project python deploy/check_boundaries.py
-uv run --no-project --with "pytest>=9,<10" pytest -q deploy   # 依賴方向檢查本身的測試
+uv run --no-project --with "pytest>=9,<10" --with ./packages/shared pytest -q deploy   # 依賴方向檢查與 devtools 的測試
 ```
 
 commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：
@@ -206,7 +206,7 @@ pipeline 與 web 跑在家裡一台 host；測試區是另一台機器上的 `do
 生成物——`reports/`、`data/`、`state/`、`logs/`——不進版控（Docker 部署時放在 volume `newsletter-data`，見 [deploy/README.md](deploy/README.md)），
 壞了就重來：抓取結果可以重跑，`seen.json` 沒了或壞了（讀不了時當作空的）只會讓時間窗內已報過的新聞再出現一次。
 例外是 `state/feedback.jsonl` 與 `state/kg_flags.jsonl`：一則一則按出來的，丟了無法重來，worker 每週日把它們寄給自己當備份（[worker/README.md](apps/worker/README.md)「回饋備份」）。
-`state/kg.sqlite` 是推算出來的，壞了用 `newsletter-kg --rebuild` 從 `data/curated/` 重建。
+知識圖譜存在 Postgres（`NEWSLETTER_DATABASE_URL`），也是推算出來的，壞了用 `newsletter-kg --rebuild` 從 `data/curated/` 重建。
 本 repo 是 public，標記含標題與來源，不推上來。
 
 版控裡只有程式、設定與 `interests.md`；這些是唯一需要「持續更新」的內容，`git pull` 後重 build 即可。

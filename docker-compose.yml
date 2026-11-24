@@ -28,6 +28,8 @@ services:
       be: {}
     environment:
       NEWSLETTER_WORKER_URL: http://worker:8790
+      # Postgres 若在 host 本機，容器內不能用 127.0.0.1，要用 host 的區網 IP 或 host.docker.internal／host.containers.internal
+      NEWSLETTER_DATABASE_URL: ${NEWSLETTER_DATABASE_URL:?請在 .env 設定 NEWSLETTER_DATABASE_URL（Postgres 連線字串）}
     # 用 CMD-SHELL：podman 會把 CMD 陣列裡含空格的參數拆開
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8787/reports', timeout=3)\""]
@@ -51,6 +53,8 @@ services:
     environment:
       GMAIL_USER: ${GMAIL_USER:?請在 .env 設定 GMAIL_USER}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:?請在 .env 設定 GMAIL_APP_PASSWORD}
+      # Postgres 若在 host 本機，容器內不能用 127.0.0.1，要用 host 的區網 IP 或 host.docker.internal／host.containers.internal
+      NEWSLETTER_DATABASE_URL: ${NEWSLETTER_DATABASE_URL:?請在 .env 設定 NEWSLETTER_DATABASE_URL（Postgres 連線字串）}
       NEWSLETTER_MAIL_TO: ${NEWSLETTER_MAIL_TO:-${GMAIL_USER}}
       NEWSLETTER_RUN_AT: ${NEWSLETTER_RUN_AT:-08:00}
       NEWSLETTER_ROUNDS: ${NEWSLETTER_ROUNDS-13:00,18:00,23:00}

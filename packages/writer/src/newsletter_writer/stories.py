@@ -4,7 +4,7 @@
 - collect 的 cluster（curated 的 stories）：去重併掉的別家報導、Haiku 從沒收錄的候選挑出的同一件事。
 - 知識圖譜今天的連結：今天兩則報導的事件互為 same／follow 就併成一組（跨主題也會併）；
   連到過去事件的（same／follow／contradict／retract）掛成這組的 past，當前因與說法分歧。
-不呼叫模型：只讀 curated 與 state/kg.sqlite（KG 那步已經萃取、比對完）。KG 不存在或失敗時只用 collect 的分組。
+不呼叫模型：只讀 curated 與 KG（Postgres，NEWSLETTER_DATABASE_URL；KG 那步已經萃取、比對完）。KG 不存在或失敗時只用 collect 的分組。
 失敗不擋寫報告，那天就沒有這個檔（skill 會改看 curated 的 stories）。
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ def _kg_links(con, stamp: str, today: set[str]) -> tuple[list[tuple[str, str]], 
     pairs, past = [], {}
     for src_uid, dst_id, dst_uid, kind in con.execute(
             """SELECT s.uid, d.id, d.uid, l.kind FROM links l
-               JOIN events s ON s.id=l.src JOIN events d ON d.id=l.dst WHERE l.date=?""", (stamp,)):
+               JOIN events s ON s.id=l.src JOIN events d ON d.id=l.dst WHERE l.date=%s""", (stamp,)):
         if src_uid not in today:
             continue
         if dst_uid in today:
@@ -68,10 +68,10 @@ def _past_events(con, ids: list[tuple[int, str]], flags: dict, since: str) -> li
             kinds[eid] = kind
     if not kinds:
         return []
-    marks = ",".join("?" * len(kinds))
+    marks = ",".join(["%s"] * len(kinds))
     rows = list(con.execute(
         f"""SELECT e.id, e.date, e.summary, i.title, i.url, i.source FROM events e JOIN items i ON i.uid=e.uid
-            WHERE e.id IN ({marks}) AND e.date >= ? ORDER BY e.date""", [*kinds, since]))
+            WHERE e.id IN ({marks}) AND e.date >= %s ORDER BY e.date""", [*kinds, since]))
     status = statuses(con, [r[0] for r in rows], flags)
     out = []
     for eid, day, summary, title, url, source in rows:
@@ -115,7 +115,7 @@ def build(root: Path, stamp: str) -> dict:
     past_ids: dict[str, list[tuple[int, str]]] = {}
     flags = kg_flags.read(root / "state" / "kg_flags.jsonl")
     since = (date.fromisoformat(stamp) - timedelta(days=PAST_DAYS)).isoformat()
-    con = open_readonly(root / "state" / "kg.sqlite")
+    con = open_readonly()
     stories = []
     try:
         if con is not None:

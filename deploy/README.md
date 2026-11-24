@@ -67,7 +67,7 @@ docker compose up -d --build
 docker compose ps        # web、worker 要是 healthy；PORTS 欄是空的（8788 在 gateway 的 nginx 上）
 ```
 
-`.env` 缺 `GMAIL_USER`、`GMAIL_APP_PASSWORD` 任何一個，`docker compose` 會直接報錯並指出缺哪個；`gw-newsletter` 不存在時也會報錯（先部署 gateway）。
+`.env` 缺 `GMAIL_USER`、`GMAIL_APP_PASSWORD`、`NEWSLETTER_DATABASE_URL` 任何一個，`docker compose` 會直接報錯並指出缺哪個；`gw-newsletter` 不存在時也會報錯（先部署 gateway）。
 
 **貼上 OAuth token**（第一次、以及一年後 `newsletter-write` exit 5 或網頁頂端出現「Claude 授權已失效」時）：在**自己的電腦**執行 `claude setup-token`、
 在瀏覽器完成授權，複製它印出的 token（只會印一次；需要 Pro／Max／Team／Enterprise），再用**家裡區網或 VPN 上的瀏覽器**開 `http://<host 的 IP>:8788/auth`
@@ -168,6 +168,7 @@ deploy/push-images.sh v1.2.0   # 版本 tag → :v1.2.0 與 :sha-<commit>
 
 生成物都在 volume `newsletter-data`（容器內 `/var/lib/newsletter`），換容器、換映像、`docker compose down` 都還在；
 **`docker compose down -v` 或 `docker volume rm` 才會刪掉**。只有 `state/feedback.jsonl` 每週日寄一份到 `NEWSLETTER_MAIL_TO`，決定見[根目錄 README](../README.md)「資料保存」。
+知識圖譜存在 Postgres（`NEWSLETTER_DATABASE_URL`），壞了或換資料庫可直接用 `newsletter-kg --rebuild` 從 `data/curated/` 重建。
 
 **8. 從自帶入口的舊版切換**
 
@@ -180,6 +181,29 @@ deploy/push-images.sh v1.2.0   # 版本 tag → :v1.2.0 與 :sha-<commit>
    新版合進 `main` 時 gateway 還沒部署的話，autodeploy 的 `up` 會因為找不到 `gw-newsletter` 失敗，舊容器原封不動（看 journal），部署好 gateway 後下一輪就會成功。
 4. 跑一遍步驟 4 的驗收表。
 5. 這個 repo 的 Actions secrets `CF_API_TOKEN`、`CF_ACCOUNT_ID`、`CF_ZONE_ID`、`CF_TUNNEL_ID` 已經沒有 workflow 在用，可以刪掉；`.env` 的 `TUNNEL_TOKEN` 也是（搬到 gateway 的 Environment）。
+
+## 資料庫（Postgres）
+
+知識圖譜（KG）存在 Postgres，由環境變數 `NEWSLETTER_DATABASE_URL` 指定。多個專案共用同一個 database（例如 `personal`）時，各專案建一個獨立的 schema：
+
+```sql
+CREATE SCHEMA IF NOT EXISTS newsletter;
+```
+
+連線字串用 `options` 帶 `search_path`（`=` 要 URL 編碼成 `%3D`）：
+
+```bash
+NEWSLETTER_DATABASE_URL="postgresql://<user>:<password>@<host>:5432/personal?options=-csearch_path%3Dnewsletter"
+```
+
+- **容器連 host 本機的 Postgres**：容器內不能用 `127.0.0.1`，要填 host 的區網 IP，或 `host.docker.internal`（Podman 用 `host.containers.internal`），並確認 Postgres 的 `listen_addresses` 與 `pg_hba.conf` 放行該來源。
+- **測試區**：在測試區 `.env` 指向另一個 schema（例如 `newsletter_test`），避免和正式區互相覆蓋。
+- **一次性搬遷（從舊版 `state/kg.sqlite` 升級）**：
+  1. 停掉 worker，避免遷移期間繼續寫入舊檔：`docker compose stop worker`。
+  2. 確認 Postgres 已建好 schema，並在 `.env` 加上 `NEWSLETTER_DATABASE_URL`。
+  3. 部署新版：`docker compose up -d`。
+  4. 匯入舊檔：`docker compose exec worker newsletter-kg --import-sqlite /var/lib/newsletter/state/kg.sqlite`。
+  5. 開網頁確認脈絡圖（`/kg`）顯示正常。舊的 `state/kg.sqlite` 先留著不急著刪；若要回退，部署上一個 tag 即可。
 
 ## 測試區（區域網路，沒有入口閘門）
 
@@ -250,7 +274,7 @@ NEWSLETTER_PROD_SSH=me@home-host      # 正式機；用 ~/.ssh/config 的別名�
 
 - **怎麼連**：用 ssh 在正式機上 `docker exec` 進 worker 容器，跑 devtools 送進去的一小段 Python（`python -c`），所以正式區不用先部署新版。
   正式機的帳號要能執行 docker（在 `docker` 群組），ssh 要能免密碼登入（金鑰或 agent）。
-- **對正式區只讀**：打包時拿 pipeline 鎖（每日流程在跑就 exit 75，等它跑完再試），回饋、知識圖譜也各自拿鎖，`kg.sqlite` 用 SQLite 的 backup 複製，不會抄到寫一半的檔。
+- **對正式區只讀**：打包時拿 pipeline 鎖（每日流程在跑就 exit 75，等它跑完再試），回饋、知識圖譜也各自拿鎖；知識圖譜以唯讀連線從 Postgres 匯出成快照裡的 `state/kg.json`，匯入端載入目標 Postgres（目標要設 `NEWSLETTER_DATABASE_URL`，沒設會略過 KG 並提醒；舊版含 `state/kg.sqlite` 的快照匯入時會略過該檔並提示改用 `newsletter-kg --import-sqlite`）。
 - **不搬的**：`oauth_token.json`（兩區的 token 本來就分開）、`auth_health.json`、`last_job.json`、`logs/`、`data/raw/`。
   測試區的這些目錄（`reports/`、`data/curated|kg|search/`）會變成和正式區一模一樣：測試區自己多出來的報告會被刪掉。
 - 快照、比較結果、取回的信都在 `.devtools/`，不進版控；快照裡有真實的回饋，不要外流。
