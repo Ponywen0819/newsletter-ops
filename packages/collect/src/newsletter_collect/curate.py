@@ -374,21 +374,32 @@ def source_boosts(config: dict) -> dict[str, float]:
             for name, (pos, neg) in feedback.stats(rows)["source"].items()}
 
 
-def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], dict]:
-    """redo：同一天重跑時，上一次收錄的 uid。它們當作沒看過，否則第二次只剩第二梯隊，頭條全不見。"""
-    seen = load_seen()
-    for uid in redo:
-        seen.pop(uid, None)
+def scored(items: list[dict], config: dict, seen: dict) -> list[dict]:
+    """時間窗內、沒報過的，就地加上 relevance、rank、matched_keywords（與回饋加權）。"""
     default_hours = config.get("lookback_hours", 24)
     fresh = [i for i in items if in_window(i, default_hours) and i["uid"] not in seen]
-
     boosts = source_boosts(config)
     for item in fresh:
         item["relevance"], item["rank"], item["matched_keywords"] = score(
             item, config.get("keywords", {}), config.get("arxiv_venues", {}))
         if (b := boosts.get(item.get("source", ""), 1.0)) != 1.0:
             item["rank"], item["feedback_boost"] = round(item["rank"] * b, 2), b
+    return fresh
 
+
+def candidates(items: list[dict], config: dict) -> list[dict]:
+    """白天的候選池：過了相關性門檻的新聞（arXiv 除外，論文量大、靠晨報的配額挑）。不記進 seen。"""
+    min_relevance = config.get("min_relevance", 1.0)
+    return [i for i in scored(items, config, load_seen())
+            if i["relevance"] >= min_relevance and not i["source"].startswith("arXiv")]
+
+
+def curate(items: list[dict], config: dict, redo: set[str] | frozenset[str] = frozenset()) -> tuple[list[dict], dict]:
+    """redo：同一天重跑時，上一次收錄的 uid。它們當作沒看過，否則第二次只剩第二梯隊，頭條全不見。"""
+    seen = load_seen()
+    for uid in redo:
+        seen.pop(uid, None)
+    fresh = scored(items, config, seen)
     min_relevance = config.get("min_relevance", 1.0)
     relevant = [i for i in fresh if i["relevance"] >= min_relevance]
     deduped = dedupe(relevant, name_topics=frozenset(config.get("same_story_topics", [])))

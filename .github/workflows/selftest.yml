@@ -1,10 +1,7 @@
 name: selftest
 
-# 各模組的 lint、測試（pytest／vitest，不連網）都交給 Nx；PR 到 develop／main 時檢查，main 與 v* tag 的 push 之後 release.yml 接著建映像
+# 各模組的 lint、測試（pytest／vitest，不連網）都交給 Nx；只在 PR 到 develop／main 時檢查，合併後不重跑
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [develop, main]
 
@@ -14,7 +11,7 @@ permissions:
 jobs:
   selftest:
     # 自架 runner（Windows 的 WSL2）。repo 是公開的：fork 來的 PR 不在這台跑，免得陌生人的程式在家裡的機器上執行
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, docker]
     env:
       NX_NO_CLOUD: true
@@ -38,13 +35,41 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: apps/web-ui
+      # 自架 runner 本身跑在 Docker 容器裡，services publish 的 port 在 Docker host、不在 runner 的 127.0.0.1
+      # 所以讓 Postgres 共用 runner 容器的網路並聽 55432
+      - name: Start test Postgres
+        shell: bash
+        run: |
+          name="newsletter-ci-pg-${{ github.run_id }}-${{ github.run_attempt }}"
+          if docker inspect "$(hostname)" >/dev/null 2>&1; then
+            net="container:$(hostname)"
+          else
+            net="host"
+          fi
+          docker run -d --rm --name "$name" --network "$net" -e POSTGRES_PASSWORD=test postgres:18-alpine -p 55432
+          ready=0
+          for _ in $(seq 1 60); do
+            if docker exec "$name" pg_isready -h 127.0.0.1 -p 55432 >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs "$name"
+            exit 1
+          fi
+          echo "NEWSLETTER_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/postgres" >> "$GITHUB_ENV"
       - run: npx nx run-many -t lint typecheck test
       - run: git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
-      - run: uv run --no-project --with "pytest>=9,<10" pytest -q deploy
+      - run: uv run --no-project --with "pytest>=9,<10" --with ./packages/shared pytest -q deploy
       - run: uv run --no-project python deploy/check_boundaries.py
       # compose 檔的語法與變數展開；值是假的，只為了讓必填變數不報錯
       - run: docker compose config -q && docker compose -f docker-compose.test.yml config -q
         env:
           GMAIL_USER: a
           GMAIL_APP_PASSWORD: b
-          TUNNEL_TOKEN: c
+          NEWSLETTER_DATABASE_URL: postgresql://x@db/personal
+      - name: Stop test Postgres
+        if: always()
+        run: docker rm -f "newsletter-ci-pg-${{ github.run_id }}-${{ github.run_attempt }}" || true

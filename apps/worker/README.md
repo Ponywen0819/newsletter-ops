@@ -48,7 +48,7 @@ Nx 只是包一層：`once` 就是 `uv run --project apps/worker worker --once`�
 ## 排程服務
 
 ```bash
-npx nx run worker:start                  # 0.0.0.0:8790（--port／NEWSLETTER_WORKER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00；認證驗證 NEWSLETTER_AUTH_CHECK_AT，預設 07:30
+npx nx run worker:start                  # 0.0.0.0:8790（--port／NEWSLETTER_WORKER_PORT）；時間 NEWSLETTER_RUN_AT，預設 08:00；白天累積 NEWSLETTER_ROUNDS，預設 13:00,18:00,23:00；認證驗證 NEWSLETTER_AUTH_CHECK_AT，預設 07:30
 npx nx run worker:start --port 9000      # 參數直接接在後面
 ```
 
@@ -95,7 +95,8 @@ SIGTERM：轉給執行中的那一步、等它結束、紀錄記成 143，然後
 | `kind` | 做什麼 |
 | --- | --- |
 | `sources-check` | `newsletter-collect --dry-run --no-search`：抓一次所有來源、印統計，不寫檔、不用 Claude（時限 30 分鐘） |
-| `kg-rebuild` | `newsletter-kg --rebuild`：清掉 `state/kg.sqlite`，依日期重跑全部 curated（用訂閱額度，時限 4 小時） |
+| `round` | 白天的一輪（排程在 `NEWSLETTER_ROUNDS`，也可手動）：`newsletter-collect --pool` 成功後 `newsletter-kg --pool`；metrics 標籤照環境變數，不記成 ops |
+| `kg-rebuild` | `newsletter-kg --rebuild`：清空 Postgres 的 KG 表，依日期重跑全部 curated（用訂閱額度，時限 4 小時） |
 | `rewrite`（要帶 `&date=YYYY-MM-DD`） | `newsletter-write --date <日期>`：用那天的 curated 重寫那天的報告（用訂閱額度，時限 1 小時）。**只有測試區**（`NEWSLETTER_SCHEDULE=off`）接受，正式區回 403；`devtools compare` 用它（見 [deploy/README.md](../../deploy/README.md)「開發工具」），維運頁沒有按鈕 |
 
 和每日流程握同一把 pipeline 的鎖，同時只會有一個；在跑時回 409，不合法的 `kind` 或參數回 400。輸出在 `logs/ops-<kind>.log`（每次覆寫），metrics 標籤是 `ops`，不混進每日執行的統計。

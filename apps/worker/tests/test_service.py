@@ -16,7 +16,9 @@ from helpers import AT, CHECK_AT, TPE, reset, service_for, tpe, wait
 from newsletter_shared import auth_health, lock
 from newsletter_worker import daily
 from newsletter_worker import service as svc
-from newsletter_worker.service import check_due, due, expiry_notice, failure_notice, make_server, next_run_at, parse_hhmm
+from newsletter_worker.service import (
+    check_due, due, expiry_notice, failure_notice, make_server, next_run_at, parse_hhmm, round_due,
+)
 
 
 def test_heartbeat(monkeypatch):
@@ -357,3 +359,14 @@ def test_schedule_off(steps):
     assert service.start("manual") is not None
     service._worker.join(15)
     assert daily.read_record()["exit_code"] == 0
+
+
+def test_round_due():
+    rounds = (time(13, 0), time(18, 0), time(23, 0))
+    at = lambda h, m=0: datetime(2026, 1, 1, h, m, tzinfo=TPE)  # noqa: E731
+    assert round_due(at(12, 59), rounds, TPE) is None
+    assert round_due(at(13, 0), rounds, TPE) == "2026-01-01 13:00"
+    assert round_due(at(14, 59), rounds, TPE) == "2026-01-01 13:00"
+    assert round_due(at(15, 1), rounds, TPE) is None  # 錯過太久不補
+    assert round_due(at(23, 30), rounds, TPE) == "2026-01-01 23:00"
+    assert round_due(at(23, 30), (), TPE) is None

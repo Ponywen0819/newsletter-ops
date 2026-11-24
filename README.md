@@ -56,8 +56,8 @@ config/interests.md            關注範圍（自然語言），報告判讀的�
 config/config.json             執行參數：時間窗、關鍵字權重、收錄門檻、HTTP 設定
 config/sources.d/*.json        來源清單，一個主題一個檔
 .claude/skills/news-digest/    報告撰寫的 skill，隨專案進版控
-Dockerfile, docker-compose.yml, docker/   容器部署：一個 Dockerfile 建 web、worker 兩個映像，加上 cloudflared；生成物放 volume
-docker-compose.test.yml                   測試區：區網直接連、沒有 Tunnel、不排程
+Dockerfile, docker-compose.yml, docker/   容器部署：一個 Dockerfile 建 web、worker 兩個映像；生成物放 volume。對外入口不在這裡（service-core 的 gateway）
+docker-compose.test.yml                   測試區：區網直接連、沒有入口閘門、不排程
 deploy/                        部署說明、自動部署、systemd 單元與範本；check_boundaries.py 依賴方向檢查
 ruff.toml                      全 repo 共用的 Ruff 設定；.python-version 固定所有 Python 模組的直譯器版本
 package.json, nx.json          只裝 Nx（含 @nxlv/python）與它的設定；前端自己的依賴在 apps/web-ui/package.json
@@ -67,12 +67,13 @@ data/raw/<date>.jsonl          當日原始抓取（append，供回溯；只留 
 data/search/<date>.json        搜尋補充的稽核紀錄：缺口、query、LLM 原始回覆、收下與退回（含原因）
 data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入；不會自動刪，KG 重建靠它
 data/kg/<date>.json            知識圖譜給 writer 的背景：相關的舊事件與更正（writer/README.md「知識圖譜」）
+data/pool.json                白天累積的候選池（worker 的 round，留兩天）
 data/stories/<date>.json       專題素材：同一件事的多家報導與前因（writer/README.md「專題素材」）
 reports/<date>.md              最終報告
 reports/<date>.html            email 版（newsletter-render 產生；.txt 是信件的純文字部分）
 state/seen.json                30 天去重記憶
 state/feedback.jsonl           累積的人工標記，供日後調整關鍵字與 interests.md
-state/kg.sqlite                新聞知識圖譜：事件、實體、事件之間的關係（可用 newsletter-kg --rebuild 從 curated 重建）
+state/kg.lock                  知識圖譜（Postgres，NEWSLETTER_DATABASE_URL）的寫入鎖（可用 newsletter-kg --rebuild 從 curated 重建）
 state/kg_flags.jsonl           「事實有誤」的標記（網頁按鈕、newsletter-kg --flag）
 state/oauth_token.json         /auth 頁面存的 OAuth token（權限 600）
 state/auth_health.json         最近一次 Claude 認證驗證的結果（worker 每天寫、web 讀來顯示橫幅）
@@ -114,12 +115,12 @@ npx nx run collect:test                             # 單一模組的單一任�
 npx nx graph                                      # 模組依賴圖
 ```
 
-Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是 oxlint（規則在 apps/web-ui/.oxlintrc.json）。不屬於任何模組的檢查另外跑：
+Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是 oxlint（規則在 apps/web-ui/.oxlintrc.json）。跑需要資料庫的測試要設環境變數 `NEWSLETTER_TEST_DATABASE_URL`（沒設會自動 skip；CI 沒設會直接失敗）。不屬於任何模組的檢查另外跑：
 
 ```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
 uv run --no-project python deploy/check_boundaries.py
-uv run --no-project --with "pytest>=9,<10" pytest -q deploy   # 依賴方向檢查本身的測試
+uv run --no-project --with "pytest>=9,<10" --with ./packages/shared pytest -q deploy   # 依賴方向檢查與 devtools 的測試
 ```
 
 commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：
@@ -167,6 +168,8 @@ uv run --project packages/shared newsletter-feedback --stats    # 依來源／�
 每天 08:00（`NEWSLETTER_RUN_AT` 可改）跑一次，輸出進 `logs/<YYYY-MM>.log`；停機錯過了，啟動後補跑（同一天內；失敗的不重跑，要重跑用 `POST /run`）。
 手動的 `worker --once` 和它進同一個 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/worker/README.md](apps/worker/README.md)，所以混用是安全的。
 
+白天 13:00、18:00、23:00（`NEWSLETTER_ROUNDS` 可改，空字串＝關掉）各跑一輪：抓新聞進候選池 `data/pool.json`、補原文、萃取進知識圖譜，不寫報告不寄信；晨報把候選池併進來挑，白天被擠出 feed 的新聞也選得到，專題串得出前一天下午到晚上的時間線。
+
 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT` 可改）worker 也會驗一次 Claude 認證，結果寫進 `state/auth_health.json`；失效的話網頁在晨報跑之前就會出現橫幅。
 
 失敗時：暫時性的失敗 30 分鐘後從失敗的那一步自動重跑一次（寄信失敗不會重寫報告）；每一步有時限，卡住的會被停掉。今天不會再重跑時（重跑也失敗、授權失效、額度用完）
@@ -193,15 +196,17 @@ skill 本身不存任何興趣清單。超過 90 天沒更新時，`newsletter-c
 
 ## 部署
 
-pipeline 與 web 跑在家裡一台 host，經 Cloudflare Tunnel + Access 對外；測試區是另一台機器上的 `docker-compose.test.yml`（見 [deploy/README.md](deploy/README.md)「測試區」）。`web` 沒有登入，**唯一的防線是 Access**。
-做法（Docker 與 systemd 兩種）、自動部署、Cloudflare 設定與驗收清單見 [deploy/README.md](deploy/README.md)。
+pipeline 與 web 跑在家裡一台 host；測試區是另一台機器上的 `docker-compose.test.yml`（見 [deploy/README.md](deploy/README.md)「測試區」）。
+這個 repo 只負責服務本身：對外入口（Cloudflare Tunnel + Access、nginx）由 **service-core** repo 的 gateway 提供，web 只加入它建立的 `gw-newsletter` 網路。
+`web` 沒有登入，**唯一的防線是那個閘門**；閘門必須做到的事寫在 [deploy/README.md](deploy/README.md)「入口閘門的約定」。
+做法（Docker 與 systemd 兩種）、自動部署、切換步驟與驗收清單見 [deploy/README.md](deploy/README.md)。
 
 ## 資料保存：只備份回饋
 
 生成物——`reports/`、`data/`、`state/`、`logs/`——不進版控（Docker 部署時放在 volume `newsletter-data`，見 [deploy/README.md](deploy/README.md)），
 壞了就重來：抓取結果可以重跑，`seen.json` 沒了或壞了（讀不了時當作空的）只會讓時間窗內已報過的新聞再出現一次。
 例外是 `state/feedback.jsonl` 與 `state/kg_flags.jsonl`：一則一則按出來的，丟了無法重來，worker 每週日把它們寄給自己當備份（[worker/README.md](apps/worker/README.md)「回饋備份」）。
-`state/kg.sqlite` 是推算出來的，壞了用 `newsletter-kg --rebuild` 從 `data/curated/` 重建。
+知識圖譜存在 Postgres（`NEWSLETTER_DATABASE_URL`），也是推算出來的，壞了用 `newsletter-kg --rebuild` 從 `data/curated/` 重建。
 本 repo 是 public，標記含標題與來源，不推上來。
 
 版控裡只有程式、設定與 `interests.md`；這些是唯一需要「持續更新」的內容，`git pull` 後重 build 即可。

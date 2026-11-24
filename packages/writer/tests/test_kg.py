@@ -1,10 +1,14 @@
 import json
+import sqlite3
+from datetime import datetime
 
 import pytest
 
-from newsletter_shared import kg_flags
+from newsletter_shared import kg_flags, kg_store
+from newsletter_writer import kg
 from newsletter_writer.kg import (
-    VERSION, _sources, background, build, connect, extract, grounded, norm, parse_json, prepare, relate, statuses,
+    VERSION, _sources, background, build, edition, extract, grounded, grow_pool, main, norm, parse_json, prepare, rebuild, relate,
+    statuses,
 )
 
 A, B, C, D = "a" * 16, "b" * 16, "c" * 16, "d" * 16
@@ -60,24 +64,26 @@ def root(tmp_path):
     return tmp_path
 
 
-def test_extract(root):
+def test_extract(root, pg):
     """引句對不上就丟；沒有舊事件不呼叫模型；抽過的不重抽。"""
     calls: list[str] = []
-    con = connect(root / "state" / "kg.sqlite")
-    assert extract(con, "2026-01-01", DAY1, fake("2026-01-01", calls)) == {"items": 1, "extracted": 1, "dropped": 1}
-    assert relate(con, "2026-01-01", {}, fake("2026-01-01", calls))["compared"] == 0
-    assert extract(con, "2026-01-01", DAY1, fake("2026-01-01", calls))["items"] == 0
-    assert calls == ["kg_extract"]
-    con.close()
+    con = kg_store.connect()
+    try:
+        assert extract(con, "2026-01-01", DAY1, fake("2026-01-01", calls)) == {"items": 1, "extracted": 1, "dropped": 1}
+        assert relate(con, "2026-01-01", {}, fake("2026-01-01", calls))["compared"] == 0
+        assert extract(con, "2026-01-01", DAY1, fake("2026-01-01", calls))["items"] == 0
+        assert calls == ["kg_extract"]
+    finally:
+        con.close()
 
 
 @pytest.fixture
-def built(root):
-    con = connect(root / "state" / "kg.sqlite")
+def built(root, pg):
+    con = kg_store.connect()
     extract(con, "2026-01-01", DAY1, fake("2026-01-01"))
     con.close()
     stats = build(root, "2026-01-02", fake("2026-01-02"))
-    con = connect(root / "state" / "kg.sqlite")
+    con = kg_store.connect()
     yield root, con, stats
     con.close()
 
@@ -110,20 +116,21 @@ def test_flags_override(built):
 def test_contradictions(built):
     """一個來源＝有爭議，兩個來源＝失效。"""
     _, con, _ = built
-    with con:
+    with con.transaction():
         con.execute("DELETE FROM links")
-        con.execute("INSERT INTO links VALUES ((SELECT id FROM events WHERE uid=?), 1, 'contradict', '', '2026-01-02')", (C,))
+        con.execute("INSERT INTO links VALUES ((SELECT id FROM events WHERE uid=%s), 1, 'contradict', '', '2026-01-02')", (C,))
     assert statuses(con, [1], {}) == {1: "disputed"}
-    with con:
-        con.execute("INSERT INTO items VALUES (?, '2026-01-02', 't', 'u', 'S4', ?)", (D, VERSION))
-        eid = con.execute("INSERT INTO events(uid, date, summary, quote) VALUES (?, '2026-01-02', 's', 'q')", (D,)).lastrowid
-        con.execute("INSERT INTO links VALUES (?, 1, 'contradict', '', '2026-01-02')", (eid,))
-        con.execute("INSERT INTO links VALUES (?, 1, 'same', '', '2026-01-02')", (eid,))
+    with con.transaction():
+        con.execute("INSERT INTO items VALUES (%s, '2026-01-02', 't', 'u', 'S4', %s)", (D, VERSION))
+        eid = con.execute("INSERT INTO events(uid, date, summary, quote) VALUES (%s, '2026-01-02', 's', 'q') RETURNING id",
+                          (D,)).fetchone()[0]
+        con.execute("INSERT INTO links VALUES (%s, 1, 'contradict', '', '2026-01-02')", (eid,))
+        con.execute("INSERT INTO links VALUES (%s, 1, 'same', '', '2026-01-02')", (eid,))
     assert statuses(con, [1], {}) == {1: "invalid"}
     assert _sources(con, 1, "S1") == 2
 
 
-def test_prepare_failure_is_soft(root, monkeypatch):
+def test_prepare_failure_is_soft(root, pg, monkeypatch):
     """不丟例外，也不留下舊背景。"""
     def broken(prompt: str, stage: str) -> dict:
         raise RuntimeError("額度用完")
@@ -132,3 +139,106 @@ def test_prepare_failure_is_soft(root, monkeypatch):
     (root / "data" / "kg" / "2026-01-03.json").write_text("{}", encoding="utf-8")
     prepare("2026-01-03", "token", root, broken)
     assert not (root / "data" / "kg" / "2026-01-03.json").exists()
+
+
+def test_edition(monkeypatch):
+    monkeypatch.setenv("NEWSLETTER_RUN_AT", "08:00")
+    assert edition(datetime(2026, 1, 1, 7, 59)) == "2026-01-01"
+    assert edition(datetime(2026, 1, 1, 13, 0)) == "2026-01-02"
+    assert edition(datetime(2026, 1, 1, 23, 0)) == "2026-01-02"
+
+
+def test_grow_pool(root, pg):
+    """候選池：有原文的才萃取，事件記在給的 edition；晨報 build 時不重抽。"""
+    con = kg_store.connect()
+    extract(con, "2026-01-01", DAY1, fake("2026-01-01"))
+    con.close()
+    (root / "data" / "pool.json").write_text(json.dumps({i["uid"]: i for i in DAY2}), encoding="utf-8")
+    calls: list[str] = []
+
+    def ask(prompt: str, stage: str) -> dict:
+        calls.append(stage)
+        return REPLIES["2026-01-02"] if stage == "kg_extract" else {"links": []}
+
+    assert grow_pool(root, "2026-01-02", ask) == {"items": 1, "extracted": 1, "dropped": 0, "compared": 1,
+                                                  "links": 0, "links_rejected": 0}
+    con = kg_store.connect()
+    try:
+        assert list(con.execute("SELECT uid, date FROM events WHERE uid=%s", (B,))) == [(B, "2026-01-02")]
+    finally:
+        con.close()
+    assert grow_pool(root, "2026-01-02", ask)["items"] == 0 and calls == ["kg_extract", "kg_relate"]
+
+
+def test_rebuild_resets_sequences(built):
+    """rebuild 清空四張表並重設 events／mentions 的 id 序號，不會接在舊的最大值後面。"""
+    root, con, _ = built
+    assert [r[0] for r in con.execute("SELECT id FROM events ORDER BY id")] == [1, 2, 3]
+    assert [r[0] for r in con.execute("SELECT id FROM mentions ORDER BY id")] == [1, 2, 3, 4, 5]
+
+    def ask(prompt: str, stage: str) -> dict:
+        if stage == "kg_extract":
+            uids = {i["uid"] for i in json.loads(prompt.rsplit("\n\n", 1)[1])["items"]}
+            return REPLIES["2026-01-01"] if A in uids else REPLIES["2026-01-02"]
+        return fake("2026-01-02")(prompt, stage)
+
+    assert rebuild(root, ask) == 0
+    assert [r[0] for r in con.execute("SELECT id FROM events ORDER BY id")] == [1, 2, 3]
+    assert [r[0] for r in con.execute("SELECT id FROM mentions ORDER BY id")] == [1, 2, 3, 4, 5]
+
+
+def test_import_sqlite(tmp_path, pg, monkeypatch):
+    """一次性從舊 state/kg.sqlite 搬進 Postgres；mentions.id 用原本的 rowid，不需要 Claude 認證。"""
+    monkeypatch.setattr(kg, "ROOT", tmp_path)
+    old = tmp_path / "kg.sqlite"
+    assert main(["--import-sqlite", str(old)]) == 2
+
+    src = sqlite3.connect(old)
+    src.executescript("""
+        CREATE TABLE items(uid TEXT PRIMARY KEY, date TEXT, title TEXT, url TEXT, source TEXT, version INTEGER);
+        CREATE TABLE events(id INTEGER PRIMARY KEY, uid TEXT, date TEXT, summary TEXT, quote TEXT, related INTEGER DEFAULT 0);
+        CREATE TABLE mentions(event INTEGER, key TEXT, name TEXT, type TEXT);
+        CREATE TABLE links(src INTEGER, dst INTEGER, kind TEXT, quote TEXT, date TEXT);
+    """)
+    with src:
+        src.executemany("INSERT INTO items VALUES (?,?,?,?,?,?)", [
+            (A, "2026-01-01", "T1", "https://s1/a", "S1", 1),
+            (B, "2026-01-02", "T2", "https://s2/b", "S2", 1),
+        ])
+        src.executemany("INSERT INTO events VALUES (?,?,?,?,?,?)", [
+            (1, A, "2026-01-01", "E1", "q1", 1),
+            (5, B, "2026-01-02", "E2", "q2", 1),
+        ])
+        src.executemany("INSERT INTO mentions VALUES (?,?,?,?)", [
+            (1, "acme", "Acme", "org"),
+            (1, "beta", "Beta", "org"),
+            (5, "acme", "ACME", "org"),
+        ])
+        src.execute("DELETE FROM mentions WHERE rowid = 2")  # 讓 rowid 有跳號（1, 3），確認真的沿用 rowid
+        src.execute("INSERT INTO links VALUES (5, 1, 'follow', '', '2026-01-02')")
+    src.close()
+
+    assert main(["--import-sqlite", str(old)]) == 0
+    con = kg_store.connect()
+    try:
+        assert kg_store.dump(con) == {
+            "items": [
+                [A, "2026-01-01", "T1", "https://s1/a", "S1", 1],
+                [B, "2026-01-02", "T2", "https://s2/b", "S2", 1],
+            ],
+            "events": [
+                [1, A, "2026-01-01", "E1", "q1", 1],
+                [5, B, "2026-01-02", "E2", "q2", 1],
+            ],
+            "mentions": [
+                [1, 1, "acme", "Acme", "org"],
+                [3, 5, "acme", "ACME", "org"],
+            ],
+            "links": [
+                [5, 1, "follow", "", "2026-01-02"],
+            ],
+        }
+        assert con.execute("INSERT INTO events(uid) VALUES (%s) RETURNING id", (C,)).fetchone()[0] == 6
+        assert con.execute("INSERT INTO mentions(event, key) VALUES (6, 'k') RETURNING id").fetchone()[0] == 4
+    finally:
+        con.close()

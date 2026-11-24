@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""入口：uv run --project packages/collect newsletter-collect [--dry-run] [--no-search] [--lookback 48] [--list-sources]
+"""入口：uv run --project packages/collect newsletter-collect [--dry-run] [--no-search] [--lookback 48] [--list-sources] [--pool]
 
 data/raw 只留 config.json 的 raw_retention_days 天（預設 30），沒有程式讀舊的 raw。
 
 抓取 → 整理 → 搜尋補 RSS 弱的主題 → 補原文 → 同一件事的別家報導（cluster），寫 data/curated/<date>.json。
+--pool（白天的一輪）：只把過門檻的新聞放進候選池 data/pool.json、補原文，不寫 curated、不記 seen；
+晨報抓完會把候選池併進來，白天被擠出 feed 的新聞也選得到。
 exit code：0 成功／2 來源設定有誤／3 一則都沒抓到。搜尋與補原文失敗只警告。
 """
 from __future__ import annotations
@@ -12,7 +14,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -22,7 +24,7 @@ from newsletter_collect import enrich as enrich_mod
 from newsletter_collect import fetch as fetch_mod
 from newsletter_collect import search as search_mod
 from newsletter_collect import sources as sources_mod
-from newsletter_shared import metrics
+from newsletter_shared import atomic, metrics
 from newsletter_shared import DEFAULT_TZ, ROOT, today
 
 
@@ -30,6 +32,8 @@ INTERESTS = ROOT / "config" / "interests.md"
 STALE_AFTER_DAYS = 90
 RAW = ROOT / "data" / "raw"
 RAW_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})\.jsonl$")
+POOL = ROOT / "data" / "pool.json"
+POOL_DAYS = 2  # 候選池留幾天：再舊的已經在晨報的時間窗外
 
 
 def interests_age() -> tuple[int | None, str]:
@@ -93,6 +97,40 @@ def prune_raw(stamp: str, days: int, raw_dir: Path = RAW) -> list[str]:
     return removed
 
 
+def load_pool(path: Path = POOL) -> dict[str, dict]:
+    try:
+        pool = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return pool if isinstance(pool, dict) else {}
+
+
+def gather(raw: list[dict], config: dict, path: Path = POOL, get=None) -> dict:
+    """白天的一輪：過門檻的新聞進候選池（不記 seen）、補原文（之前失敗的再試），留 POOL_DAYS 天。回傳統計。"""
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=POOL_DAYS)).isoformat()
+    pool = {u: i for u, i in load_pool(path).items() if i.get("pooled_at", "") >= cutoff}
+    added = 0
+    for item in curate_mod.candidates(raw, config):
+        if item["uid"] not in pool:
+            pool[item["uid"]] = {**item, "pooled_at": now.isoformat()}
+            added += 1
+    for item in pool.values():
+        item.pop("fulltext_error", None)
+    enrich_mod.enrich(list(pool.values()), config, get)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic.write_text(path, json.dumps(pool, ensure_ascii=False))
+    return {"added": added, "pool": len(pool), "no_fulltext": sum("fulltext" not in i for i in pool.values())}
+
+
+def merge_pool(raw: list[dict], pool: dict[str, dict]) -> list[dict]:
+    """晨報：候選池併進這次抓到的；同一則用池裡的（已經有原文），原文之前失敗的這次再試。"""
+    for item in pool.values():
+        item.pop("fulltext_error", None)
+    fetched = {i["uid"] for i in raw}
+    return [pool.get(i["uid"], i) for i in raw] + [i for u, i in pool.items() if u not in fetched]
+
+
 def collect(raw: list[dict], errors: list, config: dict, stamp: str, no_search: bool) -> None:
     """整理 → 搜尋 → 補原文 → 同一件事的別家報導，寫 data/curated/<stamp>.json。"""
     curated_path = ROOT / "data" / "curated" / f"{stamp}.json"
@@ -151,6 +189,7 @@ def main() -> int:
     ap.add_argument("--no-search", action="store_true", help="不用 LLM 搜尋補 RSS 弱的主題")
     ap.add_argument("--list-sources", action="store_true", help="列出載入的來源後結束，不連網")
     ap.add_argument("--lookback", type=int, help="覆寫時間窗（小時）")
+    ap.add_argument("--pool", action="store_true", help="白天的一輪：只放進候選池 data/pool.json、補原文，不寫 curated")
     ap.add_argument("--config", default=str(ROOT / "config" / "config.json"))
     args = ap.parse_args()
 
@@ -199,7 +238,13 @@ def main() -> int:
     removed = prune_raw(stamp, config.get("raw_retention_days", 30))
     if removed:
         print(f"[raw] 刪掉 {len(removed)} 份超過保留天數的 raw", file=sys.stderr)
-    collect(raw, errors, config, stamp, args.no_search)
+    if args.pool:
+        with metrics.timed("pool") as m:
+            stats = gather(raw, config)
+            m.update(stats)
+        print(f"[pool] 新增 {stats['added']} 則，候選池共 {stats['pool']} 則（沒有原文 {stats['no_fulltext']}）", file=sys.stderr)
+        return 0
+    collect(merge_pool(raw, load_pool()), errors, config, stamp, args.no_search)
     return 0
 
 

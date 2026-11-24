@@ -25,6 +25,7 @@ uv run --project packages/collect newsletter-collect --no-search      # 不用 L
 uv run --project packages/collect newsletter-collect --lookback 72    # 放寬時間窗到 72 小時
 uv run --project packages/collect newsletter-collect --dry-run        # 只測來源連通性，不寫任何檔
 uv run --project packages/collect newsletter-collect --list-sources   # 不連網，列出來源載入結果與停用項目
+uv run --project packages/collect newsletter-collect --pool           # 白天的一輪：過門檻的放進 data/pool.json、補原文，不寫 curated、不記 seen
 ```
 
 exit code：`0` 成功、`2` 來源設定有誤、`3` 一則都沒抓到（不寫 curated JSON）。搜尋與補原文失敗只在 stderr 警告，不影響 exit code。

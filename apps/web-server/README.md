@@ -35,16 +35,17 @@ uv run --project apps/web-server newsletter-web               # 晨報網頁，�
 
 ## 安全邊界
 
-- **不做身分驗證**：讀寫、`/auth` 都一樣，誰能連進來全由前面的 nginx 決定（[docker/nginx.conf](../../docker/nginx.conf)，見 [deploy/README.md](../../deploy/README.md)）。
-  直接跑時預設只 bind `127.0.0.1`；Docker 部署時容器內綁 `0.0.0.0` 但不 publish，只在 nginx 連得到的網路。測試區沒有 nginx，區網誰都能開。
-  `/api/session` 一律回 `{"local": true}`；經 Tunnel 時由 nginx 改回 `false`，前端就不顯示授權頁。
+- **不做身分驗證**：讀寫、`/auth` 都一樣，誰能連進來全由前面的入口閘門決定。閘門不在這個 repo（正式區是 service-core 的 gateway），
+  它必須做到的事寫在 [deploy/README.md](../../deploy/README.md)「入口閘門的約定」。
+  直接跑時預設只 bind `127.0.0.1`；Docker 部署時容器內綁 `0.0.0.0` 但不 publish，只在閘門連得到的 `gw-newsletter` 網路。測試區沒有閘門，區網誰都能開。
+  `/api/session` 一律回 `{"local": true}`；經 Tunnel 時由閘門改回 `false`，前端就不顯示授權頁。
 - `POST /api/feedback`、`POST /api/kg-flag` 只收 `Content-Type: application/json`，body 是 `{"uid": "...", "mark": "+" | "-" | ""}`／`{"uid": "...", "flag": "wrong" | "trusted" | ""}`。
 - HTML 回應帶 `Content-Security-Policy`（只許同源的腳本與樣式），前端的限制見 [ui/README.md](../web-ui/README.md)。
-- **`/auth`（貼 OAuth token）**：web 照常提供；正式區只有 nginx 的區網入口（8788）開得到，Tunnel 那一側一律 404。
+- **`/auth`（貼 OAuth token）**：web 照常提供；正式區只有閘門的區網入口（8788）開得到，Tunnel 那一側一律 404。
   token 只存在這一頁存的檔，不讀 `CLAUDE_CODE_OAUTH_TOKEN`，政策見 [llm/README.md](../../packages/llm/README.md)「認證」。
 - **`/ops`（維運：手動執行、執行紀錄、設定）**：同 `/auth`，正式區只有區網入口開得到，Tunnel 那一側的 `/ops*`、`/api/ops*` 一律 404。
   狀態與手動執行直接呼叫 worker 的 HTTP 介面（`NEWSLETTER_WORKER_URL`，預設 `http://127.0.0.1:8790`；compose 設成 `http://worker:8790`，web 與 worker 同在 `be` 網路）。
-  所以「誰能讓 worker 跑東西」的關卡是 nginx：`/api/ops*` 跟 `/api/auth*` 一樣只有區網入口開得到。
+  所以「誰能讓 worker 跑東西」的關卡是閘門：`/api/ops*` 跟 `/api/auth*` 一樣只有區網入口開得到。
   最近一次手動執行的結果（`state/last_job.json`）與 log 從共用 volume 讀，worker 停了也看得到。設定只讀不寫：`config/` 跟著映像走，改設定要改 repo 再部署。
 - **驗證結果**：定時驗證在 worker（每天 07:30，見 [worker/README.md](../worker/README.md)），這裡不開定時器。
   `/auth` 貼上 token（通過時）與「測試連線」的結果也寫進同一個 `state/auth_health.json`，刪除 token 時一起刪掉。
@@ -57,7 +58,7 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 
 | 路由 | 回應 | 說明 |
 | --- | --- | --- |
-| `GET /api/session` | `{local}` | 能不能管理授權（決定要不要顯示「Claude 授權」）；web 一律 `true`，經 Tunnel 時 nginx 回 `false` |
+| `GET /api/session` | `{local}` | 能不能管理授權（決定要不要顯示「Claude 授權」）；web 一律 `true`，經 Tunnel 時閘門回 `false` |
 | `GET /api/heartbeat` | `{ok}` | 連線偵測，不讀檔、不寫入（見 [ui/README.md](../web-ui/README.md)「PWA」） |
 | `GET /api/today` | `{date, latest, report, marks, flags, run}`（有晨報時另有 `prev, next`） | 當日晨報；還沒產出時 `report` 是 null，有舊晨報時另附 `fallback`（最新一份，格式同 `/api/reports/<date>`），首頁直接顯示它。`run` 是當天的 `state/last_run.json`（`trigger, started_at, finished_at, exit_code, step`），今天還沒跑是 null |
 | `GET /api/reports` | `{reports: [{date, headline}]}` | 歷史列表，新到舊 |
@@ -71,14 +72,14 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | `GET /api/kg/entity/<key>?days=` | `{entity: {key, name, type, total}, days, since, related, events, links, flags, truncated}` | 提到這個實體的事件，近 `days` 天（1～365，預設 90），新的優先；`key` 是正規化後的名稱（`kg_store.norm`，Unicode，網址要百分比編碼），不是正規化形式的一律 404。`related` 是同一批事件裡常一起出現的實體（`{key, name, type, count}`） |
 | `GET /api/kg/entities?q=` | `{q, available, since, entities: [{key, name, type, count, last}]}` | `q` 空白＝近 30 天最常出現的 30 個；否則 key 含 `norm(q)` 的實體（不限日期，最多 50 個），事件多的在前。還沒建過 KG 時 `available` 是 false |
 | `GET /api/auth-health` | `{state, kind, checked_at}` | 認證健康狀態，所有人可讀 |
-| `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理；正式區只能從 nginx 的區網入口連 |
+| `GET /api/auth`、`POST /api/auth/token\|test\|revoke` | | OAuth token 狀態與管理；正式區只能從閘門的區網入口連 |
 | `GET /api/ops` | `{worker, job, log, last_run}` | 維運頁。`worker` 是 worker 的 `GET /status`（`scheduled, run_at, next_run_at, state, current`）加上 `online`；連不上時只有 `{online: false}`。`job` 是 `state/last_job.json`（最近一次手動執行：`id, kind, from, requested_at, started_at, finished_at, exit_code, log, offset`），`log` 是它的輸出最後 80 行（只讀 `logs/` 底下），`last_run` 是 `state/last_run.json`。只限本機 |
 | `POST /api/ops/request` | `{started_at, id}` | 轉給 worker：`{kind: "run", from?: collect\|write\|render\|send}` → `POST /run?from=`；`{kind: "kg-rebuild"}`、`{kind: "sources-check"}` → `POST /job?kind=`。連不上 worker 503；worker 正在跑 409（原因照轉）；不合法 400，不會轉過去。只限本機 |
 | `GET /api/ops/metrics?days=7\|14\|30\|90[&all=1]` | `{days, all, debug, runs}` | `newsletter-metrics summary` 的網頁版：`logs/metrics/*.jsonl` 依執行切開，新到舊；每次是 `{date, time, label, trigger, result, seconds, tokens, turns, usd, items}`。預設只算 `prod` 標籤，`all=1` 連測試與維運工作（`ops`）一起。`debug` 是 config 的開關（關著不會有新紀錄）。只限本機 |
 | `GET /api/ops/config` | `{config, sources, interests}` | 唯讀的 `config/config.json`、`config/sources.d/*.json`（每檔 `{file, topic, label, defaults, feeds}`，壞掉的檔是 `{file, error}`）、`config/interests.md`。只限本機 |
 
 - 知識圖譜的 `flags` 是圖裡有判定的則（`{uid: "wrong" | "trusted"}`）；晨報的 `flags` 只帶 `wrong`。
-- 知識圖譜的 `events` 舊到新，每個是 `{id, uid, date, summary, quote, title, url, source, status, sources, report, entities: [{key, name, type}]}`；`status` 是 `active`／`disputed`／`invalid`，與 writer 寫背景時同一套規則（shared 的 `kg_store.statuses`，套用 `kg_flags.jsonl`）；`report` 是收錄這則的最新一份晨報（沒有是 null）。`links` 只含兩端都在圖裡的（`{src, dst, kind, quote, date}`，src 是較新的那個）。一張圖最多 150 個事件，超過時 `truncated`。`state/kg.sqlite` 只用唯讀連線開（不建表、不寫入）；檔案不存在時 item／entity 回 404。摘要、引句、標題是外部網頁萃取來的文字，前端只當純文字顯示。這三條不回 ETag、不進離線副本。
+- 知識圖譜的 `events` 舊到新，每個是 `{id, uid, date, summary, quote, title, url, source, status, sources, report, entities: [{key, name, type}]}`；`status` 是 `active`／`disputed`／`invalid`，與 writer 寫背景時同一套規則（shared 的 `kg_store.statuses`，套用 `kg_flags.jsonl`）；`report` 是收錄這則的最新一份晨報（沒有是 null）。`links` 只含兩端都在圖裡的（`{src, dst, kind, quote, date}`，src 是較新的那個）。一張圖最多 150 個事件，超過時 `truncated`。`NEWSLETTER_DATABASE_URL` 以唯讀連線開 Postgres（`SET default_transaction_read_only = on`，不建表、不寫入）；未設定或還沒建表時 item／entity 回 404。摘要、引句、標題是外部網頁萃取來的文字，前端只當純文字顯示。這三條不回 ETag、不進離線副本。
 - `GET /api/today`、`/api/reports`、`/api/reports/<date>` 回 `ETag`（對最後的 JSON 取雜湊，所以標記變了也會變）；`If-None-Match` 相符時回 `304`、沒有 body。
   比對時忽略 `W/`（Cloudflare 可能把強 ETag 改成弱的）。`Cache-Control` 照舊是 `no-store`：條件請求由前端的離線副本同步自己帶，不靠瀏覽器的 HTTP cache。
 - 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。

@@ -2,8 +2,7 @@ import json
 
 import pytest
 
-from newsletter_shared import kg_flags, metrics
-from newsletter_writer.kg import connect
+from newsletter_shared import kg_flags, kg_store, metrics
 from newsletter_writer.stories import build, prepare
 
 DAY = "2026-11-20"
@@ -22,17 +21,21 @@ def setup(root, curated, events=(), links=()):
     """events：(id, uid, date, title, source)；links：(src, dst, kind)，都是今天建立的連結。"""
     (root / "data" / "curated").mkdir(parents=True)
     (root / "data" / "curated" / f"{DAY}.json").write_text(json.dumps(curated), encoding="utf-8")
-    con = connect(root / "state" / "kg.sqlite")
-    with con:
-        for eid, uid, day, title, source in events:
-            con.execute("INSERT OR IGNORE INTO items VALUES (?,?,?,?,?,1)", (uid, day, title, f"https://{source}/{uid}", source))
-            con.execute("INSERT INTO events(id, uid, date, summary, quote, related) VALUES (?,?,?,?,?,1)",
-                        (eid, uid, day, f"事件 {eid}", "q"))
-        con.executemany("INSERT INTO links VALUES (?,?,?,?,?)", [(s, d, k, "", DAY) for s, d, k in links])
-    con.close()
+    con = kg_store.connect()
+    try:
+        with con.transaction(), con.cursor() as cur:
+            for eid, uid, day, title, source in events:
+                con.execute("INSERT INTO items VALUES (%s,%s,%s,%s,%s,1) ON CONFLICT (uid) DO NOTHING",
+                            (uid, day, title, f"https://{source}/{uid}", source))
+                con.execute("INSERT INTO events(id, uid, date, summary, quote, related) VALUES (%s,%s,%s,%s,%s,1)",
+                            (eid, uid, day, f"事件 {eid}", "q"))
+            if links:
+                cur.executemany("INSERT INTO links VALUES (%s,%s,%s,%s,%s)", [(s, d, k, "", DAY) for s, d, k in links])
+    finally:
+        con.close()
 
 
-def test_build(tmp_path):
+def test_build(tmp_path, pg):
     """collect 的分組 ＋ KG 今天的 same／follow 併組（跨主題）＋ 過去事件當前因；只有一篇又沒前因的不算專題。"""
     cover = {"uid": "c1", "title": "T c1", "url": "https://udn/c1", "source": "udn", "fulltext": "長文", "rank": 3}
     curated = {"items": [item("a", "technews", 5), item("b", "FT", 4), item("z", "BBC", 9), item("w", "NPR", 1)],
@@ -52,7 +55,7 @@ def test_build(tmp_path):
         ("事件 4", "same", "active"), ("事件 7", "retract", "invalid"), ("事件 5", "contradict", "disputed")]
 
 
-def test_flagged_and_no_kg(tmp_path):
+def test_flagged_and_no_kg(tmp_path, pg):
     """使用者標 wrong 的舊事件不當前因；沒有 KG 時只用 collect 的分組。"""
     curated = {"items": [item("a", "BBC")], "stories": [{"id": "s1", "uids": ["a"], "coverage": [item("c", "NPR")]}]}
     (tmp_path / "data" / "curated").mkdir(parents=True)
@@ -67,7 +70,7 @@ def test_flagged_and_no_kg(tmp_path):
     assert build(root, DAY)["stories"] == []
 
 
-def test_prepare(tmp_path):
+def test_prepare(tmp_path, pg):
     (tmp_path / "data" / "stories").mkdir(parents=True)
     stale = tmp_path / "data" / "stories" / f"{DAY}.json"
     stale.write_text("old", encoding="utf-8")
@@ -76,3 +79,11 @@ def test_prepare(tmp_path):
     setup(tmp_path, {"items": [item("a", "BBC")]})
     prepare(DAY, tmp_path)
     assert json.loads(stale.read_text(encoding="utf-8"))["stories"] == []
+
+
+def test_pool_event_same_day_is_past(tmp_path, pg):
+    """白天候選池裡沒收錄的事件和晨報同一天：當前因，不能因為日期不早於今天就丟掉。"""
+    setup(tmp_path, {"items": [item("a", "technews")]},
+          [(1, "a", DAY, "T a", "technews"), (2, "p1", DAY, "下午的", "udn"), (3, "p2", DAY, "晚上的", "BBC")],
+          [(1, 2, "follow"), (1, 3, "follow")])
+    assert [p["summary"] for p in build(tmp_path, DAY)["stories"][0]["past"]] == ["事件 2", "事件 3"]

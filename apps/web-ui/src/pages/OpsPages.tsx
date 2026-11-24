@@ -15,6 +15,7 @@ const KIND_LABEL: Record<OpsKind, string> = {
   'kg-rebuild': '重建知識圖譜',
   'sources-check': '試抓來源',
   rewrite: '重寫報告（devtools）',
+  round: '白天累積',
 }
 const TRIGGER_LABEL: Record<string, string> = {
   schedule: '排程',
@@ -60,7 +61,7 @@ function OpsNav() {
   )
 }
 
-/** /ops* 只服務本機：nginx 在 Tunnel 那一側回 404，這裡也不畫出來（同 /auth）。 */
+/** /ops* 只服務本機：入口閘門在 Tunnel 那一側回 404，這裡也不畫出來（同 /auth）。 */
 function LocalOnly({ title, children }: { title: string; children: ReactNode }) {
   const session = useSession()
   useDocumentTitle(title)

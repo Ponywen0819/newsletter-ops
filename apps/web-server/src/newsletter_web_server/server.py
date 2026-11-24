@@ -1,6 +1,6 @@
 """HTTP 層：路由、提供 apps/web-ui/dist。讀寫都交給 Site 底下的 reports 與 auth。
 
-不做身分驗證：誰能連進來、誰能開 /auth 由前面的 nginx 決定（docker/nginx.conf）；這個服務只能放在它後面或本機。"""
+不做身分驗證：誰能連進來、誰能開 /auth 由前面的入口閘門決定（約定見 deploy/README.md「入口閘門的約定」）；這個服務只能放在它後面或本機。"""
 from __future__ import annotations
 
 import hashlib
@@ -150,14 +150,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_payload(self, path: str):
         fixed = {
-            "/api/session": lambda: {"local": True},  # nginx 在對外那一側改回 false（不顯示 /auth）
+            "/api/session": lambda: {"local": True},  # 閘門在對外那一側改回 false（不顯示 /auth）
             "/api/heartbeat": lambda: {"ok": True},
             "/api/today": self.site.reports.today_payload,
             "/api/reports": self.site.reports.list_payload,
             "/api/auth-health": self.site.auth.health,
             "/api/auth": self.site.auth.status,
             "/api/feedback-stats": self.site.reports.feedback_stats,
-            # 維運（只限本機，由 nginx 擋）
+            # 維運（只限本機，由閘門擋）
             "/api/ops": self.site.ops.status,
             "/api/ops/config": self.site.ops.config,
         }
