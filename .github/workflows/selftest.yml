@@ -13,6 +13,18 @@ jobs:
     # 自架 runner（Windows 的 WSL2）。repo 是公開的：fork 來的 PR 不在這台跑，免得陌生人的程式在家裡的機器上執行
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, docker]
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - "5432/tcp"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       NX_NO_CLOUD: true
     steps:
@@ -35,9 +47,10 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: apps/web-ui
+      - run: echo "NEWSLETTER_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres" >> "$GITHUB_ENV"
       - run: npx nx run-many -t lint typecheck test
       - run: git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
-      - run: uv run --no-project --with "pytest>=9,<10" pytest -q deploy
+      - run: uv run --no-project --with "pytest>=9,<10" --with ./packages/shared pytest -q deploy
       - run: uv run --no-project python deploy/check_boundaries.py
       # compose 檔的語法與變數展開；值是假的，只為了讓必填變數不報錯
       - run: docker compose config -q && docker compose -f docker-compose.test.yml config -q
@@ -45,3 +58,4 @@ jobs:
           GMAIL_USER: a
           GMAIL_APP_PASSWORD: b
           TUNNEL_TOKEN: c
+          NEWSLETTER_DATABASE_URL: postgresql://x@db/personal

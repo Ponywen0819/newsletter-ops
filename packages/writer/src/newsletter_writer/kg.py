@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""新聞知識圖譜（KG）：把每天的 curated 萃取成事件與實體存進 state/kg.sqlite，寫報告前產生背景 data/kg/<date>.json。
+"""新聞知識圖譜（KG）：把每天的 curated 萃取成事件與實體存進 KG（Postgres，NEWSLETTER_DATABASE_URL），寫報告前產生背景 data/kg/<date>.json。
 
-用法：uv run --project packages/writer newsletter-kg [--date YYYY-MM-DD]   萃取當天並產生背景（newsletter-write 開始前會自己跑）
-      uv run --project packages/writer newsletter-kg --rebuild             清掉重來，依日期重跑 data/curated/ 全部（回填也是這個）
+用法：uv run --project packages/writer newsletter-kg [--date YYYY-MM-DD]     萃取當天並產生背景（newsletter-write 開始前會自己跑）
+      uv run --project packages/writer newsletter-kg --rebuild               清掉重來，依日期重跑 data/curated/ 全部（回填也是這個）
       uv run --project packages/writer newsletter-kg --flag <uid> wrong|trusted|clear
-      uv run --project packages/writer newsletter-kg --pool                萃取白天的候選池 data/pool.json（newsletter-collect --pool 之後）
+      uv run --project packages/writer newsletter-kg --pool                  萃取白天的候選池 data/pool.json（newsletter-collect --pool 之後）
+      uv run --project packages/writer newsletter-kg --import-sqlite PATH    一次性把舊的 state/kg.sqlite 匯入 Postgres（不需要 Claude 認證）
 
 候選池的事件記在下一份晨報的日期（edition）：晨報那天它們算「今天」，白天陸續出來的後續才串得成同一天的時間線。
 
@@ -17,16 +18,17 @@ import argparse
 import json
 import os
 import re
-import sqlite3
 import sys
 import traceback
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
 
+import psycopg
+
 from newsletter_llm import runner
-from newsletter_shared import ROOT, atomic, kg_flags, metrics
-from newsletter_shared.kg_store import KINDS, SCHEMA, TYPES, norm, statuses
+from newsletter_shared import ROOT, atomic, kg_flags, kg_store, metrics
+from newsletter_shared.kg_store import KINDS, TABLES, TYPES, norm, statuses
 from newsletter_shared.kg_store import sources as _sources
 from newsletter_shared.lock import locked
 
@@ -102,20 +104,13 @@ def model_ask(token: str) -> Ask:
     return ask
 
 
-def connect(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(path)
-    con.executescript(SCHEMA)
-    return con
-
-
-def forget(con: sqlite3.Connection, uid: str) -> None:
-    ids = [r[0] for r in con.execute("SELECT id FROM events WHERE uid=?", (uid,))]
-    marks = ",".join("?" * len(ids))
+def forget(con: psycopg.Connection, uid: str) -> None:
+    ids = [r[0] for r in con.execute("SELECT id FROM events WHERE uid=%s", (uid,))]
+    marks = ",".join(["%s"] * len(ids))
     if ids:
         con.execute(f"DELETE FROM links WHERE src IN ({marks}) OR dst IN ({marks})", ids + ids)
         con.execute(f"DELETE FROM mentions WHERE event IN ({marks})", ids)
-        con.execute("DELETE FROM events WHERE uid=?", (uid,))
+        con.execute("DELETE FROM events WHERE uid=%s", (uid,))
 
 
 def _events_of(row: dict, text: str) -> tuple[list[tuple[str, str, dict]], int]:
@@ -139,7 +134,7 @@ def _events_of(row: dict, text: str) -> tuple[list[tuple[str, str, dict]], int]:
     return kept, dropped
 
 
-def extract(con: sqlite3.Connection, stamp: str, items: list[dict], ask: Ask) -> dict:
+def extract(con: psycopg.Connection, stamp: str, items: list[dict], ask: Ask) -> dict:
     """萃取還沒抽過（或萃取器版本較舊）的則。回傳統計。"""
     done = {uid for uid, v in con.execute("SELECT uid, version FROM items") if v == VERSION}
     todo = {i["uid"]: i for i in items if i.get("uid") and i["uid"] not in done}
@@ -155,7 +150,7 @@ def extract(con: sqlite3.Connection, stamp: str, items: list[dict], ask: Ask) ->
                                           payload=json.dumps({"items": payload}, ensure_ascii=False)), "kg_extract")
         rows += [r for r in reply.get("items") or [] if isinstance(r, dict) and r.get("uid") in chunk]
     kept = dropped = 0
-    with con:
+    with con.transaction(), con.cursor() as cur:
         for uid in todo:
             forget(con, uid)
         for row in rows:
@@ -165,40 +160,46 @@ def extract(con: sqlite3.Connection, stamp: str, items: list[dict], ask: Ask) ->
             events, lost = _events_of(row, article(item))
             dropped += lost
             for summary, quote, ents in events:
-                eid = con.execute("INSERT INTO events(uid, date, summary, quote) VALUES (?,?,?,?)",
-                                  (item["uid"], stamp, summary, quote)).lastrowid
-                con.executemany("INSERT INTO mentions VALUES (?,?,?,?)", [(eid, k, n, t) for k, (n, t) in ents.items()])
+                eid = con.execute("INSERT INTO events(uid, date, summary, quote) VALUES (%s,%s,%s,%s) RETURNING id",
+                                  (item["uid"], stamp, summary, quote)).fetchone()[0]
+                cur.executemany("INSERT INTO mentions(event, key, name, type) VALUES (%s,%s,%s,%s)",
+                                [(eid, k, n, t) for k, (n, t) in ents.items()])
                 kept += 1
-        con.executemany("INSERT OR REPLACE INTO items VALUES (?,?,?,?,?,?)",
-                        [(uid, stamp, i.get("title", ""), i.get("url", ""), i.get("source", ""), VERSION)
-                         for uid, i in todo.items()])
+        cur.executemany(
+            """INSERT INTO items(uid, date, title, url, source, version) VALUES (%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (uid) DO UPDATE SET date=EXCLUDED.date, title=EXCLUDED.title, url=EXCLUDED.url,
+                   source=EXCLUDED.source, version=EXCLUDED.version""",
+            [(uid, stamp, i.get("title", ""), i.get("url", ""), i.get("source", ""), VERSION)
+             for uid, i in todo.items()])
     return {"items": len(todo), "extracted": kept, "dropped": dropped}
 
 
-def _candidates(con: sqlite3.Connection, ev: tuple, stamp: str) -> list[dict]:
+def _candidates(con: psycopg.Connection, ev: tuple, stamp: str) -> list[dict]:
     eid, uid = ev
-    keys = [r[0] for r in con.execute("SELECT key FROM mentions WHERE event=?", (eid,))]
+    keys = [r[0] for r in con.execute("SELECT key FROM mentions WHERE event=%s", (eid,))]
     if not keys:
         return []
     since = (date.fromisoformat(stamp) - timedelta(days=RELATE_DAYS)).isoformat()
+    marks = ",".join(["%s"] * len(keys))
     rows = con.execute(
         f"""SELECT e.id, e.date, e.summary, i.source, COUNT(DISTINCT m.key) AS shared
             FROM events e JOIN mentions m ON m.event=e.id JOIN items i ON i.uid=e.uid
-            WHERE m.key IN ({','.join('?' * len(keys))}) AND e.uid != ? AND e.date >= ?
-              AND (e.date < ? OR (e.date = ? AND e.id < ?))
-            GROUP BY e.id ORDER BY shared DESC, e.date DESC LIMIT ?""",
+            WHERE m.key IN ({marks}) AND e.uid != %s AND e.date >= %s
+              AND (e.date < %s OR (e.date = %s AND e.id < %s))
+            GROUP BY e.id, i.uid ORDER BY shared DESC, e.date DESC LIMIT %s""",
         [*keys, uid, since, stamp, stamp, eid, CANDIDATES])
     return [{"id": r[0], "date": r[1], "summary": r[2], "source": r[3]} for r in rows]
 
 
-def relate(con: sqlite3.Connection, stamp: str, texts: dict[str, str], ask: Ask) -> dict:
+def relate(con: psycopg.Connection, stamp: str, texts: dict[str, str], ask: Ask) -> dict:
     """當天還沒比對過的事件和舊事件比對，存下 same／follow／contradict／retract 連結。texts：uid → 原文。"""
-    pending = list(con.execute("SELECT id, uid, summary FROM events WHERE date=? AND related=0", (stamp,)))
+    pending = list(con.execute("SELECT id, uid, summary FROM events WHERE date=%s AND related=0", (stamp,)))
     pairs = []
     for eid, uid, summary in pending:
         if cands := _candidates(con, (eid, uid), stamp):
             pairs.append({"new": eid, "uid": uid, "summary": summary, "candidates": cands})
-    links = rejected = 0
+    rows: list = []
+    rejected = 0
     if pairs:
         offered = {p["new"]: ({c["id"] for c in p["candidates"]}, p["uid"]) for p in pairs}
         replies: list = []
@@ -206,7 +207,6 @@ def relate(con: sqlite3.Connection, stamp: str, texts: dict[str, str], ask: Ask)
             chunk = pairs[start:start + RELATE_BATCH]
             payload = {"pairs": chunk, "texts": {p["uid"]: texts.get(p["uid"], "")[:TEXT_LIMIT] for p in chunk}}
             replies += ask(RELATE_PROMPT.format(payload=json.dumps(payload, ensure_ascii=False)), "kg_relate").get("links") or []
-        rows = []
         for link in replies:
             new, old, kind = (link.get(k) for k in ("new", "old", "kind")) if isinstance(link, dict) else (None,) * 3
             quote = str(link.get("quote") or "").strip()[:QUOTE_LEN] if isinstance(link, dict) else ""
@@ -215,12 +215,13 @@ def relate(con: sqlite3.Connection, stamp: str, texts: dict[str, str], ask: Ask)
                 rejected += 1
                 continue
             rows.append((new, old, kind, quote, stamp))
-        with con:
-            con.executemany("INSERT INTO links VALUES (?,?,?,?,?)", rows)
-        links = len(rows)
-    with con:
-        con.executemany("UPDATE events SET related=1 WHERE id=?", [(p[0],) for p in pending])
-    return {"compared": len(pairs), "links": links, "links_rejected": rejected}
+    if rows or pending:
+        with con.transaction(), con.cursor() as cur:
+            if rows:
+                cur.executemany("INSERT INTO links VALUES (%s,%s,%s,%s,%s)", rows)
+            if pending:
+                cur.executemany("UPDATE events SET related=1 WHERE id=%s", [(p[0],) for p in pending])
+    return {"compared": len(pairs), "links": len(rows), "links_rejected": rejected}
 
 
 def reported_uids(root: Path, stamp: str) -> set[str]:
@@ -229,24 +230,24 @@ def reported_uids(root: Path, stamp: str) -> set[str]:
             for u in UID_IN_REPORT.findall(p.read_text(encoding="utf-8"))}
 
 
-def background(con: sqlite3.Connection, stamp: str, root: Path, flags: dict[str, str]) -> dict:
-    today = [r[0] for r in con.execute("SELECT id FROM events WHERE date=?", (stamp,))]
+def background(con: psycopg.Connection, stamp: str, root: Path, flags: dict[str, str]) -> dict:
+    today = [r[0] for r in con.execute("SELECT id FROM events WHERE date=%s", (stamp,))]
     keys = [r[0] for r in con.execute(
-        f"SELECT DISTINCT key FROM mentions WHERE event IN ({','.join('?' * len(today))})", today)] if today else []
+        f"SELECT DISTINCT key FROM mentions WHERE event IN ({','.join(['%s'] * len(today))})", today)] if today else []
     events: list[dict] = []
     if keys:
         since = (date.fromisoformat(stamp) - timedelta(days=CONTEXT_DAYS)).isoformat()
         rows = list(con.execute(
-            f"""SELECT e.id, e.date, e.summary, i.title, i.url, i.source, GROUP_CONCAT(DISTINCT m.name), COUNT(DISTINCT m.key) AS shared
+            f"""SELECT e.id, e.date, e.summary, i.title, i.url, i.source, string_agg(DISTINCT m.name, ','), COUNT(DISTINCT m.key) AS shared
                 FROM events e JOIN mentions m ON m.event=e.id JOIN items i ON i.uid=e.uid
-                WHERE m.key IN ({','.join('?' * len(keys))}) AND e.date >= ? AND e.date < ?
-                GROUP BY e.id
-                ORDER BY EXISTS(SELECT 1 FROM links l WHERE l.dst=e.id AND l.date=?) DESC, shared DESC, e.date DESC
-                LIMIT ?""", [*keys, since, stamp, stamp, MAX_BACKGROUND]))
+                WHERE m.key IN ({','.join(['%s'] * len(keys))}) AND e.date >= %s AND e.date < %s
+                GROUP BY e.id, i.uid
+                ORDER BY EXISTS(SELECT 1 FROM links l WHERE l.dst=e.id AND l.date=%s) DESC, shared DESC, e.date DESC
+                LIMIT %s""", [*keys, since, stamp, stamp, MAX_BACKGROUND]))
         status = statuses(con, [r[0] for r in rows], flags)
         today_links: dict[int, list[dict]] = {}
         for dst, kind, uid in con.execute(
-                "SELECT l.dst, l.kind, e.uid FROM links l JOIN events e ON e.id=l.src WHERE l.date=?", (stamp,)):
+                "SELECT l.dst, l.kind, e.uid FROM links l JOIN events e ON e.id=l.src WHERE l.date=%s", (stamp,)):
             today_links.setdefault(dst, []).append({"kind": kind, "uid": uid})
         for eid, day, summary, title, url, source, names, _ in rows:
             if status[eid] == "invalid":
@@ -259,7 +260,7 @@ def background(con: sqlite3.Connection, stamp: str, root: Path, flags: dict[str,
     hits = list(con.execute(
         """SELECT DISTINCT l.dst, l.kind, l.quote, s.uid, d.uid, d.date, d.summary, i.title, i.url, i.source
            FROM links l JOIN events s ON s.id=l.src JOIN events d ON d.id=l.dst JOIN items i ON i.uid=d.uid
-           WHERE l.date=? AND l.kind IN ('contradict', 'retract')""", (stamp,)))
+           WHERE l.date=%s AND l.kind IN ('contradict', 'retract')""", (stamp,)))
     status = statuses(con, [h[0] for h in hits], flags)
     for dst, kind, quote, by_uid, uid, day, summary, title, url, source in hits:
         if uid in reported and status[dst] != "active" and flags.get(by_uid) != "wrong":
@@ -278,7 +279,7 @@ def load_items(root: Path, stamp: str) -> list[dict]:
     return items_of(json.loads((root / "data" / "curated" / f"{stamp}.json").read_text(encoding="utf-8")))
 
 
-def grow(con: sqlite3.Connection, stamp: str, items: list[dict], ask: Ask) -> dict:
+def grow(con: psycopg.Connection, stamp: str, items: list[dict], ask: Ask) -> dict:
     return {**extract(con, stamp, items, ask), **relate(con, stamp, {i["uid"]: article(i) for i in items}, ask)}
 
 
@@ -297,9 +298,8 @@ def grow_pool(root: Path, stamp: str, ask: Ask) -> dict:
     except (OSError, ValueError):
         pool = {}
     items = [i for i in pool.values() if isinstance(i, dict) and "fulltext" in i]
-    db = root / "state" / "kg.sqlite"
-    with locked(db):
-        con = connect(db)
+    with locked(root / "state" / "kg"):
+        con = kg_store.connect()
         try:
             return grow(con, stamp, items, ask)
         finally:
@@ -308,10 +308,9 @@ def grow_pool(root: Path, stamp: str, ask: Ask) -> dict:
 
 def build(root: Path, stamp: str, ask: Ask) -> dict:
     """萃取、比對、寫背景檔。回傳統計（也記進 metrics）。"""
-    db = root / "state" / "kg.sqlite"
-    with locked(db):
+    with locked(root / "state" / "kg"):
         items = load_items(root, stamp)
-        con = connect(db)
+        con = kg_store.connect()
         try:
             stats = grow(con, stamp, items, ask)
             bg = background(con, stamp, root, kg_flags.read(root / "state" / "kg_flags.jsonl"))
@@ -336,11 +335,10 @@ def prepare(stamp: str, token: str, root: Path = ROOT, ask: Ask | None = None) -
 
 
 def rebuild(root: Path, ask: Ask) -> int:
-    db = root / "state" / "kg.sqlite"
-    with locked(db):
-        db.unlink(missing_ok=True)
-        con = connect(db)
+    with locked(root / "state" / "kg"):
+        con = kg_store.connect()
         try:
+            kg_store.load(con, {t: [] for t in TABLES})
             for path in sorted((root / "data" / "curated").glob("*.json")):
                 items = items_of(json.loads(path.read_text(encoding="utf-8")))
                 stats = grow(con, path.stem, items, ask)
@@ -350,12 +348,40 @@ def rebuild(root: Path, ask: Ask) -> int:
     return 0
 
 
+def import_sqlite(path: Path, root: Path = ROOT) -> int:
+    """一次性把舊的 state/kg.sqlite 搬進 Postgres（清空目標並重設序號）。"""
+    import sqlite3
+    if not path.is_file():
+        print(f"找不到檔案：{path}", file=sys.stderr)
+        return 2
+    src = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        data = {
+            "items": [list(r) for r in src.execute("SELECT uid, date, title, url, source, version FROM items")],
+            "events": [list(r) for r in src.execute("SELECT id, uid, date, summary, quote, related FROM events ORDER BY id")],
+            "mentions": [list(r) for r in src.execute("SELECT rowid, event, key, name, type FROM mentions ORDER BY rowid")],
+            "links": [list(r) for r in src.execute("SELECT src, dst, kind, quote, date FROM links")],
+        }
+    finally:
+        src.close()
+    with locked(root / "state" / "kg"):
+        con = kg_store.connect()
+        try:
+            kg_store.load(con, data)
+        finally:
+            con.close()
+    counts = {t: len(data[t]) for t in TABLES}
+    print(f"[kg] 已匯入 {path}：{json.dumps(counts, ensure_ascii=False)}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="新聞知識圖譜：萃取、比對、產生 writer 的背景")
     ap.add_argument("--date", help="預設今天")
-    ap.add_argument("--rebuild", action="store_true", help="清掉 state/kg.sqlite，依日期重跑 data/curated/ 全部")
+    ap.add_argument("--rebuild", action="store_true", help="清空 KG（Postgres，NEWSLETTER_DATABASE_URL），依日期重跑 data/curated/ 全部")
     ap.add_argument("--pool", action="store_true", help="萃取白天的候選池 data/pool.json，記在下一份晨報的日期")
     ap.add_argument("--flag", nargs=2, metavar=("UID", "wrong|trusted|clear"), help="標記某則的事實判定")
+    ap.add_argument("--import-sqlite", metavar="PATH", help="一次性把舊的 state/kg.sqlite 匯入 Postgres（不需要 Claude 認證）")
     args = ap.parse_args(argv)
     if args.flag:
         uid, flag = args.flag
@@ -363,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
             ap.error("--flag <16 位 uid> wrong|trusted|clear")
         kg_flags.append(uid, "" if flag == "clear" else flag)
         return 0
+    if args.import_sqlite:
+        return import_sqlite(Path(args.import_sqlite), ROOT)
     if runner.sdk is None:
         print("缺 claude-agent-sdk：請用 `uv run --project packages/writer newsletter-kg` 執行", file=sys.stderr)
         return 2
@@ -375,8 +403,8 @@ def main(argv: list[str] | None = None) -> int:
         stats = grow_pool(ROOT, stamp := edition(), model_ask(auth.token))
         metrics.record("kg_pool", edition=stamp, **stats)
         print(f"[kg] 候選池 → {stamp} {json.dumps(stats, ensure_ascii=False)}", file=sys.stderr)
-        return 0
-    prepare(args.date or f"{datetime.now(metrics.TZ):%Y-%m-%d}", auth.token)
+    else:
+        prepare(args.date or f"{datetime.now(metrics.TZ):%Y-%m-%d}", auth.token)
     return 0
 
 

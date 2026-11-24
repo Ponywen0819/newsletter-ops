@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
 
+import psycopg
 import pytest
 
 from newsletter_shared import auth_health, auth_store, feedback, kg_flags, kg_store
@@ -140,37 +140,40 @@ def _get(req, path: str) -> tuple[int, dict]:
 
 
 @pytest.fixture
-def kg_db(root: Path) -> Path:
+def kg_db(pg) -> str:
     """UID_A（在 09-28、09-27 兩份晨報裡）完成收購 → 跟進 U1 的否認 → U1 與 U2 的宣布矛盾；U3 是很久以前的。"""
-    db = root / "state" / "kg.sqlite"
-    db.parent.mkdir(exist_ok=True)
-    con = sqlite3.connect(db)
-    con.executescript(kg_store.SCHEMA)
-    with con:
-        con.executemany("INSERT INTO items VALUES (?, ?, ?, ?, ?, 1)", [
+    with kg_store.connect() as con, con.transaction(), con.cursor() as cur:
+        cur.executemany("INSERT INTO items VALUES (%s, %s, %s, %s, %s, 1)", [
             (UID_A, "2026-09-28", "Acme 完成", "https://s1/a", "S1"), (U1, "2026-09-20", "Beta 否認", "https://s2/b", "S2"),
             (U2, "2026-09-10", "Acme 宣布", "https://s3/c", "S3"), (U3, "2026-01-01", "Acme 成立", "https://s4/d", "S4")])
-        con.executemany("INSERT INTO events(id, uid, date, summary, quote) VALUES (?, ?, ?, ?, ?)", [
+        cur.executemany("INSERT INTO events(id, uid, date, summary, quote) VALUES (%s, %s, %s, %s, %s)", [
             (1, U2, "2026-09-10", "Acme 宣布收購 Beta", "q1"), (2, U1, "2026-09-20", "Beta 否認", "q2"),
             (3, UID_A, "2026-09-28", "Acme 完成收購", "q3"), (4, U3, "2026-01-01", "Acme 成立", "q4")])
-        con.executemany("INSERT INTO mentions VALUES (?, ?, ?, ?)", [
+        cur.executemany("INSERT INTO mentions(event, key, name, type) VALUES (%s, %s, %s, %s)", [
             (1, "acme", "Acme", "org"), (1, "beta", "Beta", "org"), (2, "beta", "Beta", "org"), (2, "acme", "ACME", "org"),
             (3, "acme", "Acme", "org"), (3, "台積電", "台積電", "org"), (4, "acme", "Acme", "org")])
-        con.executemany("INSERT INTO links VALUES (?, ?, ?, ?, ?)", [
+        cur.executemany("INSERT INTO links VALUES (%s, %s, %s, %s, %s)", [
             (2, 1, "contradict", "not in talks", "2026-09-20"), (3, 2, "follow", "", "2026-09-28"),
             (3, 2, "follow", "", "2026-09-28")])  # 重複的連結只回一次
-    con.close()
-    return db
+    return pg
 
 
-def test_kg_missing(req) -> None:
-    """還沒建過 KG：總覽說沒有，個別的 404。"""
+def test_kg_missing(req, monkeypatch) -> None:
+    """未設定 NEWSLETTER_DATABASE_URL：總覽說沒有，個別的 404。"""
+    monkeypatch.delenv(kg_store.ENV, raising=False)
     assert _get(req, "/api/kg/entities") == (200, {"q": "", "available": False, "since": "2026-08-29", "entities": []})
     assert _get(req, f"/api/kg/item/{UID_A}")[0] == 404
     assert _get(req, "/api/kg/entity/acme")[0] == 404
 
 
-def test_kg_item(req, root: Path, kg_db: Path) -> None:
+def test_kg_missing_empty_schema(req, pg) -> None:
+    """已設連線但還沒建過表：總覽說沒有，個別的 404。"""
+    assert _get(req, "/api/kg/entities") == (200, {"q": "", "available": False, "since": "2026-08-29", "entities": []})
+    assert _get(req, f"/api/kg/item/{UID_A}")[0] == 404
+    assert _get(req, "/api/kg/entity/acme")[0] == 404
+
+
+def test_kg_item(req, root: Path, kg_db: str) -> None:
     status, one = _get(req, f"/api/kg/item/{UID_A}")
     assert status == 200 and one["depth"] == 1 and one["seeds"] == [3], one
     assert [e["id"] for e in one["events"]] == [2, 3]  # 舊到新
@@ -188,7 +191,7 @@ def test_kg_item(req, root: Path, kg_db: Path) -> None:
     assert two["flags"] == {}
 
 
-def test_kg_flags_change_status(req, root: Path, kg_db: Path) -> None:
+def test_kg_flags_change_status(req, root: Path, kg_db: str) -> None:
     """與 writer 同一套規則：否認的那則被標錯，它的矛盾就不算。"""
     kg_flags.append(U1, "wrong", root / "state" / "kg_flags.jsonl")
     two = _get(req, f"/api/kg/item/{UID_A}?depth=2")[1]
@@ -204,7 +207,7 @@ def test_kg_flags_change_status(req, root: Path, kg_db: Path) -> None:
     "/api/kg/item/" + ",".join([UID_A] * 2 + [f"{i:016x}" for i in range(10)]),  # 去重後還是超過 10 則
     "/api/kg/entity/acme?days=0", "/api/kg/entity/acme?days=366", "/api/kg/entities?q=" + "a" * 101,
 ])
-def test_kg_bad_request(req, kg_db: Path, path: str) -> None:
+def test_kg_bad_request(req, kg_db: str, path: str) -> None:
     assert _get(req, path)[0] == 400
 
 
@@ -212,11 +215,11 @@ def test_kg_bad_request(req, kg_db: Path, path: str) -> None:
     "/api/kg/item/" + "6" * 16, "/api/kg/entity/Acme",  # 不是正規化過的 key
     "/api/kg/entity/nobody", "/api/kg/entity/a%2Fb",
 ])
-def test_kg_not_found(req, kg_db: Path, path: str) -> None:
+def test_kg_not_found(req, kg_db: str, path: str) -> None:
     assert _get(req, path)[0] == 404
 
 
-def test_kg_entity(req, kg_db: Path) -> None:
+def test_kg_entity(req, kg_db: str) -> None:
     status, acme = _get(req, "/api/kg/entity/acme")
     assert status == 200 and acme["days"] == 90 and acme["since"] == "2026-06-30", acme
     assert acme["entity"] == {"key": "acme", "name": "Acme", "type": "org", "total": 4}  # 最常見的寫法
@@ -227,7 +230,7 @@ def test_kg_entity(req, kg_db: Path) -> None:
     assert tsmc["entity"]["name"] == "台積電" and [e["id"] for e in tsmc["events"]] == [3]
 
 
-def test_kg_entities(req, kg_db: Path) -> None:
+def test_kg_entities(req, kg_db: str) -> None:
     top = _get(req, "/api/kg/entities")[1]
     assert top["available"] and [(e["key"], e["count"]) for e in top["entities"]] == [("acme", 3), ("beta", 2), ("台積電", 1)]
     assert top["entities"][0]["last"] == "2026-09-28"
@@ -236,15 +239,20 @@ def test_kg_entities(req, kg_db: Path) -> None:
     assert _get(req, "/api/kg/entities?q=" + quote("，"))[1]["entities"] == []
 
 
-def test_kg_pages_and_readonly(req, root: Path, kg_db: Path) -> None:
-    """前端路由回 index.html；KG 不進 ETag／離線副本；網頁讀過之後資料庫一個字都沒改。"""
+def test_kg_pages_and_readonly(req, kg_db: str) -> None:
+    """前端路由回 index.html；KG 不進 ETag／離線副本；網頁讀過之後資料庫資料不變，唯讀連線拒絕寫入。"""
     for page in ("/kg", f"/kg/item/{UID_A}", f"/kg/item/{UID_A},{U1}", "/kg/entity/" + quote("台積電")):
         assert req("GET", page)[0] == 200, page
     assert req("GET", "/kg/item/xyz")[0] == 404
     assert "etag" not in req("GET", f"/api/kg/item/{UID_A}")[1]
-    before = kg_db.read_bytes()
+    with kg_store.open_readonly() as con:
+        assert con is not None
+        before = kg_store.dump(con)
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            con.execute("DELETE FROM items")
     _get(req, f"/api/kg/item/{UID_A}?depth=2")
-    assert kg_db.read_bytes() == before and not (root / "state" / "kg.sqlite-journal").exists()
+    with kg_store.open_readonly() as con:
+        assert con is not None and kg_store.dump(con) == before
 
 
 def test_etag(req, uid_a: str) -> None:

@@ -1,4 +1,4 @@
-"""知識圖譜的唯讀檢視：讀 state/kg.sqlite（writer 的 newsletter-kg 寫入），給網頁畫脈絡圖。
+"""知識圖譜的唯讀檢視：讀 KG（Postgres，NEWSLETTER_DATABASE_URL；writer 的 newsletter-kg 寫入），給網頁畫脈絡圖。
 
 只用唯讀連線，不建表、不寫入；事件狀態用 shared 的 kg_store.statuses 算，與 writer 寫背景時同一套規則，
 並套用 state/kg_flags.jsonl（使用者在網頁上標的「事實有誤」／「確認可信」）。
@@ -6,12 +6,12 @@
 """
 from __future__ import annotations
 
-import sqlite3
-from contextlib import closing
 from datetime import date, timedelta
 from http import HTTPStatus
 from pathlib import Path
 from typing import Callable
+
+import psycopg
 
 from newsletter_shared import kg_flags, kg_store
 
@@ -37,30 +37,29 @@ def _int(value: str, allowed: Callable[[int], bool], name: str) -> int:
 
 
 def _marks(values) -> str:
-    return ",".join("?" * len(values))
+    return ",".join(["%s"] * len(values))
 
 
 class Graph:
     def __init__(self, root: Path, today: Callable[[], str], report_of: Callable[[], dict[str, str]]):
-        self.db = root / "state" / "kg.sqlite"
         self.flags_path = root / "state" / "kg_flags.jsonl"
         self.today = today
         self.report_of = report_of  # uid → 收錄它的最新一份晨報日期
 
-    def _open(self) -> sqlite3.Connection:
-        con = kg_store.open_readonly(self.db)
+    def _open(self) -> psycopg.Connection:
+        con = kg_store.open_readonly()
         if con is None:
             raise NotFound("kg")
         return con
 
-    def _graph(self, con: sqlite3.Connection, ids: list[int], flags: dict[str, str]) -> dict:
+    def _graph(self, con: psycopg.Connection, ids: list[int], flags: dict[str, str]) -> dict:
         """事件（含實體、狀態、來源數、所在晨報）與它們之間的連結；舊到新。"""
         if not ids:
             return {"events": [], "links": [], "flags": {}}
         marks = _marks(ids)
         entities: dict[int, list[dict]] = {}
         for eid, key, name, type_ in con.execute(
-                f"SELECT event, key, name, type FROM mentions WHERE event IN ({marks}) ORDER BY rowid", ids):
+                f"SELECT event, key, name, type FROM mentions WHERE event IN ({marks}) ORDER BY id", ids):
             entities.setdefault(eid, []).append({"key": key, "name": name, "type": type_})
         status = kg_store.statuses(con, ids, flags)
         reports = self.report_of()
@@ -87,7 +86,7 @@ class Graph:
         hops = _int(depth, lambda n: n in DEPTHS, "depth")
         flags = kg_flags.read(self.flags_path)
         reports = self.report_of()
-        with closing(self._open()) as con:
+        with self._open() as con:
             items = [{"uid": uid, "date": day, "title": title, "url": url, "source": source, "report": reports.get(uid)}
                      for uid, day, title, url, source in con.execute(
                          f"SELECT uid, date, title, url, source FROM items WHERE uid IN ({_marks(uids)})", uids)]
@@ -118,19 +117,19 @@ class Graph:
         span = _int(days, lambda n: 1 <= n <= MAX_DAYS, "days")
         since = (date.fromisoformat(self.today()) - timedelta(days=span)).isoformat()
         flags = kg_flags.read(self.flags_path)
-        with closing(self._open()) as con:
-            named = con.execute("""SELECT name, type, COUNT(*) AS n FROM mentions WHERE key=?
+        with self._open() as con:
+            named = con.execute("""SELECT name, type, COUNT(*) AS n FROM mentions WHERE key=%s
                                    GROUP BY name, type ORDER BY n DESC, name LIMIT 1""", (key,)).fetchone()
             if named is None:
                 raise NotFound(key)
             ids = [r[0] for r in con.execute(
-                """SELECT DISTINCT e.id FROM events e JOIN mentions m ON m.event=e.id
-                   WHERE m.key=? AND e.date>=? ORDER BY e.date DESC, e.id DESC LIMIT ?""", (key, since, MAX_EVENTS + 1))]
+                """SELECT DISTINCT e.id, e.date FROM events e JOIN mentions m ON m.event=e.id
+                   WHERE m.key=%s AND e.date>=%s ORDER BY e.date DESC, e.id DESC LIMIT %s""", (key, since, MAX_EVENTS + 1))]
             truncated, ids = len(ids) > MAX_EVENTS, ids[:MAX_EVENTS]
-            total = con.execute("SELECT COUNT(DISTINCT event) FROM mentions WHERE key=?", (key,)).fetchone()[0]
+            total = con.execute("SELECT COUNT(DISTINCT event) FROM mentions WHERE key=%s", (key,)).fetchone()[0]
             related = [{"key": k, "name": n, "type": t, "count": c} for k, n, t, c in con.execute(
                 f"""SELECT key, MIN(name), MIN(type), COUNT(DISTINCT event) AS c FROM mentions
-                    WHERE event IN ({_marks(ids)}) AND key != ? GROUP BY key ORDER BY c DESC, key LIMIT ?""",
+                    WHERE event IN ({_marks(ids)}) AND key != %s GROUP BY key ORDER BY c DESC, key LIMIT %s""",
                 [*ids, key, RELATED_LIMIT])] if ids else []
             graph = self._graph(con, sorted(ids), flags)
         return {"entity": {"key": key, "name": named[0], "type": named[1], "total": total},
@@ -143,17 +142,16 @@ class Graph:
             raise ApiError(HTTPStatus.BAD_REQUEST, f"搜尋字串最多 {MAX_QUERY} 字")
         key = kg_store.norm(q)
         since = None if q else (date.fromisoformat(self.today()) - timedelta(days=TOP_DAYS)).isoformat()
-        con = kg_store.open_readonly(self.db)
+        con = kg_store.open_readonly()
         if con is None:
             return {"q": q, "available": False, "since": since, "entities": []}
-        if q and not key:  # 只有標點：沒有能比的
-            con.close()
-            return {"q": q, "available": True, "since": None, "entities": []}
-        where, args, limit = ("instr(m.key, ?) > 0", [key], SEARCH_LIMIT) if q else ("e.date >= ?", [since], TOP_LIMIT)
-        with closing(con):
+        with con:
+            if q and not key:  # 只有標點：沒有能比的
+                return {"q": q, "available": True, "since": None, "entities": []}
+            where, args, limit = ("strpos(m.key, %s) > 0", [key], SEARCH_LIMIT) if q else ("e.date >= %s", [since], TOP_LIMIT)
             rows = con.execute(
                 f"""SELECT m.key, MIN(m.name), MIN(m.type), COUNT(DISTINCT m.event) AS n, MAX(e.date) AS last
                     FROM mentions m JOIN events e ON e.id=m.event WHERE {where}
-                    GROUP BY m.key ORDER BY n DESC, last DESC, m.key LIMIT ?""", [*args, limit]).fetchall()
+                    GROUP BY m.key ORDER BY n DESC, last DESC, m.key LIMIT %s""", [*args, limit]).fetchall()
         return {"q": q, "available": True, "since": since,
                 "entities": [{"key": k, "name": n, "type": t, "count": c, "last": last} for k, n, t, c, last in rows]}

@@ -15,6 +15,8 @@ x-app: &app
   security_opt: [no-new-privileges:true]
   environment: &env
     NEWSLETTER_RUN_LABEL: test
+    # Postgres 若在 host 本機，容器內不能用 127.0.0.1，要用 host 的區網 IP 或 host.docker.internal／host.containers.internal
+    NEWSLETTER_DATABASE_URL: ${NEWSLETTER_DATABASE_URL:?請在 .env 設定 NEWSLETTER_DATABASE_URL（Postgres 連線字串）}
 
 services:
   web:

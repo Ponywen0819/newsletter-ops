@@ -30,16 +30,19 @@ uv run --project packages/writer newsletter-write --date 2026-11-02   # 用那�
 
 ## 知識圖譜（KG）
 
-`newsletter-write` 開始寫之前先跑 `kg.prepare()`：把當天 curated 萃取成事件存進 `state/kg.sqlite`，
+`newsletter-write` 開始寫之前先跑 `kg.prepare()`：把當天 curated 萃取成事件存進 KG（Postgres，`NEWSLETTER_DATABASE_URL`），
 再把今天新聞涉及的實體在過去 30 天的事件寫成 `data/kg/<date>.json`，skill 的「背景」一節用它補前因、後續與更正。
 **KG 失敗不擋寫報告**：只記 log 與 `stage: kg` 的 metrics，那天就沒有背景檔。
 
 ```bash
-uv run --project packages/writer newsletter-kg                         # 只跑萃取與背景（不寫報告）
-uv run --project packages/writer newsletter-kg --rebuild               # 清掉重來：依日期重跑 data/curated/ 全部（回填也是這個）
-uv run --project packages/writer newsletter-kg --pool                  # 萃取白天的候選池 data/pool.json，事件記在下一份晨報的日期
-uv run --project packages/writer newsletter-kg --flag <uid> wrong      # 這則事實有誤；trusted＝可信（不被自動判失效）；clear＝取消
+uv run --project packages/writer newsletter-kg                              # 只跑萃取與背景（不寫報告）
+uv run --project packages/writer newsletter-kg --rebuild                    # 清掉重來：依日期重跑 data/curated/ 全部（回填也是這個）
+uv run --project packages/writer newsletter-kg --pool                       # 萃取白天的候選池 data/pool.json，事件記在下一份晨報的日期
+uv run --project packages/writer newsletter-kg --flag <uid> wrong           # 這則事實有誤；trusted＝可信（不被自動判失效）；clear＝取消
+uv run --project packages/writer newsletter-kg --import-sqlite state/kg.sqlite  # 一次性把舊 SQLite 搬進 Postgres（不需 Claude 認證）
 ```
+
+- **連線與搬遷**：透過環境變數 `NEWSLETTER_DATABASE_URL` 連到 Postgres（寫入期間拿 `state/kg.lock`）。從舊版 `state/kg.sqlite` 升級時，設定好連線字串後執行 `--import-sqlite <路徑>` 即可一次性清空目標並完整搬入（含重設 `events`／`mentions` 的 `id` 序號）。
 
 - **萃取**（`stage: kg_extract`）：Haiku 5.5，**不給任何工具**，一天一次呼叫。每則最多 5 個事件，每個事件要附原文逐字引句；
   程式把引句正規化（全半形、大小寫、空白、標點不算）後比對標題＋摘要＋fulltext，**對不上就丟**，丟掉的數量記在 metrics 的 `dropped`。
@@ -57,7 +60,7 @@ uv run --project packages/writer newsletter-kg --flag <uid> wrong      # 這則�
 ## 專題素材
 
 晨報開頭的「專題報導」把同一件事的多家報導與前因合成一篇（例如 IPO 的定價、各家分析、投資方表態、前幾天的公告）。
-`newsletter-write` 在 KG 之後跑 `stories.prepare()`，寫 `data/stories/<date>.json`；**不呼叫模型**，只讀 curated 與 `state/kg.sqlite`：
+`newsletter-write` 在 KG 之後跑 `stories.prepare()`，寫 `data/stories/<date>.json`；**不呼叫模型**，只讀 curated 與 KG（Postgres，`NEWSLETTER_DATABASE_URL`）：
 
 - **分組**：collect 的 cluster（curated 的 `stories`，見 [collect/README.md](../collect/README.md)「同一件事的別家報導」）取聯集
   KG 今天的連結：今天兩則（含 coverage）的事件互為 `same`／`follow` 就併成一組，跨主題也會併。

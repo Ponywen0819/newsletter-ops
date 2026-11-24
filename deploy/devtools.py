@@ -19,7 +19,7 @@
   NEWSLETTER_TEST_PROJECT   測試區的 compose 專案名，預設 newsletter-ops-test
 
 做法：在 worker 容器裡跑一小段 Python（這個檔裡標「容器內」的函式，經 `python -c` 送進去），所以正式區不用先部署新版。
-對正式區只讀：打包時拿 pipeline 鎖（每日流程在跑就不打包），kg.sqlite 用 SQLite 的 backup 複製，不會抄到寫一半的檔。
+對正式區只讀：打包時拿 pipeline 鎖（每日流程在跑就不打包），知識圖譜用唯讀連線從 Postgres 匯出成快照裡的 state/kg.json，不會寫入正式區。
 不搬 oauth_token.json、auth_health.json、last_job.json、logs/：兩區的 token 本來就分開，執行紀錄各記各的。
 """
 from __future__ import annotations
@@ -48,11 +48,14 @@ REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / ".devtools"  # 快照、比較結果、信件；不進版控（.gitignore 的白名單沒放行）
 SAMPLE = REPO / "deploy" / "sample-data"
 
-# 快照的內容（相對資料根目錄）。目錄整個鏡像（測試區多出來的檔會刪掉），檔案逐一取代
+# 快照的內容（相對資料根目錄）。目錄整個鏡像（測試區多出來的檔會刪掉），檔案逐一取代；KG 另外以 state/kg.json 進出 Postgres
 SNAP_DIRS = ("reports", "data/curated", "data/kg", "data/search")
-SNAP_FILES = ("state/feedback.jsonl", "state/kg_flags.jsonl", "state/kg.sqlite", "state/seen.json", "state/last_run.json")
-LOCKED = ("state/feedback.jsonl", "state/kg_flags.jsonl", "state/kg.sqlite")  # 寫入者會拿 newsletter_shared.lock 的檔
+SNAP_FILES = ("state/feedback.jsonl", "state/kg_flags.jsonl", "state/seen.json", "state/last_run.json")
+LOCKED = ("state/feedback.jsonl", "state/kg_flags.jsonl")  # 寫入者會拿 newsletter_shared.lock 的檔
 FEEDBACK = "state/feedback.jsonl"
+KG_MEMBER = "state/kg.json"
+LEGACY_KG = "state/kg.sqlite"
+KG_LOCK = "state/kg"  # writer 的 KG 鎖檔是 state/kg.lock
 EXIT_BUSY = 75  # 和 worker 的 EXIT_BUSY 一樣：pipeline 在跑
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 UID_RE = re.compile(r"[0-9a-f]{16}")
@@ -96,10 +99,10 @@ def _pipeline_lock(root):
 
 
 def _allowed(name):
-    """快照裡只能有 SNAP_DIRS 底下的檔與 SNAP_FILES。"""
+    """快照裡只能有 SNAP_DIRS 底下的檔、SNAP_FILES 與 KG_MEMBER。"""
     if name.startswith("/") or "\\" in name or ".." in name.split("/"):
         return False
-    return name in SNAP_FILES or any(name.startswith(d + "/") for d in SNAP_DIRS)
+    return name in SNAP_FILES or name == KG_MEMBER or any(name.startswith(d + "/") for d in SNAP_DIRS)
 
 
 def _add_bytes(tar, name, data):
@@ -109,10 +112,8 @@ def _add_bytes(tar, name, data):
 
 
 def export_snapshot(root, out):
-    """把快照（tar.gz）寫到 out。全程握著 pipeline 鎖；會被寫的檔各自再拿它的鎖讀。"""
-    import sqlite3
-    import tempfile
-    with _pipeline_lock(root), tempfile.TemporaryDirectory() as tmp, tarfile.open(fileobj=out, mode="w|gz") as tar:
+    """把快照（tar.gz）寫到 out。全程握著 pipeline 鎖；會被寫的檔各自再拿它的鎖讀；KG 從 Postgres 唯讀匯出。"""
+    with _pipeline_lock(root), tarfile.open(fileobj=out, mode="w|gz") as tar:
         for d in SNAP_DIRS:
             base = root / d
             for p in sorted(base.rglob("*")) if base.is_dir() else []:
@@ -123,27 +124,30 @@ def export_snapshot(root, out):
             if not p.is_file():
                 continue
             with _locked(p) if name in LOCKED else contextlib.nullcontext():
-                if p.suffix == ".sqlite":
-                    copy = Path(tmp) / p.name
-                    src, dst = sqlite3.connect(p), sqlite3.connect(copy)
-                    try:
-                        src.backup(dst)
-                    finally:
-                        dst.close()
-                        src.close()
-                    data = copy.read_bytes()
-                else:
-                    data = p.read_bytes()
+                data = p.read_bytes()
             _add_bytes(tar, name, data)
+        if os.environ.get("NEWSLETTER_DATABASE_URL", "").strip():
+            from newsletter_shared import kg_store
+            with _locked(root / KG_LOCK):
+                con = kg_store.open_readonly()
+                if con is not None:
+                    try:
+                        kg_data = json.dumps(kg_store.dump(con), ensure_ascii=False).encode("utf-8")
+                    finally:
+                        con.close()
+                    _add_bytes(tar, KG_MEMBER, kg_data)
     out.flush()
 
 
 def _read_snapshot(src, only):
-    """快照（tar.gz 串流）→ {路徑: 內容}。有不在白名單的路徑就整份拒絕（exit 65）。"""
+    """快照（tar.gz 串流）→ {路徑: 內容}。有不在白名單的路徑就整份拒絕（exit 65）；舊格式 kg.sqlite 略過並提示。"""
     files = {}
     with tarfile.open(fileobj=src, mode="r|gz") as tar:
         for m in tar:
             if not m.isfile():
+                continue
+            if m.name == LEGACY_KG:
+                print("略過舊格式 KG（state/kg.sqlite）；如需搬遷請改用 newsletter-kg --import-sqlite", file=sys.stderr)
                 continue
             if not _allowed(m.name):
                 print(f"快照裡有不該出現的路徑：{m.name}，不匯入", file=sys.stderr)
@@ -189,13 +193,31 @@ def _remove_stale(root, keep):
 
 
 def import_snapshot(root, src, only=None):
-    """讀 src 的快照寫進 root，回傳統計。only 是要匯入的檔名集合（還原單一檔）；沒給就整份鏡像。"""
+    """讀 src 的快照寫進 root，回傳統計。only 是要匯入的檔名集合（還原單一檔）；沒給就整份鏡像。
+    state/kg.json 不寫磁碟，改載入目標 Postgres（沒有 kg.json 時清空四張表；沒設 NEWSLETTER_DATABASE_URL 則略過）。"""
     files = _read_snapshot(src, only)
+    kg_bytes = files.pop(KG_MEMBER, None)
+    want_kg = only is None or KG_MEMBER in only
+    kg_status, kg_events = None, 0
     with _pipeline_lock(root):
         removed = _remove_stale(root, files) if only is None else 0
         for name, data in sorted(files.items()):
             _write_file(root, name, data)
-    return {"files": len(files), "removed": removed,
+        if want_kg:
+            if os.environ.get("NEWSLETTER_DATABASE_URL", "").strip():
+                from newsletter_shared import kg_store
+                kg_data = json.loads(kg_bytes.decode("utf-8")) if kg_bytes is not None else {t: [] for t in kg_store.TABLES}
+                with _locked(root / KG_LOCK):
+                    con = kg_store.connect()
+                    try:
+                        kg_store.load(con, kg_data)
+                    finally:
+                        con.close()
+                kg_status = "loaded" if kg_bytes is not None else "cleared"
+                kg_events = len(kg_data.get("events") or [])
+            else:
+                kg_status = "skipped: 沒設 NEWSLETTER_DATABASE_URL"
+    return {"files": len(files), "removed": removed, "kg": kg_status, "kg_events": kg_events,
             "sha256": {n: hashlib.sha256(d).hexdigest() for n, d in files.items() if n == FEEDBACK}}
 
 
@@ -261,7 +283,8 @@ def remote_code(call: str) -> str:
     """容器內要跑的完整程式：import、常數、上面的函式、最後一行呼叫。ROOT 用容器裡 newsletter_shared 的。"""
     head = ["import contextlib, hashlib, io, json, os, sys, tarfile, time", "from pathlib import Path",
             "try:\n    from newsletter_shared import ROOT\nexcept ImportError:\n    ROOT = Path.cwd()"]
-    consts = [f"{k} = {globals()[k]!r}" for k in ("SNAP_DIRS", "SNAP_FILES", "LOCKED", "FEEDBACK", "EXIT_BUSY")]
+    consts = [f"{k} = {globals()[k]!r}" for k in (
+        "SNAP_DIRS", "SNAP_FILES", "LOCKED", "FEEDBACK", "EXIT_BUSY", "KG_MEMBER", "LEGACY_KG", "KG_LOCK")]
     return "\n".join(head + consts + [inspect.getsource(f) for f in REMOTE_FUNCS] + [call, ""])
 
 
@@ -351,10 +374,12 @@ def describe(files: dict[str, bytes]) -> str:
     reports = sorted(DATE_RE.search(n)[0] for n in files if n.startswith("reports/") and DATE_RE.search(n))
     size = sum(len(d) for d in files.values())
     fb = files.get(FEEDBACK, b"")
+    kg_raw = files.get(KG_MEMBER)
+    kg_text = f"KG {len(json.loads(kg_raw).get('events') or [])} 個事件" if kg_raw is not None else "沒有 KG"
     parts = [f"{len(files)} 個檔、{size / 1e6:.1f} MB",
              f"報告 {len(reports)} 份" + (f"（{reports[0]} ～ {reports[-1]}）" if reports else ""),
              f"回饋 {sum(1 for x in fb.splitlines() if x.strip())} 列",
-             "有 kg.sqlite" if "state/kg.sqlite" in files else "沒有 kg.sqlite"]
+             kg_text]
     return "，".join(parts)
 
 
@@ -394,7 +419,16 @@ def cmd_snapshot(args, env) -> int:
         test = target("test", env)
         stats = json.loads(test.run("print(json.dumps(import_snapshot(ROOT, sys.stdin.buffer)))", data))
         where = test.label()
-    print(f"已匯入 {where}：{stats['files']} 個檔，刪掉 {stats['removed']} 個快照裡沒有的檔")
+    kg_status = stats.get("kg")
+    if isinstance(kg_status, str) and kg_status.startswith("skipped"):
+        kg_note = f"；KG 略過（{kg_status}）"
+    elif kg_status == "cleared":
+        kg_note = "；KG 已清空（0 個事件）"
+    elif kg_status == "loaded":
+        kg_note = f"；KG 匯入 {stats.get('kg_events', 0)} 個事件"
+    else:
+        kg_note = ""
+    print(f"已匯入 {where}：{stats['files']} 個檔，刪掉 {stats['removed']} 個快照裡沒有的檔{kg_note}")
     return 0
 
 

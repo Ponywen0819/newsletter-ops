@@ -78,7 +78,7 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 | `GET /api/ops/config` | `{config, sources, interests}` | 唯讀的 `config/config.json`、`config/sources.d/*.json`（每檔 `{file, topic, label, defaults, feeds}`，壞掉的檔是 `{file, error}`）、`config/interests.md`。只限本機 |
 
 - 知識圖譜的 `flags` 是圖裡有判定的則（`{uid: "wrong" | "trusted"}`）；晨報的 `flags` 只帶 `wrong`。
-- 知識圖譜的 `events` 舊到新，每個是 `{id, uid, date, summary, quote, title, url, source, status, sources, report, entities: [{key, name, type}]}`；`status` 是 `active`／`disputed`／`invalid`，與 writer 寫背景時同一套規則（shared 的 `kg_store.statuses`，套用 `kg_flags.jsonl`）；`report` 是收錄這則的最新一份晨報（沒有是 null）。`links` 只含兩端都在圖裡的（`{src, dst, kind, quote, date}`，src 是較新的那個）。一張圖最多 150 個事件，超過時 `truncated`。`state/kg.sqlite` 只用唯讀連線開（不建表、不寫入）；檔案不存在時 item／entity 回 404。摘要、引句、標題是外部網頁萃取來的文字，前端只當純文字顯示。這三條不回 ETag、不進離線副本。
+- 知識圖譜的 `events` 舊到新，每個是 `{id, uid, date, summary, quote, title, url, source, status, sources, report, entities: [{key, name, type}]}`；`status` 是 `active`／`disputed`／`invalid`，與 writer 寫背景時同一套規則（shared 的 `kg_store.statuses`，套用 `kg_flags.jsonl`）；`report` 是收錄這則的最新一份晨報（沒有是 null）。`links` 只含兩端都在圖裡的（`{src, dst, kind, quote, date}`，src 是較新的那個）。一張圖最多 150 個事件，超過時 `truncated`。`NEWSLETTER_DATABASE_URL` 以唯讀連線開 Postgres（`SET default_transaction_read_only = on`，不建表、不寫入）；未設定或還沒建表時 item／entity 回 404。摘要、引句、標題是外部網頁萃取來的文字，前端只當純文字顯示。這三條不回 ETag、不進離線副本。
 - `GET /api/today`、`/api/reports`、`/api/reports/<date>` 回 `ETag`（對最後的 JSON 取雜湊，所以標記變了也會變）；`If-None-Match` 相符時回 `304`、沒有 body。
   比對時忽略 `W/`（Cloudflare 可能把強 ETag 改成弱的）。`Cache-Control` 照舊是 `no-store`：條件請求由前端的離線副本同步自己帶，不靠瀏覽器的 HTTP cache。
 - 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。
