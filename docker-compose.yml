@@ -1,4 +1,5 @@
 # 說明見 deploy/README.md。機密放 .env（chmod 600）。
+# 這裡只有服務本身（web、worker）。對外入口（Cloudflare Tunnel、nginx）在 service-core repo 的 gateway，不在這個 repo。
 name: newsletter-ops
 
 # 同一個 Dockerfile 的兩個 target；兩個映像同一次建置、同一個 tag
@@ -18,10 +19,13 @@ services:
     <<: *app
     build: {context: ., target: web}
     image: ghcr.io/ponywen0819/newsletter-ops-web:${NEWSLETTER_TAG:-latest}
-    # 不做身分驗證，只能經 nginx 連：不 publish、只在 app 網路（cloudflared 碰不到）。
-    # 也在 be 網路：維運頁（/ops，只有區網入口開得到）呼叫 worker 的 /status、/run、/job
+    # 不做身分驗證：不 publish，只讓入口閘門連。閘門由 service-core 的 gateway 提供，它建立 gw-newsletter 網路、
+    # 用別名 newsletter-web 連進來；閘門要做到的事見 deploy/README.md「入口閘門的約定」。
+    # 也在 be 網路：維運頁（/ops，閘門只在區網入口放行）呼叫 worker 的 /status、/run、/job
     command: ["newsletter-web", "--host", "0.0.0.0", "--port", "8787"]
-    networks: [app, be]
+    networks:
+      gw-newsletter: {aliases: [newsletter-web]}
+      be: {}
     environment:
       NEWSLETTER_WORKER_URL: http://worker:8790
     # 用 CMD-SHELL：podman 會把 CMD 陣列裡含空格的參數拆開
@@ -54,53 +58,14 @@ services:
       NEWSLETTER_BASE_URL: ${NEWSLETTER_BASE_URL:-}
       NEWSLETTER_HEARTBEAT_URL: ${NEWSLETTER_HEARTBEAT_URL:-}
 
-  nginx:
-    # 閘門：8080 給 cloudflared（/auth 一律 404），8788 給家裡區網／VPN（含 /auth）。規則在 docker/nginx.conf
-    image: nginxinc/nginx-unprivileged:1.30.6-alpine
-    volumes:
-      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    # 只綁 IPv4：IPv6 經 docker-proxy 轉進來時來源會變成 bridge 閘道（私有位址），繞過來源檢查
-    ports:
-      - "0.0.0.0:8788:8788"
-    networks: [edge, app]
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    depends_on:
-      web:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/heartbeat"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    restart: unless-stopped
-
-  cloudflared:
-    # 固定版本：上游改行為（例如 QUIC）會讓 tunnel 斷線；要升級時改這裡
-    image: cloudflare/cloudflared:2026.10.7
-    # QUIC 在家用網路上會定期斷線，改用 http2。Tunnel 的服務要設成 http://nginx:8080（Cloudflare 後台）
-    command: tunnel --no-autoupdate --protocol http2 run
-    networks: [edge]
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?請在 .env 設定 TUNNEL_TOKEN（Cloudflare Zero Trust 建立 Tunnel 時取得）}
-    depends_on:
-      nginx:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
   newsletter-data:
 
 networks:
-  # worker 與 web：/run、/job 會用額度、寄信，nginx、cloudflared 都不該連得到。
-  # web 能連（維運頁），所以「誰能觸發」由 nginx 決定：/ops、/api/ops* 只有區網入口開得到
+  # worker 與 web：/run、/job 會用額度、寄信，閘門碰不到（worker 不在 gw-newsletter）。
+  # web 連得到（維運頁），所以「誰能觸發」由閘門決定：/ops、/api/ops* 只在區網入口放行。
+  # web 需要對外（驗 token 時呼叫 Claude），所以不設 internal
   be:
-  # cloudflared ↔ nginx
-  edge:
-  # nginx ↔ web；web 需要對外（驗 token 時呼叫 Claude），所以不設 internal
-  app:
+  # 閘門 ↔ web：由 service-core 的 gateway 建立（固定名稱與子網），所以 gateway 要先部署；不存在時 compose up 會直接失敗
+  gw-newsletter:
+    external: true

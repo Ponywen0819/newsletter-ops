@@ -2,7 +2,7 @@
 
 狀態與手動執行直接呼叫 worker 的 HTTP 介面（GET /status、POST /run、POST /job；Docker 部署時 web 與 worker 同在 be 網路）。
 最近一次手動執行的結果與上次每日流程從共用 volume 讀（state/last_job.json、state/last_run.json），worker 停了也看得到。
-只限本機：nginx 在 Tunnel 那一側把 /ops 與 /api/ops* 擋掉（docker/nginx.conf），這裡不另外驗證。
+只限本機：入口閘門在 Tunnel 那一側把 /ops 與 /api/ops* 擋掉（見 deploy/README.md「入口閘門的約定」），這裡不另外驗證。
 設定是唯讀的：config/ 跟著映像走（也在版控裡），要改就改 repo 再部署。
 """
 from __future__ import annotations

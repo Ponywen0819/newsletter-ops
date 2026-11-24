@@ -110,7 +110,7 @@ export const api = {
     test: () => request<AuthResult>('/api/auth/test', {}),
     revoke: () => request<AuthResult>('/api/auth/revoke', {}),
   },
-  /** /ops 維運：和 /api/auth* 一樣只限本機（nginx 擋），不進離線副本 */
+  /** /ops 維運：和 /api/auth* 一樣只限本機（入口閘門擋），不進離線副本 */
   ops: {
     status: () => request<OpsStatus>('/api/ops'),
     /** 轉給 worker 立刻開始；from 只有 run 用。worker 正在跑時 409 */
