@@ -1,6 +1,7 @@
 name: release
 
-# 在 main 打 v* tag 時建一次 web、worker 兩個映像推到 GHCR，同一個映像打上版本號、latest、sha（selftest 已在 PR 跑過）
+# 在 main 打 v* tag 時建一次 web、worker 兩個映像推到 GHCR，同一個映像打上版本號、latest、sha（selftest 已在 PR 跑過），
+# 接著呼叫 deploy.yml 部署到正式機
 on:
   push:
     tags: ['v*']
@@ -42,3 +43,11 @@ jobs:
             ${{ env.IMAGE }}-${{ matrix.target }}:sha-${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
+
+  # 兩個映像都推上去之後才部署（正式機不再輪詢）
+  deploy:
+    needs: image
+    uses: ./.github/workflows/deploy.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

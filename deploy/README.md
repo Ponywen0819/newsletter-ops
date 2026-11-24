@@ -24,7 +24,7 @@ worker 容器：每天 08:00 跑每日流程（be 網路，只有 web 連得到�
   不要為了方便 publish web 的 8787，那等於整站（含 `/auth`）不設防。`gw-newsletter` 不存在時 `docker compose up` 會直接失敗：**gateway 要先部署**。
 - 機密放 `.env`（Gmail 帳密），只有 `worker` 拿得到，`web` 容器拿不到。`TUNNEL_TOKEN` 屬於 gateway，不放這裡。Claude 的 OAuth token 另外存在 volume 的 `state/oauth_token.json`（權限 600），`web` 負責驗證並儲存、`worker` 讀取。
 
-`docker-autodeploy.sh` 與 `newsletter-autodeploy.{service,timer}` 是自動部署、`push-images.sh` 是 Actions 不能跑時手動推映像（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
+`deploy.sh` 是部署（CI 經 ssh 呼叫，也能在 host 上手動跑）、`push-images.sh` 是 Actions 不能跑時手動推映像（步驟 6）；其他檔案是**不用 Docker 時**的範本：systemd 單元、env 範本；`check_boundaries.py` 是模組依賴方向檢查（CI 也跑），與部署無關。
 
 ### 入口閘門的約定
 
@@ -115,7 +115,7 @@ docker compose exec worker python -c "import urllib.request as u; print(u.urlope
 docker compose exec web ls reports                # volume 裡的報告
 docker compose exec worker newsletter-metrics summary 14   # 最近 14 天每次執行的耗時、token、成本、結果（config 的 debug 要開）
 docker compose run --rm -e NEWSLETTER_DEBUG=1 -e NEWSLETTER_RUN_LABEL=test worker newsletter-write   # 只產報告、不寄信（要先有當日 curated JSON）
-git pull && docker compose up -d --build          # 手動更新（interests.md、config/、程式都在映像裡，要重 build）
+deploy/deploy.sh v1.4.0                           # 手動部署某個版本（平常由 CI 做，見步驟 6）
 ```
 
 - 每天 08:00（`config/config.json` 的時區，`.env` 的 `NEWSLETTER_RUN_AT` 可改）。容器啟動時，今天過了時間卻還沒跑過（或上次跑到一半被停掉）就補跑一次；
@@ -126,33 +126,45 @@ git pull && docker compose up -d --build          # 手動更新（interests.md�
 - `up -d --build` 只會重建有變動的容器；`web` 當掉或被重建時，gateway 靠 `gw-newsletter` 上的別名 `newsletter-web` 重新連上，不必另外處理（期間那個站台回 502）。
 - 兩個容器都以唯讀根目錄、`cap_drop: [ALL]`、`no-new-privileges` 執行，只有 volume、`/tmp`、`/home/app`（tmpfs，claude CLI 的設定與 session 紀錄，重啟就清掉）可寫。要在容器裡臨時寫檔請寫 `/tmp`。
 
-**6. 自動部署（GHCR）**
+**6. 發行與部署（CI 推送，正式機不輪詢）**
 
 發行時在 `main` 打 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`），[release.yml](../.github/workflows/release.yml) 會建一次兩個映像推到
 `ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，同一個映像打上 `v1.2.0`、`latest`、`sha-<commit>`，只建 `linux/arm64`。
-`selftest` 只在 PR 跑，合併到 `main` 與打 tag 都不再重跑；只合併不打 tag 不會出新映像。
-兩個 workflow 都跑在自架 runner（標籤 `self-hosted, linux, x64, docker`，Windows 的 WSL2），不用 GitHub 的分鐘數；x64 上建 arm64 映像靠 QEMU，比較慢。
-runner 關機時工作會排隊等它。repo 是公開的，fork 來的 PR 不會在 runner 上跑。
-host 上的 timer 每 10 分鐘跑一次：先 `git pull --ff-only`（compose 檔跟著 repo），再拉映像，有新版才重建容器。repo 要停在 `main`。
+兩個都推上去後，接著跑 [deploy.yml](../.github/workflows/deploy.yml)：ssh 到正式機執行 [`deploy.sh`](deploy.sh) `v1.2.0`——
+repo 切到那個 tag（compose 檔跟著版本走）、拉同一個版本的映像、`up -d --remove-orphans`、等 web 與 worker healthy，結果就是 Actions 的成敗。
+每日流程、白天那輪或手動工作正在跑時，`deploy.sh` 會等它跑完（最多 30 分鐘）再重建，不打斷執行。
 
-```bash
-# package 是 private 時才需要；PAT 只要 read:packages
-echo <PAT> | docker login ghcr.io -u Ponywen0819 --password-stdin
+`selftest` 只在 PR 跑，合併到 `main` 與打 tag 都不再重跑；**只合併不打 tag 不會出新映像，也不會部署**——正式機只在打 tag 時變動。
+workflow 都跑在自架 runner（標籤 `self-hosted, linux, x64`，Windows 的 WSL2，和正式機同一個區網），不用 GitHub 的分鐘數；x64 上建 arm64 映像靠 QEMU，比較慢。
+runner 關機時工作會排隊等它。repo 是公開的，fork 來的 PR 不會在 runner 上跑；deploy 只有 tag push 與手動觸發會跑。
 
-mkdir -p ~/.config/systemd/user
-cp ~/newsletter-ops/deploy/newsletter-autodeploy.{service,timer} ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now newsletter-autodeploy.timer
-sudo loginctl enable-linger "$USER"   # 沒登入也持續執行；執行的使用者要在 docker 群組
-```
+設定（一次）：
 
-- 每日流程正在跑時這輪會跳過。
-- 看紀錄：`journalctl --user -u newsletter-autodeploy`；馬上更新一次：`systemctl --user start newsletter-autodeploy.service`。
-- **退版**：`.env` 加 `NEWSLETTER_TAG=v1.1.0`（或 `sha-<commit>`），然後 `docker compose up -d`；固定 tag 時 timer 只會拉同一個 tag，等於停止自動更新。要回到自動跟新版就把那行刪掉。
-- host 上的 repo 有本機修改或分岔時 `git pull` 會失敗，這輪整個不更新（看 journal）；本機設定放 `.env` 或 `docker-compose.override.yml`（未追蹤的檔不影響）。
-- podman 的 `docker compose ps` 狀態欄不會顯示 healthy，要看健康狀態用 `docker inspect newsletter-ops-worker-1 --format '{{.State.Health.Status}}'`。
-- **從單一映像換過來時**（舊的 `ghcr.io/ponywen0819/newsletter-ops`）：先 `git pull` 拿到新的 compose，再 `docker compose up -d`；
-  確認兩個容器都 healthy 後，`docker image rm ghcr.io/ponywen0819/newsletter-ops:latest` 刪掉舊映像（不會自己刪）。
+1. 產一把只給部署用的 key（不要用自己的）：`ssh-keygen -t ed25519 -N '' -C newsletter-deploy -f newsletter-deploy`。
+2. 正式機的 `/root/.ssh/authorized_keys` 加一行，用 `command=` 把這把 key 限定成只能跑 `deploy.sh`（dropbear 也支援這些選項）：
+   ```
+   command="/root/newsletter-ops/deploy/deploy.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA… newsletter-deploy
+   ```
+   CI 送過去的「指令」只是版本號，`deploy.sh` 從 `SSH_ORIGINAL_COMMAND` 讀它並檢查格式；拿到這把 key 的人頂多能部署某個已存在的 tag。
+3. repo 設定 → Environments → `production`（第一次跑會自動建立）：
+   - Variables：`DEPLOY_HOST` = `root@<正式機的區網 IP 或名稱>`（runner 解析得到的）
+   - Secrets：`DEPLOY_SSH_KEY` = 私鑰檔的內容；`DEPLOY_KNOWN_HOSTS` = 在 runner 上 `ssh-keyscan <host>` 的輸出（固定 host key，不接受第一次連線就信任）
+   - 想在部署前按一下核准的話，加 Required reviewers。
+4. 正式機上的 repo 之後由 `deploy.sh` 切到 detached 的 tag，不必停在 `main`，也不要有本機修改（有的話 `deploy.sh` 拒絕部署）；本機設定放 `.env` 或 `docker-compose.override.yml`。
+5. 舊的輪詢 timer 停掉並刪除（以前的版本才有）：
+   ```bash
+   systemctl --user disable --now newsletter-autodeploy.timer
+   rm ~/.config/systemd/user/newsletter-autodeploy.{service,timer} && systemctl --user daemon-reload
+   ```
+
+日常：
+
+- 部署紀錄就在 Actions 的 deploy job；重新部署或**退版**：Actions → deploy → Run workflow，填版本號（例如 `v1.4.0`）。
+  `deploy.sh` 之前的版本（v1.3.0 以前）沒有這支腳本，退到那麼舊要在 host 上手動 `git checkout` 與 `NEWSLETTER_TAG=… docker compose up -d`。
+- 也可以在 host 上直接跑 `deploy/deploy.sh v1.4.0`，效果一樣。
+- `.env` 的 `NEWSLETTER_TAG` 由 `deploy.sh` 維護，記的是目前部署的版本，所以在 host 上手動下 `docker compose …` 也是同一版；不要手動改它，要換版本就部署。
+- GHCR 的 package 是 private 時，正式機要先 `docker login ghcr.io`（PAT 只要 `read:packages`）。
+- podman 的 `docker compose ps` 狀態欄不會顯示 healthy，要看健康狀態用 `docker inspect newsletter-ops-worker-1 --format '{{.State.Health.Status}}'`（`deploy.sh` 也是這樣等的）。
 
 Actions 不能跑時（例如額度用完）可以在自己的電腦建好推上去，結果和 release.yml 一樣。需要 `write:packages` 的 classic PAT：
 
@@ -177,8 +189,8 @@ deploy/push-images.sh v1.2.0   # 版本 tag → :v1.2.0 與 :sha-<commit>
 
 1. 先在正式機停掉舊的入口：`docker compose stop nginx cloudflared`。舊 cloudflared 還在跑的話，同一條 Tunnel 收到新路由會找不到 `gateway-nginx`，一部分請求 502；舊 nginx 的 8788 也會和 gateway 撞。
 2. 部署 gateway、套用 Tunnel 路由（service-core 那邊）。
-3. 再讓這邊拿到新版 compose（合進 `main` 後 timer 的 `git pull` 就會拿到，不用等 tag；或手動 `git pull && docker compose up -d --remove-orphans`），`--remove-orphans` 會刪掉舊的 nginx、cloudflared 容器。
-   新版合進 `main` 時 gateway 還沒部署的話，autodeploy 的 `up` 會因為找不到 `gw-newsletter` 失敗，舊容器原封不動（看 journal），部署好 gateway 後下一輪就會成功。
+3. 再部署這邊的新版（打 tag，或 `deploy/deploy.sh <版本>`），`--remove-orphans` 會刪掉舊的 nginx、cloudflared 容器。
+   gateway 還沒部署的話，`up` 會因為找不到 `gw-newsletter` 失敗、deploy job 變紅，舊容器原封不動；部署好 gateway 後重跑 deploy 即可。
 4. 跑一遍步驟 4 的驗收表。
 5. 這個 repo 的 Actions secrets `CF_API_TOKEN`、`CF_ACCOUNT_ID`、`CF_ZONE_ID`、`CF_TUNNEL_ID` 已經沒有 workflow 在用，可以刪掉；`.env` 的 `TUNNEL_TOKEN` 也是（搬到 gateway 的 Environment）。
 
@@ -199,10 +211,12 @@ NEWSLETTER_DATABASE_URL="postgresql://<user>:<password>@<host>:5432/personal?opt
 - **容器連 host 本機的 Postgres**：容器內不能用 `127.0.0.1`，要填 host 的區網 IP，或 `host.docker.internal`（Podman 用 `host.containers.internal`），並確認 Postgres 的 `listen_addresses` 與 `pg_hba.conf` 放行該來源。
 - **測試區**：在測試區 `.env` 指向另一個 schema（例如 `newsletter_test`），避免和正式區互相覆蓋。
 - **一次性搬遷（從舊版 `state/kg.sqlite` 升級）**：
-  1. 停掉 worker，避免遷移期間繼續寫入舊檔：`docker compose stop worker`。
-  2. 確認 Postgres 已建好 schema，並在 `.env` 加上 `NEWSLETTER_DATABASE_URL`。
-  3. 部署新版：`docker compose up -d`。
-  4. 匯入舊檔：`docker compose exec worker newsletter-kg --import-sqlite /var/lib/newsletter/state/kg.sqlite`。
+  1. 確認 Postgres 已建好 schema，並在 `.env` 加上 `NEWSLETTER_DATABASE_URL`。
+  2. 停掉 worker，避免遷移期間繼續寫入舊檔：`docker compose stop worker`。
+  3. 部署新版（打 tag 讓 CI 部署，或 `deploy/deploy.sh <版本>`）。部署會把新版 worker 開起來。
+  4. 馬上再停 worker，在它寫進 Postgres 之前匯入舊檔，然後開回來：
+     `docker compose stop worker && docker compose run --rm worker newsletter-kg --import-sqlite /var/lib/newsletter/state/kg.sqlite && docker compose start worker`
+     （`deploy.sh` 把部署的版本寫進了 `.env` 的 `NEWSLETTER_TAG`，所以 `run` 用的就是新版映像。）
   5. 開網頁確認脈絡圖（`/kg`）顯示正常。舊的 `state/kg.sqlite` 先留著不急著刪；若要回退，部署上一個 tag 即可。
 
 ## 測試區（區域網路，沒有入口閘門）
