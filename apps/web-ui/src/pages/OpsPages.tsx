@@ -15,6 +15,7 @@ const KIND_LABEL: Record<OpsKind, string> = {
   'kg-rebuild': '重建知識圖譜',
   'sources-check': '試抓來源',
   rewrite: '重寫報告（devtools）',
+  round: '白天累積',
 }
 const TRIGGER_LABEL: Record<string, string> = {
   schedule: '排程',

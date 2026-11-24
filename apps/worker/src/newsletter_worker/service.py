@@ -9,6 +9,8 @@
 今天成功就等明天；失敗（認證、額度、被停止以外）過 RETRY_AFTER 從失敗的那步自動重跑一次，trigger 記 retry，重跑也失敗就等明天。
 認證的驗證只看 auth_health.json 的時間：今天排定時間之後驗過（web 的 /auth 測試也算）就不再驗。
 token 剩 REMIND_DAYS 裡的天數時（推算的到期日），在驗證時間寄一封提醒。
+白天的 NEWSLETTER_ROUNDS（預設 13:00,18:00,23:00，空字串＝關掉）各跑一輪 round 工作：抓新聞進候選池、補原文、萃取進知識圖譜，
+給下一份晨報用；不寫報告、不寄信。錯過超過 ROUND_GRACE 的那輪就不補（下一輪會一起抓）。
 NEWSLETTER_SCHEDULE=off（測試區）：不排程、不補跑、不驗認證、不寄提醒與備份，只接受 POST /run 與 POST /job。
 手動的執行（POST /run、POST /job）記在 state/last_job.json：web 的維運頁（/ops）經 HTTP 呼叫這裡，讀這個檔顯示結果與 log。
 """
@@ -44,7 +46,11 @@ JOBS = {
     "sources-check": ("newsletter_collect.run", ("--dry-run", "--no-search"), 30 * 60),  # 只抓不寫，不用 Claude
     # 用某天的 curated 重寫那天的報告（覆蓋 reports/<date>.md），會用訂閱額度；devtools compare 用來比較改寫結果
     "rewrite": ("newsletter_writer.write", ("--date", "{date}"), 60 * 60),
+    "round": ("newsletter_collect.run", ("--pool",), 30 * 60),  # 白天的一輪，接著跑 THEN
 }
+THEN = {"round": ("newsletter_writer.kg", ("--pool",), 60 * 60)}  # 前一步成功才跑
+OWN_LABEL = {"round"}  # 排程的一部分：metrics 標籤照環境變數，不記成 ops
+ROUND_GRACE = timedelta(hours=2)
 JOB_PARAMS = {"rewrite": {"date": re.compile(r"\d{4}-\d{2}-\d{2}")}}  # 要帶的參數（query string）與格式
 TEST_ONLY = {"rewrite"}  # 只在測試區（NEWSLETTER_SCHEDULE=off）開放：正式區的報告不該被覆蓋
 JOB_LABEL = "ops"  # 這些工作的 metrics 標籤：不混進每日執行的統計（summary 預設只看 prod）
@@ -84,6 +90,15 @@ def due(now: datetime, record: dict | None, lock_held: bool, at: time, tz: ZoneI
     if lock_held:
         return "busy"  # 包括「今天開始了還沒結束」：鎖被握著＝還在跑；鎖空著＝被打斷，下面重跑
     return "catchup" if local - scheduled > CATCHUP_AFTER else "schedule"
+
+
+def round_due(now: datetime, rounds: tuple[time, ...], tz: ZoneInfo) -> str | None:
+    """今天最近一個已經到了、還沒過 ROUND_GRACE 的白天時間點（"YYYY-MM-DD HH:MM"），沒有就 None。"""
+    local = now.astimezone(tz)
+    past = [s for at in rounds if (s := datetime.combine(local.date(), at, tz)) <= local]
+    if not past or local - max(past) > ROUND_GRACE:
+        return None
+    return f"{max(past):%Y-%m-%d %H:%M}"
 
 
 def check_due(now: datetime, last: dict | None, at: time, tz: ZoneInfo) -> bool:
@@ -194,6 +209,8 @@ class Service:
                  health: Path | None = None):
         self.at, self.tz, self.check_at, self.log_dir = at, tz, check_at, log_dir
         self.scheduled = True  # False＝測試區，只接受 POST /run
+        self.rounds: tuple[time, ...] = ()
+        self.round_slot: str | None = None  # 已經跑過（或開始了）的那輪
         self.health = health or auth_health.health_path()
         self.checker = auth_health.run_check
         self.notifier = send_notice
@@ -270,15 +287,14 @@ class Service:
         with self._mu:
             if self.current is not None or lock_held():
                 return None
-            self.current = {"kind": job["kind"], "trigger": "manual", "started_at": daily.now_iso()}
+            self.current = {"kind": job["kind"], "trigger": job.get("trigger", "manual"), "started_at": daily.now_iso()}
             self._worker = threading.Thread(target=self._job, args=(job,))
             self._worker.start()
             return self.current
 
     def _job(self, job: dict) -> None:
         kind = job["kind"]
-        module, args, limit = JOBS[kind]
-        args = tuple(a.format(**job) for a in args)  # JOB_PARAMS 已驗過格式
+        steps = [JOBS[kind], *([THEN[kind]] if kind in THEN else [])]
         say(f"開始（{kind}）")
         code: int | None = None
         try:
@@ -289,10 +305,14 @@ class Service:
             with path.open("w", encoding="utf-8") as log:
                 try:
                     with lock.locked(daily.LOCK, timeout=0):
-                        daily.say(log, " ".join([module, *args]))
-                        env = {**os.environ, "NEWSLETTER_RUN_LABEL": JOB_LABEL}
-                        code, _ = daily.spawn(log, module, *args, limit=limit, stop=self.stop, env=env)
-                        daily.say(log, "完成" if code == 0 else f"失敗，exit {code}")
+                        env = {**os.environ} if kind in OWN_LABEL else {**os.environ, "NEWSLETTER_RUN_LABEL": JOB_LABEL}
+                        for module, template, limit in steps:
+                            args = tuple(a.format(**job) for a in template)  # JOB_PARAMS 已驗過格式
+                            daily.say(log, " ".join([module, *args]))
+                            code, _ = daily.spawn(log, module, *args, limit=limit, stop=self.stop, env=env)
+                            daily.say(log, "完成" if code == 0 else f"失敗，exit {code}")
+                            if code:
+                                break
                 except lock.LockBusy:
                     daily.say(log, "已有另一條 pipeline 在跑（state/pipeline.lock 被占用），這次不執行")
                     code = daily.EXIT_BUSY
@@ -307,6 +327,7 @@ class Service:
         nxt = next_run_at(datetime.now(timezone.utc), self.at, self.tz).isoformat() if self.scheduled else None
         current = self.current
         return {"state": "running" if current else "idle", "scheduled": self.scheduled, "run_at": f"{self.at:%H:%M}",
+                "rounds": [f"{r:%H:%M}" for r in self.rounds],
                 "next_run_at": nxt, "current": current, "last": daily.read_record(), "job": self.last_job()}
 
     def last_job(self) -> dict | None:
@@ -358,10 +379,16 @@ class Service:
             self.check_auth()  # 同步跑：同一輪要開始的 pipeline 排在它後面
         if self.current is None and (action := due(now, daily.read_record(), lock_held(), self.at, self.tz)) not in (None, "busy"):
             self.start(action)
+        if self.current is None and (slot := round_due(now, self.rounds, self.tz)) not in (None, self.round_slot):
+            job = {"id": secrets.token_hex(6), "requested_at": daily.now_iso(), "kind": "round", "trigger": "schedule"}
+            if self.start_job(job) is not None:
+                self.round_slot = slot
 
     def loop(self) -> None:
         if self.scheduled:
             say(f"下次執行：{next_run_at(datetime.now(timezone.utc), self.at, self.tz):%Y-%m-%d %H:%M %Z}")
+            if self.rounds:
+                say(f"白天累積：{'、'.join(f'{r:%H:%M}' for r in self.rounds)}")
         else:
             say("排程關閉（NEWSLETTER_SCHEDULE=off），只接受 POST /run 與 POST /job")
         while not self.stop.is_set():
@@ -456,6 +483,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[worker] {name} {exc}", file=sys.stderr)
             return 2
     service = Service(times["NEWSLETTER_RUN_AT"], tz(), times["NEWSLETTER_AUTH_CHECK_AT"])
+    try:
+        service.rounds = tuple(parse_hhmm(t.strip()) for t in os.environ.get("NEWSLETTER_ROUNDS", "13:00,18:00,23:00").split(",") if t.strip())
+    except ValueError as exc:
+        print(f"[worker] NEWSLETTER_ROUNDS {exc}", file=sys.stderr)
+        return 2
     service.scheduled = os.environ.get("NEWSLETTER_SCHEDULE", "on") != "off"
     server = make_server(service, args.host, args.port)
     threading.Thread(target=server.serve_forever, daemon=True).start()

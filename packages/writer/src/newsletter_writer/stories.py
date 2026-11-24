@@ -48,15 +48,15 @@ class _Union:
 def _kg_links(con, stamp: str, today: set[str]) -> tuple[list[tuple[str, str]], dict[str, list[tuple[int, str]]]]:
     """(今天兩則之間的 same／follow 配對, 今天的 uid → [(過去事件 id, kind)])。"""
     pairs, past = [], {}
-    for src_uid, dst_id, dst_uid, dst_date, kind in con.execute(
-            """SELECT s.uid, d.id, d.uid, d.date, l.kind FROM links l
+    for src_uid, dst_id, dst_uid, kind in con.execute(
+            """SELECT s.uid, d.id, d.uid, l.kind FROM links l
                JOIN events s ON s.id=l.src JOIN events d ON d.id=l.dst WHERE l.date=?""", (stamp,)):
         if src_uid not in today:
             continue
         if dst_uid in today:
             if kind in ("same", "follow") and dst_uid != src_uid:
                 pairs.append((src_uid, dst_uid))
-        elif dst_date < stamp:
+        else:  # 包括同一天白天候選池裡沒收錄的：當前因
             past.setdefault(src_uid, []).append((dst_id, kind))
     return pairs, past
 

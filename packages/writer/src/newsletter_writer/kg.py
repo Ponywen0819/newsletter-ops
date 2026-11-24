@@ -4,6 +4,9 @@
 用法：uv run --project packages/writer newsletter-kg [--date YYYY-MM-DD]   萃取當天並產生背景（newsletter-write 開始前會自己跑）
       uv run --project packages/writer newsletter-kg --rebuild             清掉重來，依日期重跑 data/curated/ 全部（回填也是這個）
       uv run --project packages/writer newsletter-kg --flag <uid> wrong|trusted|clear
+      uv run --project packages/writer newsletter-kg --pool                萃取白天的候選池 data/pool.json（newsletter-collect --pool 之後）
+
+候選池的事件記在下一份晨報的日期（edition）：晨報那天它們算「今天」，白天陸續出來的後續才串得成同一天的時間線。
 
 curated 是外部網頁的文字：模型不給任何工具，回覆由程式驗收——事件與矛盾／撤回都要附原文逐字引句，對不上就丟。
 資料庫只存結構化、限長的欄位；狀態（有爭議／失效）每次讀取時從連結與 state/kg_flags.jsonl 算，不存，重建也不會留下過期狀態。
@@ -12,11 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
 import sys
 import traceback
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -274,6 +278,34 @@ def load_items(root: Path, stamp: str) -> list[dict]:
     return items_of(json.loads((root / "data" / "curated" / f"{stamp}.json").read_text(encoding="utf-8")))
 
 
+def grow(con: sqlite3.Connection, stamp: str, items: list[dict], ask: Ask) -> dict:
+    return {**extract(con, stamp, items, ask), **relate(con, stamp, {i["uid"]: article(i) for i in items}, ask)}
+
+
+def edition(now: datetime | None = None) -> str:
+    """下一份晨報的日期：NEWSLETTER_RUN_AT（預設 08:00）之前是今天，之後是明天。"""
+    now = now or datetime.now(metrics.TZ)
+    h, m = os.environ.get("NEWSLETTER_RUN_AT", "08:00").split(":")
+    day = now.date() + timedelta(days=1) if now.time() >= time(int(h), int(m)) else now.date()
+    return day.isoformat()
+
+
+def grow_pool(root: Path, stamp: str, ask: Ask) -> dict:
+    """候選池裡還沒萃取的萃取、比對，事件記在 stamp。原文還沒抓到的等下一輪（晨報收錄了會在那時萃取）。"""
+    try:
+        pool = json.loads((root / "data" / "pool.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pool = {}
+    items = [i for i in pool.values() if isinstance(i, dict) and "fulltext" in i]
+    db = root / "state" / "kg.sqlite"
+    with locked(db):
+        con = connect(db)
+        try:
+            return grow(con, stamp, items, ask)
+        finally:
+            con.close()
+
+
 def build(root: Path, stamp: str, ask: Ask) -> dict:
     """萃取、比對、寫背景檔。回傳統計（也記進 metrics）。"""
     db = root / "state" / "kg.sqlite"
@@ -281,7 +313,7 @@ def build(root: Path, stamp: str, ask: Ask) -> dict:
         items = load_items(root, stamp)
         con = connect(db)
         try:
-            stats = {**extract(con, stamp, items, ask), **relate(con, stamp, {i["uid"]: article(i) for i in items}, ask)}
+            stats = grow(con, stamp, items, ask)
             bg = background(con, stamp, root, kg_flags.read(root / "state" / "kg_flags.jsonl"))
         finally:
             con.close()
@@ -311,8 +343,7 @@ def rebuild(root: Path, ask: Ask) -> int:
         try:
             for path in sorted((root / "data" / "curated").glob("*.json")):
                 items = items_of(json.loads(path.read_text(encoding="utf-8")))
-                stats = {**extract(con, path.stem, items, ask),
-                         **relate(con, path.stem, {i["uid"]: article(i) for i in items}, ask)}
+                stats = grow(con, path.stem, items, ask)
                 print(f"[kg] {path.stem} {json.dumps(stats, ensure_ascii=False)}", file=sys.stderr)
         finally:
             con.close()
@@ -323,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="新聞知識圖譜：萃取、比對、產生 writer 的背景")
     ap.add_argument("--date", help="預設今天")
     ap.add_argument("--rebuild", action="store_true", help="清掉 state/kg.sqlite，依日期重跑 data/curated/ 全部")
+    ap.add_argument("--pool", action="store_true", help="萃取白天的候選池 data/pool.json，記在下一份晨報的日期")
     ap.add_argument("--flag", nargs=2, metavar=("UID", "wrong|trusted|clear"), help="標記某則的事實判定")
     args = ap.parse_args(argv)
     if args.flag:
@@ -339,6 +371,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.rebuild:
         return rebuild(ROOT, model_ask(auth.token))
+    if args.pool:
+        stats = grow_pool(ROOT, stamp := edition(), model_ask(auth.token))
+        metrics.record("kg_pool", edition=stamp, **stats)
+        print(f"[kg] 候選池 → {stamp} {json.dumps(stats, ensure_ascii=False)}", file=sys.stderr)
+        return 0
     prepare(args.date or f"{datetime.now(metrics.TZ):%Y-%m-%d}", auth.token)
     return 0
 

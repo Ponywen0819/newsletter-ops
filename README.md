@@ -67,6 +67,7 @@ data/raw/<date>.jsonl          當日原始抓取（append，供回溯；只留 
 data/search/<date>.json        搜尋補充的稽核紀錄：缺口、query、LLM 原始回覆、收下與退回（含原因）
 data/curated/<date>.json       排序後的收錄清單（含搜尋補充與原文）← SKILL 的輸入；不會自動刪，KG 重建靠它
 data/kg/<date>.json            知識圖譜給 writer 的背景：相關的舊事件與更正（writer/README.md「知識圖譜」）
+data/pool.json                白天累積的候選池（worker 的 round，留兩天）
 data/stories/<date>.json       專題素材：同一件事的多家報導與前因（writer/README.md「專題素材」）
 reports/<date>.md              最終報告
 reports/<date>.html            email 版（newsletter-render 產生；.txt 是信件的純文字部分）
@@ -166,6 +167,8 @@ uv run --project packages/shared newsletter-feedback --stats    # 依來源／�
 排程只有一種：常駐的 `worker`，Docker 是 `worker` 容器，不用 Docker 是 systemd 的 `deploy/newsletter-worker.service`。
 每天 08:00（`NEWSLETTER_RUN_AT` 可改）跑一次，輸出進 `logs/<YYYY-MM>.log`；停機錯過了，啟動後補跑（同一天內；失敗的不重跑，要重跑用 `POST /run`）。
 手動的 `worker --once` 和它進同一個 `run_pipeline()`：四步、失敗語意、防重疊的鎖與執行紀錄 `state/last_run.json` 見 [apps/worker/README.md](apps/worker/README.md)，所以混用是安全的。
+
+白天 13:00、18:00、23:00（`NEWSLETTER_ROUNDS` 可改，空字串＝關掉）各跑一輪：抓新聞進候選池 `data/pool.json`、補原文、萃取進知識圖譜，不寫報告不寄信；晨報把候選池併進來挑，白天被擠出 feed 的新聞也選得到，專題串得出前一天下午到晚上的時間線。
 
 每天 07:30（`NEWSLETTER_AUTH_CHECK_AT` 可改）worker 也會驗一次 Claude 認證，結果寫進 `state/auth_health.json`；失效的話網頁在晨報跑之前就會出現橫幅。
 

@@ -37,6 +37,7 @@ uv run --project packages/writer newsletter-write --date 2026-11-02   # 用那�
 ```bash
 uv run --project packages/writer newsletter-kg                         # 只跑萃取與背景（不寫報告）
 uv run --project packages/writer newsletter-kg --rebuild               # 清掉重來：依日期重跑 data/curated/ 全部（回填也是這個）
+uv run --project packages/writer newsletter-kg --pool                  # 萃取白天的候選池 data/pool.json，事件記在下一份晨報的日期
 uv run --project packages/writer newsletter-kg --flag <uid> wrong      # 這則事實有誤；trusted＝可信（不被自動判失效）；clear＝取消
 ```
 
