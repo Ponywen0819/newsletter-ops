@@ -13,18 +13,6 @@ jobs:
     # 自架 runner（Windows 的 WSL2）。repo 是公開的：fork 來的 PR 不在這台跑，免得陌生人的程式在家裡的機器上執行
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, docker]
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_PASSWORD: test
-        ports:
-          - "5432/tcp"
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
       NX_NO_CLOUD: true
     steps:
@@ -47,7 +35,31 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: apps/web-ui
-      - run: echo "NEWSLETTER_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres" >> "$GITHUB_ENV"
+      # 自架 runner 本身跑在 Docker 容器裡，services publish 的 port 在 Docker host、不在 runner 的 127.0.0.1
+      # （跟 deploy/test_nginx.py 不從 runner 直連容器是同一個原因）；讓 Postgres 共用 runner 容器的網路並聽 55432
+      - name: Start test Postgres
+        shell: bash
+        run: |
+          name="newsletter-ci-pg-${{ github.run_id }}-${{ github.run_attempt }}"
+          if docker inspect "$(hostname)" >/dev/null 2>&1; then
+            net="container:$(hostname)"
+          else
+            net="host"
+          fi
+          docker run -d --rm --name "$name" --network "$net" -e POSTGRES_PASSWORD=test postgres:18-alpine -p 55432
+          ready=0
+          for _ in $(seq 1 60); do
+            if docker exec "$name" pg_isready -h 127.0.0.1 -p 55432 >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs "$name"
+            exit 1
+          fi
+          echo "NEWSLETTER_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:55432/postgres" >> "$GITHUB_ENV"
       - run: npx nx run-many -t lint typecheck test
       - run: git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
       - run: uv run --no-project --with "pytest>=9,<10" --with ./packages/shared pytest -q deploy
@@ -59,3 +71,6 @@ jobs:
           GMAIL_APP_PASSWORD: b
           TUNNEL_TOKEN: c
           NEWSLETTER_DATABASE_URL: postgresql://x@db/personal
+      - name: Stop test Postgres
+        if: always()
+        run: docker rm -f "newsletter-ci-pg-${{ github.run_id }}-${{ github.run_attempt }}" || true
