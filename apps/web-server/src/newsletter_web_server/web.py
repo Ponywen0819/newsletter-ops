@@ -13,7 +13,7 @@ from .server import BUILD_COMMAND, DEFAULT_HOST, DEFAULT_PORT, Site, make_server
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="晨報瀏覽與 👍／👎 回饋")
-    ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}；沒有登入，對外要放在 nginx 後面（見 deploy/README.md）")
+    ap.add_argument("--host", default=DEFAULT_HOST, help=f"預設 {DEFAULT_HOST}；沒有登入，對外要放在入口閘門後面（見 deploy/README.md）")
     ap.add_argument("--port", type=int, default=int(os.environ.get("NEWSLETTER_WEB_PORT", DEFAULT_PORT)))
     args = ap.parse_args(argv)
     if args.host not in ("127.0.0.1", "localhost", "::1"):

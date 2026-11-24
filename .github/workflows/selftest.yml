@@ -44,4 +44,3 @@ jobs:
         env:
           GMAIL_USER: a
           GMAIL_APP_PASSWORD: b
-          TUNNEL_TOKEN: c
