@@ -13,9 +13,7 @@ from __future__ import annotations
 import html
 import re
 import sys
-import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -81,10 +79,10 @@ def text_of(page: str, paragraphs: bool = True) -> str:
     論文要關掉：arXiv HTML 開頭的作者機構不在 <p> 裡。"""
     m = MAIN.search(page)
     body = DROP.sub(" ", m.group(2) if m else re.split(r"<body\b[^>]*>", page, maxsplit=1, flags=re.I)[-1])
-    paras = [t for p in PARA.findall(body) if len(t := html.unescape(fetch._clean(p, CHARS))) >= MIN_PARA]
+    paras = [t for p in PARA.findall(body) if len(t := html.unescape(fetch.clean_html(p, CHARS))) >= MIN_PARA]
     if paragraphs and len(text := " ".join(paras)) >= MIN_PARAS_TEXT:
         return text[:CHARS]
-    return JUNK.sub(" ", html.unescape(fetch._clean(JUNK.sub(" ", body), CHARS * 2)))[:CHARS]
+    return JUNK.sub(" ", html.unescape(fetch.clean_html(JUNK.sub(" ", body), CHARS * 2)))[:CHARS]
 
 
 def unwall(text: str) -> tuple[str, str | None]:
@@ -126,11 +124,6 @@ def lacks_detail(item: dict, cfg: dict | None = None) -> str | None:
     return f"摘要太短，原文抓不到（{why}）" if why else "摘要太短，原文也沒有內容"
 
 
-def _getter(config: dict) -> Callable[[str], str]:
-    req = {**config.get("request", {}), "retries": 0, "timeout": 15}
-    return lambda url: fetch._http_get(url, req).decode("utf-8", "replace")
-
-
 def fetch_one(item: dict, get: Callable[[str], str], partial_min: int) -> None:
     """就地加上 fulltext（付費牆只有開頭時另加 fulltext_note）或 fulltext_error。"""
     error = None
@@ -154,28 +147,15 @@ def fetch_one(item: dict, get: Callable[[str], str], partial_min: int) -> None:
 
 def enrich(items: list[dict], config: dict, get: Callable[[str], str] | None = None) -> None:
     """就地加上 fulltext 或 fulltext_error。已經抓過的（有其中一個欄位）不重抓。"""
-    get = get or _getter(config)
+    get = get or fetch.page_getter(config)
     partial_min = {**DETAIL, **config.get("detail", {})}["min_summary"]  # 付費牆前的開頭要和摘要一樣長才算數
-    req = config.get("request", {})
-
-    def host(items: list[dict]) -> None:
-        """同一網域依序、守 request 的間隔（現在每則新聞都抓，一個網域一次十幾則，不要同時打）。"""
-        last_hit: dict[str, float] = {}
-        for item in items:
-            name = urlparse(item["url"]).hostname or ""
-            time.sleep(fetch.wait_seconds(name, last_hit, req, time.monotonic()))
-            fetch_one(item, get, partial_min)
-            last_hit[name] = time.monotonic()
-
     picked = [i for i in targets(items) if "fulltext" not in i and "fulltext_error" not in i]
     if not picked:
         return
-    groups: dict[str, list[dict]] = {}
-    for item in picked:
-        groups.setdefault(urlparse(item["url"]).hostname or "", []).append(item)
-    with metrics.timed("enrich", items=len(picked)) as m, \
-            ThreadPoolExecutor(max_workers=max(1, min(fetch.PARALLEL_HOSTS, len(groups)))) as pool:
-        list(pool.map(host, groups.values()))
+    with metrics.timed("enrich", items=len(picked)) as m:
+        # 同一網域依序、守 request 的間隔（每則新聞都抓，一個網域一次十幾則，不要同時打）
+        fetch.run_by_host(picked, lambda i: urlparse(i["url"]).hostname or "",
+                          lambda i: fetch_one(i, get, partial_min), config.get("request", {}))
         failed = sum("fulltext_error" in i for i in picked)
         m.update(failed=failed)
     print(f"[enrich] 補原文 {len(picked) - failed}/{len(picked)} 則", file=sys.stderr)
@@ -185,7 +165,7 @@ def settle(items: list[dict], reserve: list[dict], config: dict,
            get: Callable[[str], str] | None = None) -> tuple[list[dict], list[dict]]:
     """補原文，拿掉內容不足的項目；空出來的名額由同主題的候補（reserve，沒進配額的）依 rank 補上。
     搜尋補來的不補位（它們本來就是額外的）。回傳 (留下的, 拿掉的)，拿掉的加上 dropped_reason。"""
-    get = get or _getter(config)
+    get = get or fetch.page_getter(config)
     cfg = config.get("detail", {})
     enrich(items, config, get)
     kept, dropped = [], []

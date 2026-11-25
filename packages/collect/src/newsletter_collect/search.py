@@ -69,7 +69,7 @@ def parse(text: str) -> list:
 
 
 def _norm(text: str) -> str:
-    return curate._norm_title(html.unescape(text))
+    return curate.norm_title(html.unescape(text))
 
 
 def title_matches(claimed: str, page: str) -> bool:
@@ -109,7 +109,7 @@ def check(item, topics: list[str], hours: int, now: datetime) -> str | None:
         return "主題不在這次要補的清單"
     if problem := url_problem(item["url"]):
         return problem
-    published = fetch._parse_date(item["published"])
+    published = fetch.parse_date(item["published"])
     if published is None:
         return "發佈時間無法解析"
     age = now - datetime.fromisoformat(published)
@@ -155,17 +155,12 @@ def accept(found: list, ranked: list[dict], seen: dict, config: dict,
         kept.append({
             "uid": uid, "title": raw["title"].strip(), "url": raw["url"].strip(),
             "source": "搜尋：" + urllib.parse.urlsplit(raw["url"]).netloc.removeprefix("www."),
-            "topic": raw["topic"], "weight": 1.0, "published": fetch._parse_date(raw["published"]),
+            "topic": raw["topic"], "weight": 1.0, "published": fetch.parse_date(raw["published"]),
             "summary": str(raw.get("summary", "")).strip(), "authors": [],
             "origin": "search", "query": raw["query"].strip(),
             "relevance": 0.0, "rank": 0.0, "matched_keywords": [], "also_in": [],
         })
     return kept, rejected
-
-
-def _get(config: dict) -> Callable[[str], str]:
-    req = {**config.get("request", {}), "retries": 0, "timeout": 15}
-    return lambda url: fetch._http_get(url, req).decode("utf-8", "replace")
 
 
 def run(ranked: list[dict], config: dict, stamp: str, redo: set[str]) -> tuple[list[dict], dict]:
@@ -198,7 +193,7 @@ def run(ranked: list[dict], config: dict, stamp: str, redo: set[str]) -> tuple[l
                 log["response"] = usage.result.result
                 try:
                     seen = {k: v for k, v in curate.load_seen().items() if k not in redo}
-                    kept, log["rejected"] = accept(parse(usage.result.result or ""), ranked, seen, config, _get(config))
+                    kept, log["rejected"] = accept(parse(usage.result.result or ""), ranked, seen, config, fetch.page_getter(config))
                 except ValueError as exc:
                     log["error"] = f"回覆格式不符：{exc}"
         log["accepted"] = kept

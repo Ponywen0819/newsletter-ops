@@ -32,7 +32,7 @@ _NAMED_AT = re.compile(r"([A-Za-z][\w-]*)\s+(?:at|@)\s+$")
 VENUE_BOOST = {"main": 2.0, "minor": 0.8, "submitted": 0.4}
 
 
-def _norm_title(title: str) -> str:
+def norm_title(title: str) -> str:
     return STOP.sub(" ", title.lower()).strip()
 
 
@@ -238,7 +238,7 @@ def dedupe(items: list[dict], threshold: float = 0.88, name_topics: frozenset[st
 
     kept: list[dict] = []
     for item in sorted(unique, key=lambda i: i.get("rank", 0), reverse=True):
-        norm = _norm_title(item["title"])
+        norm = norm_title(item["title"])
         match = next((k for k in kept if matches(item, k, norm)), None)
         if match:
             match.setdefault("also_in", []).append(item["source"])

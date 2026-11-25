@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from newsletter_collect.fetch import (
-    Item, _http_get, fetch_all, parse_feed, retryable, source_host, stale_warning, wait_seconds,
+    Item, http_get, fetch_all, parse_feed, retryable, source_host, stale_warning, wait_seconds,
 )
 
 CFG = {"delay_seconds": 1.0, "domain_delay_seconds": {"export.arxiv.org": 3.0}}
@@ -46,7 +46,7 @@ def test_404_not_retried(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
     monkeypatch.setattr(time, "sleep", calls.append)
     with pytest.raises(RuntimeError, match="404"):
-        _http_get("https://x/feed", {"retries": 2})
+        http_get("https://x/feed", {"retries": 2})
     assert calls == [1]  # 只請求一次、不等
 
 

@@ -13,12 +13,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Callable
+from typing import Callable, TypeVar
 from xml.etree import ElementTree as ET
 
 from newsletter_shared import metrics
 
 ARXIV_API = "https://export.arxiv.org/api/query"
+T = TypeVar("T")
 PARALLEL_HOSTS = 8  # 同時抓幾個網域；同一網域永遠依序
 STALE_DAYS = 21  # 抓得到、但最新一則比這還舊：feed 可能停更（第三方 feed 不會報錯，只會不再更新）
 NS = {
@@ -52,7 +53,7 @@ class Item:
 
 # ---------- helpers ----------
 
-def _http_get(url: str, cfg: dict) -> bytes:
+def http_get(url: str, cfg: dict) -> bytes:
     req = urllib.request.Request(
         url,
         headers={
@@ -78,12 +79,18 @@ def _http_get(url: str, cfg: dict) -> bytes:
     raise RuntimeError(f"GET failed: {url}: {last}")
 
 
+def page_getter(config: dict, timeout: int = 15) -> Callable[[str], str]:
+    """抓網頁（補原文、驗收搜尋結果）用：不重試、逾時較短，回傳解碼後的文字。"""
+    req = {**config.get("request", {}), "retries": 0, "timeout": timeout}
+    return lambda url: http_get(url, req).decode("utf-8", "replace")
+
+
 def retryable(exc: Exception) -> bool:
     """4xx（429 除外）重試也一樣，直接放棄；連線、逾時、5xx 才重試。"""
     return not isinstance(exc, urllib.error.HTTPError) or exc.code == 429 or exc.code >= 500
 
 
-def _clean(text: str | None, limit: int = 1200) -> str:
+def clean_html(text: str | None, limit: int = 1200) -> str:
     if not text:
         return ""
     text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", text, flags=re.S | re.I)
@@ -97,7 +104,7 @@ def _clean(text: str | None, limit: int = 1200) -> str:
     return text[:limit]
 
 
-def _parse_date(value: str | None) -> str | None:
+def parse_date(value: str | None) -> str | None:
     if not value:
         return None
     value = value.strip()
@@ -142,34 +149,34 @@ def parse_feed(raw: bytes, src: dict, limit: int) -> list[Item]:
     entries = root.findall(".//item") or root.findall(".//atom:entry", NS)
     for position, node in enumerate(entries[:limit]):
         if node.tag.endswith("entry"):  # Atom
-            title = _clean(node.findtext("atom:title", default="", namespaces=NS), 300)
+            title = clean_html(node.findtext("atom:title", default="", namespaces=NS), 300)
             link = ""
             for ln in node.findall("atom:link", NS):
                 if ln.get("rel") in (None, "alternate"):
                     link = ln.get("href", "")
                     break
-            published = _parse_date(
+            published = parse_date(
                 node.findtext("atom:published", namespaces=NS)
                 or node.findtext("atom:updated", namespaces=NS)
             )
-            summary = _clean(
+            summary = clean_html(
                 node.findtext("atom:summary", namespaces=NS)
                 or node.findtext("atom:content", namespaces=NS)
             )
-            authors = [_clean(a.findtext("atom:name", namespaces=NS), 80)
+            authors = [clean_html(a.findtext("atom:name", namespaces=NS), 80)
                        for a in node.findall("atom:author", NS)]
             venue_note = " | ".join(filter(None, (
-                _clean(node.findtext("arxiv:comment", namespaces=NS), 300),
-                _clean(node.findtext("arxiv:journal_ref", namespaces=NS), 200))))
+                clean_html(node.findtext("arxiv:comment", namespaces=NS), 300),
+                clean_html(node.findtext("arxiv:journal_ref", namespaces=NS), 200))))
         else:  # RSS 2.0
-            title = _clean(node.findtext("title", default=""), 300)
+            title = clean_html(node.findtext("title", default=""), 300)
             link = (node.findtext("link") or "").strip()
-            published = _parse_date(node.findtext("pubDate") or node.findtext("dc:date", namespaces=NS))
-            summary = _clean(
+            published = parse_date(node.findtext("pubDate") or node.findtext("dc:date", namespaces=NS))
+            summary = clean_html(
                 node.findtext("description")
                 or node.findtext("content:encoded", namespaces=NS)
             )
-            authors = [a for a in [_clean(node.findtext("dc:creator", namespaces=NS), 80)] if a]
+            authors = [a for a in [clean_html(node.findtext("dc:creator", namespaces=NS), 80)] if a]
             venue_note = ""
         if not title or not link:
             continue
@@ -194,7 +201,7 @@ def fetch_arxiv(src: dict, cfg: dict, limit: int) -> list[Item]:
         "sortOrder": "descending",
         "max_results": limit,
     })
-    raw = _http_get(f"{ARXIV_API}?{params}", cfg)
+    raw = http_get(f"{ARXIV_API}?{params}", cfg)
     return parse_feed(raw, src, limit)
 
 
@@ -202,7 +209,7 @@ def fetch_source(src: dict, cfg: dict, limit: int) -> tuple[list[Item], str | No
     try:
         if src.get("type") == "arxiv":
             return fetch_arxiv(src, cfg, limit), None
-        return parse_feed(_http_get(src["url"], cfg), src, limit), None
+        return parse_feed(http_get(src["url"], cfg), src, limit), None
     except Exception as exc:
         return [], f"{src['name']}: {type(exc).__name__}: {exc}"
 
@@ -231,11 +238,23 @@ def stale_warning(src: dict, items: list[Item], now: datetime | None = None) -> 
     return f"{src['name']}: 最新一則是 {age} 天前（{max(dates)[:10]}），feed 可能停更"
 
 
-def by_host(sources: list[dict]) -> dict[str, list[dict]]:
-    groups: dict[str, list[dict]] = {}
-    for src in sources:
-        groups.setdefault(source_host(src), []).append(src)
-    return groups
+def run_by_host(jobs: list[T], host_of: Callable[[T], str], work: Callable[[T], None], cfg: dict) -> None:
+    """不同網域並行（最多 PARALLEL_HOSTS 個）、同一網域依序並守 wait_seconds 的間隔。
+    間隔以上一個請求結束的時間起算，失敗重試也算在內。抓 feed 與補原文共用。"""
+    groups: dict[str, list[T]] = {}
+    for job in jobs:
+        groups.setdefault(host_of(job), []).append(job)
+
+    def run_host(group: list[T]) -> None:
+        last_hit: dict[str, float] = {}
+        for job in group:
+            host = host_of(job)
+            time.sleep(wait_seconds(host, last_hit, cfg, time.monotonic()))
+            work(job)
+            last_hit[host] = time.monotonic()
+
+    with ThreadPoolExecutor(max_workers=max(1, min(PARALLEL_HOSTS, len(groups)))) as pool:
+        list(pool.map(run_host, groups.values()))
 
 
 def fetch_all(config: dict, fetch: Callable[[dict, dict, int], tuple[list[Item], str | None]] | None = None,
@@ -246,20 +265,13 @@ def fetch_all(config: dict, fetch: Callable[[dict, dict, int], tuple[list[Item],
     fetch = fetch or fetch_source
     results: dict[int, tuple[list[Item], str | None]] = {}
 
-    def run_host(srcs: list[dict]) -> None:
-        last_hit: dict[str, float] = {}
-        for src in srcs:
-            host = source_host(src)
-            time.sleep(wait_seconds(host, last_hit, cfg, time.monotonic()))
-            with metrics.timed("fetch_source", source=src["name"], topic=src.get("topic")) as m:
-                got, err = fetch(src, cfg, limit)
-                m.update(items=len(got), error=err)
-            last_hit[host] = time.monotonic()  # 以請求結束時間起算，失敗重試也算在內
-            results[id(src)] = (got, err)
+    def fetch_one(src: dict) -> None:
+        with metrics.timed("fetch_source", source=src["name"], topic=src.get("topic")) as m:
+            got, err = fetch(src, cfg, limit)
+            m.update(items=len(got), error=err)
+        results[id(src)] = (got, err)
 
-    groups = by_host(config["sources"])
-    with ThreadPoolExecutor(max_workers=max(1, min(PARALLEL_HOSTS, len(groups)))) as pool:
-        list(pool.map(run_host, groups.values()))
+    run_by_host(config["sources"], source_host, fetch_one, cfg)
     items: list[Item] = []
     errors: list[str] = []
     for src in config["sources"]:
