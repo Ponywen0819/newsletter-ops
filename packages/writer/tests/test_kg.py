@@ -5,9 +5,10 @@ from datetime import datetime
 import pytest
 
 from newsletter_shared import kg_flags, kg_store
+from newsletter_shared.kg_store import sources as _sources
 from newsletter_writer import kg
 from newsletter_writer.kg import (
-    VERSION, _sources, background, build, edition, extract, grounded, grow_pool, main, norm, parse_json, prepare, rebuild, relate,
+    VERSION, background, build, edition, extract, grounded, grow_pool, main, norm, parse_json, prepare, rebuild, relate,
     statuses,
 )
 
@@ -242,3 +243,20 @@ def test_import_sqlite(tmp_path, pg, monkeypatch):
         assert con.execute("INSERT INTO mentions(event, key) VALUES (6, 'k') RETURNING id").fetchone()[0] == 4
     finally:
         con.close()
+
+
+def test_ask_all():
+    """多批同時問，回覆仍照 prompt 的順序；任一批失敗就整個拋出。"""
+    import time
+
+    def ask(prompt: str, stage: str) -> dict:
+        time.sleep(0.05 if prompt == "a" else 0)  # 第一批最慢：結果仍要排第一
+        if prompt == "boom":
+            raise RuntimeError("quota")
+        return {"p": prompt, "stage": stage}
+
+    assert kg.ask_all(ask, [], "kg_extract") == []
+    assert kg.ask_all(ask, ["a"], "kg_extract") == [{"p": "a", "stage": "kg_extract"}]
+    assert [r["p"] for r in kg.ask_all(ask, ["a", "b", "c"], "kg_relate")] == ["a", "b", "c"]
+    with pytest.raises(RuntimeError, match="quota"):
+        kg.ask_all(ask, ["a", "boom"], "kg_relate")
