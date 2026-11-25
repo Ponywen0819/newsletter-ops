@@ -85,7 +85,7 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 - **讀檔快取**（`reports.py` 的 `FileCache`）：晨報的解析結果（最近 40 份）、列表與搜尋用的頭條與純文字行（全部）、`feedback.jsonl`、`kg_flags.jsonl`、curated 的回饋欄位（不含原文）都留在記憶體，
   以檔案的大小＋修改時間判斷要不要重讀，所以直接改檔、append 標記都會立刻反映；多個請求同時進來各自讀一次也無妨（多執行緒共用，有鎖）。
 - 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。
-- `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../../packages/notify/README.md)。
+- `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。記下之後（或原本就是這個標記）頁面上可以直接改成另一個或取消，不必回信件。email 端見 [notify/README.md](../../packages/notify/README.md)。
 
 ## 測試
 
