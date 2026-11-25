@@ -63,12 +63,12 @@
   overflow-wrap: anywhere;
 }
 /* 內文（頭條、條列、段落、資料來源）裡的連結加淡底線；目錄、按鈕樣式的連結不加 */
-.reader-body a:not(.fb-btn) {
+.report .reader-body a:not(.fb-btn) {
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: 3px;
 }
-.reader-body a:not(.fb-btn):hover {
+.report .reader-body a:not(.fb-btn):hover {
   text-decoration-color: currentColor;
 }
 @media (min-width: 768px) {
