@@ -16,7 +16,7 @@ npm run typecheck
 
 - 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/stats` 回饋統計（從歷史晨報左欄連過去）、`/kg`、`/kg/item/<uid>[,<uid>…]`、`/kg/entity/<key>` 知識圖譜（見下面「知識圖譜」）、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權與 `/ops`、`/ops/metrics`、`/ops/config` 維運（正式區只能從入口閘門的區網入口 8788 開，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
   其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/server.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
-- 鍵盤：晨報頁 `j`／`k` 跳到下一則／上一則（≥1100px，有左側目錄時）；`[`／`]` 換到前一份／下一份（內文最後也有連結）。輸入框裡、帶修飾鍵時不攔截。
+- 鍵盤：每頁第一個 Tab 是「跳到主要內容」（跳過頁首與筆電的目錄，只移焦點、不改網址）；焦點外框全站一致（`base.css` 的 `:focus-visible`）。晨報頁 `j`／`k` 跳到下一則／上一則（≥1100px，有左側目錄時）；`[`／`]` 換到前一份／下一份（內文最後也有連結）。輸入框裡、帶修飾鍵時不攔截。
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（worker 每天驗一次，不輪詢），
   有問題才在頁首顯示。`/api/session` 的 `local` 為真時附「前往授權」連結，否則（經 Tunnel）只寫「請在主機上重新授權」。各狀態的意思見 [web-server/README.md](../web-server/README.md)。
 - 開發時經 Vite 的代理直接連 web（沒有入口閘門），`/auth` 可以正常測。後端埠號不是 8787 時，
@@ -65,6 +65,7 @@ npm run typecheck
   探測時機：App 啟動、`online`／`offline` 事件、回到前景、資料請求前；結果重用 **5 秒**（成功與失敗都重用，同時多個請求共用一次探測），不做常駐輪詢。狀態從異常回到正常時，今日、歷史列表、單日晨報會自動重抓。
   只有 `/api/today`、`/api/reports`、`/api/reports/<date>` 走這個判斷；`POST`、`/api/session`、`/api/auth*`、`/api/feedback/*` 照舊直接送出。
 - **更新**：新版 service worker 直接接手（`skipWaiting`＋`clientsClaim`），不提示重新整理；舊版的 precache 自動清掉。
+  開著的舊頁面之後才要載的分包（知識圖譜、維運）因此可能載不到：`components/RouteErrorBoundary.tsx` 接住，內容區顯示「網頁已更新」與重新載入鈕（頁首照常能用，換頁就恢復）；其他執行期錯誤同樣只換掉內容區。
 - **檔案**：`vite.config.ts`（`vite-plugin-pwa`：manifest、註冊）、`src/sw.ts`（service worker 的路由）、`public/icons/`（`icon.svg` 是來源，另有 192、512、maskable 512、apple-touch-icon 180 的 PNG；換圖示就重新輸出這四張）。
   `public/` 的檔案原樣複製到 `dist/` 根目錄；它被 `.gitignore`、`.dockerignore` 放行，`Dockerfile` 也有 `COPY apps/web-ui/public`，新增這類目錄時三處都要加。
 

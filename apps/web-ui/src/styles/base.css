@@ -91,3 +91,31 @@ body {
 .page {
   padding: var(--page-pad-y) var(--page-pad-x);
 }
+
+/* 鍵盤焦點：全站同一種外框（滑鼠點擊不會出現，:focus-visible 由瀏覽器判斷） */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
+/* 程式移過去的焦點（跳到主要內容、tabindex="-1" 的區塊）不畫外框：那裡本來就不是可以按的東西 */
+[tabindex='-1']:focus {
+  outline: none;
+}
+
+/* 「跳到主要內容」：平常在畫面外，Tab 到它才出現在左上角 */
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 8px 12px;
+  border: 2px solid var(--link);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--link);
+  font-size: var(--fs-body);
+  transform: translateY(-200%);
+}
+.skip-link:focus {
+  transform: none;
+}

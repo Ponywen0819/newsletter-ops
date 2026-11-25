@@ -13,5 +13,9 @@ export function Notice({ title, children }: { title: string; children?: ReactNod
 }
 
 export function Loading() {
-  return <p className="loading">載入中…</p>
+  return (
+    <p className="loading" role="status">
+      載入中…
+    </p>
+  )
 }
