@@ -150,6 +150,11 @@
 .kg-node {
   cursor: pointer;
 }
+/* 透明的點擊區：fill 不是 none 才收得到點擊 */
+.kg-node .kg-hit {
+  fill: transparent;
+  stroke: none;
+}
 .kg-node circle {
   fill: var(--card);
   stroke: var(--link);

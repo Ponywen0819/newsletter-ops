@@ -124,6 +124,25 @@ describe('知識圖譜', () => {
     expect(detail().getByRole('heading', { name: 'Beta 否認收購' })).toBeInTheDocument()
   })
 
+  it('/kg/item：從下面的列表選事件，詳情（可能在好幾屏外）捲進畫面、焦點移到標題；點圖只捲到看得到', async () => {
+    const scrolled: { el: Element; arg?: ScrollIntoViewOptions }[] = []
+    Element.prototype.scrollIntoView = function (this: Element, arg?: boolean | ScrollIntoViewOptions) {
+      scrolled.push({ el: this, arg: typeof arg === 'object' ? arg : undefined })
+    }
+    open(`/kg/item/${UID_A}`, { [`GET /api/kg/item/${UID_A}?depth=1`]: () => ({ json: item() }) })
+    await screen.findByRole('heading', { name: '事件列表' })
+    expect(screen.getByRole('region', { name: '事件詳情' })).not.toHaveAttribute('aria-live') // 不整塊重唸
+    expect(scrolled).toHaveLength(0) // 剛進來不捲
+    await userEvent.click(screen.getByRole('button', { name: '2026-09-20Beta 否認收購' }))
+    expect(detail().getByRole('heading', { name: 'Beta 否認收購' })).toHaveFocus()
+    expect(scrolled.at(-1)!.el).toBe(screen.getByRole('region', { name: '事件詳情' }))
+    expect(scrolled.at(-1)!.arg).toMatchObject({ block: 'start' })
+    await userEvent.click(document.querySelectorAll('.kg-node')[1]!)
+    expect(scrolled.at(-1)!.arg).toMatchObject({ block: 'nearest' })
+    expect(document.querySelectorAll('.kg-node rect.kg-hit')).toHaveLength(document.querySelectorAll('.kg-node').length)
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
   it('/kg/item：換範圍重新載入；標了事實有誤也重新載入（狀態要重算），選取不跑掉', async () => {
     let flagged = false
     const net = open(`/kg/item/${UID_A},${UID_B}`, {
