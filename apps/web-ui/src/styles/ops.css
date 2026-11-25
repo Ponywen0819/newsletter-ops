@@ -199,6 +199,14 @@
 .ops-table thead th:first-child {
   text-align: left;
 }
+/* 欄位多、要水平捲動：第一欄（日期、來源名稱）固定在左邊，往右看數字時還對得到是哪一列 */
+.ops-table th[scope='row'],
+.ops-table thead th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--card);
+}
 .ops-table thead th {
   color: var(--muted);
   font-weight: 600;

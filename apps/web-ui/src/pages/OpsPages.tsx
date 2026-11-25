@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { EXTERNAL } from '../components/Inline'
 import { Loading } from '../components/Notice'
@@ -83,7 +83,7 @@ const POLL_IDLE = 15000
 
 const isBusy = (s: OpsStatus) => s.worker.state === 'running'
 
-/** 有東西在跑時每 3 秒問一次，否則 15 秒。refresh：馬上再問一次（送出要求之後）。 */
+/** 有東西在跑時每 3 秒問一次，否則 15 秒；分頁在背景時不問，回到前景馬上問一次。refresh：馬上再問一次（送出要求之後）。 */
 function useOpsStatus() {
   const [status, setStatus] = useState<OpsStatus>()
   const [error, setError] = useState<Error>()
@@ -97,6 +97,7 @@ function useOpsStatus() {
     }
     function run() {
       window.clearTimeout(timer)
+      if (document.visibilityState === 'hidden') return // 回到前景時由 visibilitychange 接著問
       api.ops.status().then(
         (s) => {
           if (!live) return
@@ -113,9 +114,12 @@ function useOpsStatus() {
     }
     load.current = run
     run()
+    const onVisible = () => document.visibilityState === 'visible' && run()
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       live = false
       window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])
   const refresh = useCallback(() => load.current(), [])
@@ -196,7 +200,7 @@ function JobView({ status }: { status: OpsStatus }) {
         <dd className={state.tone ? `ops-${state.tone}` : undefined}>{state.text}</dd>
       </dl>
       {log.length > 0 && (
-        <pre className="ops-log" aria-label="執行輸出（最後幾行）">
+        <pre className="ops-log" aria-label="執行輸出（最後幾行）" tabIndex={0}>
           {log.join('\n')}
         </pre>
       )}
@@ -399,9 +403,19 @@ function MetricsTable({ runs, showLabel }: { runs: MetricsRun[]; showLabel: bool
   )
 }
 
+/** 期間與「包含測試」記在網址（?days=&all=1）：重新整理、從設定頁按上一頁回來都還在，也能存成書籤 */
 function MetricsPanel() {
-  const [days, setDays] = useState<number>(14)
-  const [all, setAll] = useState(false)
+  const [params, setParams] = useSearchParams()
+  const asked = Number(params.get('days'))
+  const days = DAYS.includes(asked as (typeof DAYS)[number]) ? asked : 14
+  const all = params.get('all') === '1'
+  const update = (next: { days?: number; all?: boolean }) => {
+    const d = next.days ?? days
+    const a = next.all ?? all
+    setParams({ ...(d !== 14 && { days: String(d) }), ...(a && { all: '1' }) }, { replace: true })
+  }
+  const setDays = (d: number) => update({ days: d })
+  const setAll = (a: boolean) => update({ all: a })
   const { data, error } = useFetch(() => api.ops.metrics(days, all), [days, all])
   const total = data?.runs.reduce((sum, r) => sum + (r.usd ?? 0), 0) ?? 0
   return (
@@ -533,7 +547,7 @@ function ConfigPanel() {
       </section>
       <section className="ops-section" aria-label="興趣">
         <h2>興趣（interests.md）</h2>
-        {data.interests === null ? <p className="ops-note">沒有 config/interests.md。</p> : <pre className="ops-pre">{data.interests}</pre>}
+        {data.interests === null ? <p className="ops-note">沒有 config/interests.md。</p> : <pre className="ops-pre" tabIndex={0}>{data.interests}</pre>}
       </section>
       <section className="ops-section" aria-label="主設定">
         <h2>主設定（config.json）</h2>
@@ -542,7 +556,7 @@ function ConfigPanel() {
         ) : (
           <details>
             <summary>展開</summary>
-            <pre className="ops-pre">{JSON.stringify(data.config, null, 2)}</pre>
+            <pre className="ops-pre" tabIndex={0}>{JSON.stringify(data.config, null, 2)}</pre>
           </details>
         )}
       </section>

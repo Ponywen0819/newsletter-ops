@@ -52,6 +52,18 @@ describe('/ops', () => {
     expect(opsCalls(net)).toEqual([])
   })
 
+  it('分頁在背景時不問狀態；回到前景馬上問一次', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const net = open('/ops', { 'GET /api/ops': () => ({ json: status() }) })
+    await screen.findByRole('heading', { name: '維運' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(opsCalls(net)).toEqual([])
+    visibility.mockReturnValue('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(await screen.findByText('運作中')).toBeInTheDocument()
+    expect(opsCalls(net)).toHaveLength(1)
+  })
+
   it('本機：排程、上次結果；預設從上次失敗的那步重跑', async () => {
     const net = open('/ops', {
       'GET /api/ops': () => ({ json: status() }),
@@ -193,6 +205,25 @@ describe('/ops/metrics', () => {
       '/api/ops/metrics?days=14&all=1',
       '/api/ops/metrics?days=30&all=1',
     ])
+  })
+
+  it('期間與包含測試記在網址：開帶參數的網址就是那個篩選（重新整理、上一頁回來都還在）', async () => {
+    const net = open('/ops/metrics?days=30&all=1', {
+      'GET /api/ops/metrics?days=30&all=1': () => ({ json: metrics({ days: 30, all: true }) }),
+      'GET /api/ops/metrics?days=30': () => ({ json: metrics({ days: 30 }) }),
+    })
+    await screen.findByRole('table')
+    expect(screen.getByLabelText('期間')).toHaveValue('30')
+    expect(screen.getByLabelText('包含測試與維運工作')).toBeChecked()
+    await userEvent.click(screen.getByLabelText('包含測試與維運工作'))
+    await waitFor(() => expect(opsCalls(net).map((c) => c.path)).toEqual(['/api/ops/metrics?days=30&all=1', '/api/ops/metrics?days=30']))
+    expect(screen.getByLabelText('期間')).toHaveValue('30')
+  })
+
+  it('網址的期間不合法：退回 14 天', async () => {
+    const net = open('/ops/metrics?days=999', { 'GET /api/ops/metrics?days=14': () => ({ json: metrics() }) })
+    await screen.findByRole('table')
+    expect(opsCalls(net).map((c) => c.path)).toEqual(['/api/ops/metrics?days=14'])
   })
 
   it('debug 沒開：提醒不會有新紀錄', async () => {
