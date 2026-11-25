@@ -21,7 +21,6 @@ from typing import Callable
 from newsletter_collect import enrich as enrich_mod
 from newsletter_shared import metrics
 
-MODEL = "claude-haiku-5-5"
 DEFAULTS = {"enabled": True, "pool": 300, "per_story": 6, "min_new": 3, "new_stories": 3}
 SUMMARY = 100  # 給模型看的摘要長度（字元）：標題常常看不出是哪件事
 KEEP = ("uid", "title", "url", "source", "topic", "published", "summary", "origin", "query")
@@ -43,13 +42,8 @@ Ask = Callable[[str], dict]
 
 
 def parse_json(text: str) -> dict:
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end < start:
-        raise ValueError("回覆裡沒有 JSON 物件")
-    data = json.loads(text[start:end + 1])
-    if not isinstance(data, dict):
-        raise ValueError("回覆不是 JSON 物件")
-    return data
+    from newsletter_llm import runner
+    return runner.parse_json_object(text)
 
 
 def model_ask() -> Ask | None:
@@ -62,13 +56,7 @@ def model_ask() -> Ask | None:
         return None
 
     def ask(prompt: str) -> dict:
-        usage, sdk_error, wall = runner.run(prompt, tools=[], max_turns=2, token=auth.token, tag="cluster", model=MODEL)
-        fail = runner.failure(usage, sdk_error)
-        if usage.result is not None:
-            runner.log_usage(usage, wall, fail[1] if fail else "ok", "cluster", "cluster")
-        if fail:
-            raise RuntimeError(fail[2])
-        return parse_json(usage.result.result or "")
+        return runner.ask_json(prompt, token=auth.token, stage="cluster", tag="cluster", model=runner.FAST_MODEL)
     return ask
 
 

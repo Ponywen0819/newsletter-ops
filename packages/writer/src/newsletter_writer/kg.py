@@ -33,7 +33,7 @@ from newsletter_shared.kg_store import sources as _sources
 from newsletter_shared.lock import locked
 
 VERSION = 1                 # 萃取 prompt 或驗收規則改了就加一，舊的事件會在下次碰到時重抽
-MODEL = "claude-haiku-5-5"
+MODEL = runner.FAST_MODEL
 MAX_EVENTS, SUMMARY_LEN, QUOTE_LEN, NAME_LEN = 5, 120, 300, 60
 TEXT_LIMIT = 4000           # 每則送給模型的原文上限（字元）
 RELATE_BATCH = 40           # 一次比對幾個事件（原文只送這批用到的）
@@ -82,25 +82,12 @@ def article(item: dict) -> str:
     return "\n".join(str(item.get(k) or "") for k in ("title", "summary", "fulltext"))
 
 
-def parse_json(text: str) -> dict:
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end < start:
-        raise ValueError("回覆裡沒有 JSON 物件")
-    data = json.loads(text[start:end + 1])
-    if not isinstance(data, dict):
-        raise ValueError("回覆不是 JSON 物件")
-    return data
+parse_json = runner.parse_json_object
 
 
 def model_ask(token: str) -> Ask:
     def ask(prompt: str, stage: str) -> dict:
-        usage, sdk_error, wall = runner.run(prompt, tools=[], max_turns=2, token=token, tag="kg", model=MODEL)
-        fail = runner.failure(usage, sdk_error)
-        if usage.result is not None:
-            runner.log_usage(usage, wall, fail[1] if fail else "ok", stage, "kg")
-        if fail:
-            raise RuntimeError(fail[2])
-        return parse_json(usage.result.result or "")
+        return runner.ask_json(prompt, token=token, stage=stage, tag="kg", model=MODEL)
     return ask
 
 

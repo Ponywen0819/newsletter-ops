@@ -7,7 +7,7 @@
 
 ```
 src/newsletter_llm/
-  runner.py              pick_auth（選認證、清環境）、run（跑一次 agent）、failure（失敗分類）、log_usage、--auth-check
+  runner.py              pick_auth（選認證、清環境）、run（跑一次 agent）、ask_json／parse_json_object／FAST_MODEL（單輪 JSON 問答）、failure（失敗分類）、log_usage、--auth-check
 ```
 
 ```bash

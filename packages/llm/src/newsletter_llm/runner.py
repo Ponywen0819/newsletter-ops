@@ -27,6 +27,7 @@ except ImportError:
     sdk = None
 
 EXIT_AUTH, EXIT_QUOTA = 5, 6  # 授權失敗／額度用完：和一般的失敗（1）分開，讓排程知道該做什麼
+FAST_MODEL = "claude-haiku-5-5"
 CHECK_PROMPT = "Reply with the single word: ok"
 
 
@@ -264,6 +265,28 @@ def log_usage(usage: Usage, wall: float, status: str, stage: str, tag: str) -> N
     print(f"[{tag}] {status} turns={r.num_turns} est_usd={cost} {rec['seconds']}s "
           f"tokens in={tk['input'] + tk['cache_write'] + tk['cache_read']:,} out={tk['output']:,}",
           file=sys.stderr)
+
+
+def parse_json_object(text: str) -> dict:
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("回覆裡沒有 JSON 物件")
+    data = json.loads(text[start:end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("回覆不是 JSON 物件")
+    return data
+
+
+def ask_json(prompt: str, *, token: str, stage: str, tag: str,  # noqa: PLR0913
+             model: str = FAST_MODEL, max_turns: int = 2) -> dict:
+    """不開工具問模型並解析 JSON 物件回覆；記錄用量，agent 失敗拋 RuntimeError。"""
+    usage, sdk_error, wall = run(prompt, tools=[], max_turns=max_turns, token=token, tag=tag, model=model)
+    fail = failure(usage, sdk_error)
+    if usage.result is not None:
+        log_usage(usage, wall, fail[1] if fail else "ok", stage, tag)
+    if fail:
+        raise RuntimeError(fail[2])
+    return parse_json_object(usage.result.result or "")
 
 
 def main(argv: list[str] | None = None) -> int:
