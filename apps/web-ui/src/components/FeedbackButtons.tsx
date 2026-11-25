@@ -61,8 +61,6 @@ export function FeedbackButtons({ uids, marks, onChange, children }: Props) {
           className="fb-btn"
           data-mark={value}
           aria-pressed={mark === value}
-          aria-label={label}
-          title={label}
           disabled={busy}
           onClick={() => press(value)}
         >
@@ -80,6 +78,7 @@ export function FeedbackButtons({ uids, marks, onChange, children }: Props) {
           >
             <path d={icon} />
           </svg>
+          {label}
         </button>
       ))}
       {children}

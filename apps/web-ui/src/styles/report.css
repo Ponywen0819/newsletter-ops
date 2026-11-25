@@ -62,6 +62,15 @@
 .callout {
   overflow-wrap: anywhere;
 }
+/* 內文（頭條、條列、段落、資料來源）裡的連結加淡底線；目錄、按鈕樣式的連結不加 */
+.reader-body a:not(.fb-btn) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 3px;
+}
+.reader-body a:not(.fb-btn):hover {
+  text-decoration-color: currentColor;
+}
 @media (min-width: 768px) {
   .report-date {
     margin: 4px 0 20px;
@@ -86,15 +95,21 @@
   gap: 8px;
   margin: 8px 0 2px;
 }
+/* 同一排有 <button> 也有 <a>（脈絡）：字級、行高寫死，兩種元素才會一樣高（<a> 會繼承列表的 1.8 行高） */
 .fb-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 7px 14px;
-  border: 1px solid var(--border);
+  gap: 4px;
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--control-border);
   border-radius: 999px;
   background: var(--card);
   color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
   cursor: pointer;
 }
 .fb-btn:hover {
@@ -154,13 +169,8 @@
     min-height: 44px;
   }
 }
-/* 事實有誤：和有用／沒用同一排，按下是警示色 */
-.fb-flag {
-  font-size: 12px;
-}
 /* 脈絡：連到知識圖譜，樣子同按鈕 */
 .fb-kg {
-  font-size: 12px;
   text-decoration: none;
 }
 .fb-flag[aria-pressed='true'] {

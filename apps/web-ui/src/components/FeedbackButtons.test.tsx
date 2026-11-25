@@ -26,11 +26,12 @@ describe('FeedbackButtons', () => {
     expect(up()).toHaveAttribute('aria-pressed', 'false')
   })
 
-  it('按鈕是 aria-hidden 的 SVG 圖示、沒有文字（名稱靠 aria-label）', () => {
+  it('按鈕是裝飾用的 SVG 圖示＋看得到的文字（手機沒有 tooltip，光看箭頭會以為是展開／收合）', () => {
     setup('')
-    for (const button of [up(), down()]) {
+    for (const [button, text] of [[up(), '有用'], [down(), '沒用']] as const) {
       expect(button.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
-      expect(button.textContent).toBe('')
+      expect(button).toHaveTextContent(text)
+      expect(button).not.toHaveAttribute('aria-label') // 名稱就是看得到的文字，不另外給
     }
   })
 

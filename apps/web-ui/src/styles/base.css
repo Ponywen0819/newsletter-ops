@@ -20,6 +20,8 @@
   --ok: light-dark(#15803d, #4ade80);
   --warn: light-dark(#b45309, #fbbf24);
   --border: light-dark(#d1d5db, #374151);
+  /* 按鈕、輸入框、選單的外框：要和底色有 3:1 的對比（WCAG 1.4.11），才看得出哪裡可以按、可以輸入 */
+  --control-border: light-dark(#8a919c, #6b7280);
   --rule: light-dark(#e5e7eb, #2d3748);
   --page: light-dark(#f3f4f6, #0b0f19);
   --card: light-dark(#ffffff, #1f2937);

@@ -59,11 +59,18 @@
   width: 100%;
   min-height: 40px;
   padding: 6px 10px;
-  border: 1px solid var(--rule);
+  border: 1px solid var(--control-border);
   border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
+}
+/* iOS Safari 在字級小於 16px 的輸入框 focus 時會自動放大頁面 */
+@media (pointer: coarse) {
+  .report-search input {
+    min-height: 44px;
+    font-size: 16px;
+  }
 }
 .report-search-count {
   margin: 16px 0 0;
