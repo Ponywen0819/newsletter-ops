@@ -1,6 +1,6 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, type MouseEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { groupReport, type Unit } from '../reportUnits'
+import { groupReport, type Grouped, type Unit } from '../reportUnits'
 import type { Adjacent, Block, Flags, KgFlag, ListItem, Mark, Marks, Report } from '../types'
 import { isWide, useSectionNav } from '../useSectionNav'
 import { FactFlagButton } from './FactFlagButton'
@@ -133,10 +133,113 @@ function AdjacentNav({ prev, next }: Adjacent) {
   )
 }
 
+type NavGroup = { label: string; units: Unit[] }
+type LinkClick = (id: string) => (e: MouseEvent) => void
+
+/** 目錄的各組（分類小標＋每則）。筆電的左欄與手機的收合目錄共用。 */
+function NavGroups({ groups, activeId, onLinkClick }: { groups: NavGroup[]; activeId?: string; onLinkClick: LinkClick }) {
+  return groups.map((group, gi) => (
+    <div key={gi}>
+      {group.label && <p className="reader-nav-title">{group.label}</p>}
+      <ul>
+        {group.units.map((unit) => (
+          <li key={unit.id}>
+            <a
+              href={`#${unit.id}`}
+              title={unit.label}
+              aria-current={activeId !== undefined && unit.id === activeId ? 'true' : undefined}
+              onClick={onLinkClick(unit.id)}
+            >
+              <span>{unit.label}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ))
+}
+
+/**
+ * 窄螢幕（<1100px，沒有左欄）的目錄：內文最上面一個收合的區塊，先看今天有哪些分類、點一下跳過去。
+ * 點了就收起來，捲回來時不會擋住內文。
+ */
+function MobileToc({ groups, onLinkClick }: { groups: NavGroup[]; onLinkClick: LinkClick }) {
+  const ref = useRef<HTMLDetailsElement>(null)
+  const jump: LinkClick = (id) => {
+    const go = onLinkClick(id)
+    return (e) => {
+      if (ref.current) ref.current.open = false
+      go(e)
+    }
+  }
+  return (
+    <details ref={ref} className="mobile-toc">
+      <summary>本期目錄</summary>
+      <nav aria-label="新聞目錄（窄螢幕）">
+        <NavGroups groups={groups} onLinkClick={jump} />
+      </nav>
+    </details>
+  )
+}
+
+/**
+ * 右欄的內文。和目錄分開並 memo：捲動時目錄的「目前項」一直在換，內文（幾十則、每則一排按鈕）不必跟著重畫；
+ * 按有用／沒用時才因為 votes 變了而重畫。
+ */
+const ReportBody = memo(function ReportBody({
+  grouped,
+  sources,
+  votes,
+  banner,
+  adjacent,
+  toc,
+}: {
+  grouped: Grouped
+  sources: Report['sources']
+  votes: Votes
+  banner: ReactNode
+  adjacent: Adjacent
+  toc: ReactNode
+}) {
+  return (
+    <>
+      {banner}
+      {grouped.callout && <BlockView block={grouped.callout} votes={votes} />}
+      {toc}
+      {grouped.groups.map((group, gi) => (
+        <div key={gi} className="group">
+          {group.heading && (
+            <h2 className="group-title">
+              <Inline nodes={group.heading.inline} />
+            </h2>
+          )}
+          {group.units.map((unit) => (
+            <UnitView key={unit.id} unit={unit} sources={sources} votes={votes} />
+          ))}
+        </div>
+      ))}
+      {grouped.sources && <UnitView unit={grouped.sources} sources={sources} votes={votes} />}
+      {(adjacent.prev || adjacent.next) && <AdjacentNav {...adjacent} />}
+    </>
+  )
+})
+
 type ViewProps = { report: Report; marks: Marks; flags?: Flags; adjacent?: Adjacent; banner?: ReactNode }
 
-export function ReportView({ report, marks, onMark, flags = {}, onFlag = () => {}, adjacent = {}, banner }: ViewProps & { onMark: OnMark; onFlag?: OnFlag }) {
-  const votes: Votes = { marks, onMark, flags, onFlag }
+const NO_FLAGS: Flags = {}
+const NO_ADJACENT: Adjacent = {}
+const IGNORE_FLAG: OnFlag = () => {}
+
+export function ReportView({
+  report,
+  marks,
+  onMark,
+  flags = NO_FLAGS,
+  onFlag = IGNORE_FLAG,
+  adjacent = NO_ADJACENT,
+  banner,
+}: ViewProps & { onMark: OnMark; onFlag?: OnFlag }) {
+  const votes: Votes = useMemo(() => ({ marks, onMark, flags, onFlag }), [marks, onMark, flags, onFlag])
   const grouped = useMemo(() => groupReport(report), [report])
   const ids = useMemo(() => grouped.units.map((u) => u.id), [grouped])
   const articleRef = useRef<HTMLElement>(null)
@@ -157,10 +260,14 @@ export function ReportView({ report, marks, onMark, flags = {}, onFlag = () => {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [ids, activeId, goTo])
 
-  const navGroups = [
-    ...grouped.groups.map((g) => ({ label: g.heading ? g.label : '', units: g.units })),
-    ...(grouped.sources ? [{ label: '', units: [grouped.sources] }] : []),
-  ]
+  const navGroups: NavGroup[] = useMemo(
+    () => [
+      ...grouped.groups.map((g) => ({ label: g.heading ? g.label : '', units: g.units })),
+      ...(grouped.sources ? [{ label: '', units: [grouped.sources] }] : []),
+    ],
+    [grouped],
+  )
+  const toc = useMemo(() => <MobileToc groups={navGroups} onLinkClick={onLinkClick} />, [navGroups, onLinkClick])
 
   return (
     <article ref={articleRef} className="report">
@@ -169,45 +276,12 @@ export function ReportView({ report, marks, onMark, flags = {}, onFlag = () => {
           <>
             {grouped.title && <BlockView block={grouped.title} votes={votes} />}
             <nav ref={navRef} className="reader-nav" aria-label="新聞目錄">
-              {navGroups.map((group, gi) => (
-                <div key={gi}>
-                  {group.label && <p className="reader-nav-title">{group.label}</p>}
-                  <ul>
-                    {group.units.map((unit) => (
-                      <li key={unit.id}>
-                        <a
-                          href={`#${unit.id}`}
-                          title={unit.label}
-                          aria-current={unit.id === activeId ? 'true' : undefined}
-                          onClick={onLinkClick(unit.id)}
-                        >
-                          <span>{unit.label}</span>
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+              <NavGroups groups={navGroups} activeId={activeId} onLinkClick={onLinkClick} />
             </nav>
           </>
         }
       >
-        {banner}
-        {grouped.callout && <BlockView block={grouped.callout} votes={votes} />}
-        {grouped.groups.map((group, gi) => (
-          <div key={gi} className="group">
-            {group.heading && (
-              <h2 className="group-title">
-                <Inline nodes={group.heading.inline} />
-              </h2>
-            )}
-            {group.units.map((unit) => (
-              <UnitView key={unit.id} unit={unit} sources={report.sources} votes={votes} />
-            ))}
-          </div>
-        ))}
-        {grouped.sources && <UnitView unit={grouped.sources} sources={report.sources} votes={votes} />}
-        {(adjacent.prev || adjacent.next) && <AdjacentNav {...adjacent} />}
+        <ReportBody grouped={grouped} sources={report.sources} votes={votes} banner={banner} adjacent={adjacent} toc={toc} />
       </ReaderShell>
     </article>
   )
@@ -217,11 +291,15 @@ export function ReportView({ report, marks, onMark, flags = {}, onFlag = () => {
 export function ReportPanel({ marks: initial, flags: initialFlags = {}, ...rest }: ViewProps) {
   const [marks, setMarks] = useState(initial)
   const [flags, setFlags] = useState(initialFlags)
-  const onMark: OnMark = (uid, mark) => setMarks((current) => ({ ...current, [uid]: mark }))
-  const onFlag: OnFlag = (uid, flag) =>
-    setFlags((current) => {
-      const { [uid]: _, ...others } = current
-      return flag ? { ...others, [uid]: flag } : others
-    })
+  // 固定的函式：內文 memo 了，換掉它們就等於每次都重畫
+  const onMark: OnMark = useCallback((uid, mark) => setMarks((current) => ({ ...current, [uid]: mark })), [])
+  const onFlag: OnFlag = useCallback(
+    (uid, flag) =>
+      setFlags((current) => {
+        const { [uid]: _, ...others } = current
+        return flag ? { ...others, [uid]: flag } : others
+      }),
+    [],
+  )
   return <ReportView {...rest} marks={marks} onMark={onMark} flags={flags} onFlag={onFlag} />
 }

@@ -1,10 +1,54 @@
 /*
  * 筆電的新聞目錄（≥1100px）：左側 sticky 的目錄＋右側一整頁往下捲的內文。
  * 內文與窄螢幕完全一樣（所有新聞依序顯示、用滾輪閱讀）；目錄只負責「現在讀到哪、點一下跳過去」。
- * <1100px 沒有目錄，.unit、.group 只是沒有樣式的包裝。
+ * <1100px 沒有左欄：目錄改成內文最上面（今日頭條之後）一個收合的 .mobile-toc；.unit、.group 只是沒有樣式的包裝。
  */
 .reader-nav {
   display: none;
+}
+/* 窄螢幕的收合目錄（≥1100px 有左欄，不顯示） */
+.mobile-toc {
+  margin: 0 0 16px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  font-size: var(--fs-list);
+}
+.mobile-toc summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  color: var(--heading);
+  font-weight: 600;
+  cursor: pointer;
+}
+.mobile-toc nav {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0 14px 10px;
+  border-top: 1px solid var(--rule);
+}
+.mobile-toc ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mobile-toc .reader-nav-title {
+  margin: 12px 0 2px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--muted);
+}
+.mobile-toc a {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  line-height: 1.4;
+}
+@media (min-width: 1100px) {
+  .mobile-toc {
+    display: none;
+  }
 }
 @media (min-width: 1100px) {
   /* 卡片在這幾頁只是容器：寬度放到「左欄 280 ＋ 間距 24 ＋ 右欄 720」，白底改由右欄承擔。

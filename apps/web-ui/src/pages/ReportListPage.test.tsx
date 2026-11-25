@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockFetch } from '../test/fetchMock'
 import { ReportListPage } from './ReportListPage'
 
@@ -55,11 +55,15 @@ describe('ReportListPage 月份目錄（≥1100px 左欄）', () => {
     Element.prototype.scrollIntoView = function (this: HTMLElement, arg?: boolean | ScrollIntoViewOptions) {
       scrolled.push({ el: this, arg: typeof arg === 'object' ? arg : undefined })
     }
+    // scroll-spy 一個畫格才算一次：測試裡讓畫格立刻到，每次捲動事件都看得到結果
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => (cb(0), 0))
   })
   afterEach(() => {
     window.history.replaceState(null, '', '/')
     Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
     Reflect.deleteProperty(document.documentElement, 'scrollHeight')
+
+    vi.unstubAllGlobals()
   })
 
   const nav = async () => within(await screen.findByRole('navigation', { name: '月份目錄' }))
