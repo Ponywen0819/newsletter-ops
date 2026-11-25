@@ -37,10 +37,12 @@ def _int(value: str, allowed: Callable[[int], bool], name: str) -> int:
 
 
 class Graph:
-    def __init__(self, root: Path, today: Callable[[], str], report_of: Callable[[], dict[str, str]]):
-        self.flags_path = root / "state" / "kg_flags.jsonl"
+    def __init__(self, root: Path, today: Callable[[], str], report_of: Callable[[], dict[str, str]],
+                 flags: Callable[[], dict[str, str]] | None = None):
+        flags_path = root / "state" / "kg_flags.jsonl"
         self.today = today
         self.report_of = report_of  # uid → 收錄它的最新一份晨報日期
+        self.flags = flags or (lambda: kg_flags.read(flags_path))  # uid → wrong／trusted
 
     def _open(self) -> psycopg.Connection:
         con = kg_store.open_readonly()
@@ -79,7 +81,7 @@ class Graph:
         if len(uids) > MAX_UIDS:
             raise ApiError(HTTPStatus.BAD_REQUEST, f"一次最多 {MAX_UIDS} 則")
         hops = _int(depth, lambda n: n in DEPTHS, "depth")
-        flags = kg_flags.read(self.flags_path)
+        flags = self.flags()
         reports = self.report_of()
         with self._open() as con:
             items = [{"uid": uid, "date": day, "title": title, "url": url, "source": source, "report": reports.get(uid)}
@@ -110,7 +112,7 @@ class Graph:
             raise NotFound(key)
         span = _int(days, lambda n: 1 <= n <= MAX_DAYS, "days")
         since = (date.fromisoformat(self.today()) - timedelta(days=span)).isoformat()
-        flags = kg_flags.read(self.flags_path)
+        flags = self.flags()
         with self._open() as con:
             named = con.execute("""SELECT name, type, COUNT(*) AS n FROM mentions WHERE key=%s
                                    GROUP BY name, type ORDER BY n DESC, name LIMIT 1""", (key,)).fetchone()

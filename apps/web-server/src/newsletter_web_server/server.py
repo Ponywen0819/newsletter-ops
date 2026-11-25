@@ -61,7 +61,7 @@ class Site:
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
                  checker: Callable[[str], dict] | None = None, worker_url: str | None = None):
         self.reports = Reports(root, today)
-        self.kg = Graph(root, self.reports.today, self.reports.uid_dates)
+        self.kg = Graph(root, self.reports.today, self.reports.uid_dates, self.reports.flags)
         self.auth = Auth(root, checker)
         self.ops = Ops(root, self.reports.today, worker_url)
         self.dist = root / "apps" / "web-ui" / "dist"

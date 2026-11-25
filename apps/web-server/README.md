@@ -82,6 +82,8 @@ API 都是 JSON，型別見 `apps/web-ui/src/types.ts`：
 - 知識圖譜的 `events` 舊到新，每個是 `{id, uid, date, summary, quote, title, url, source, status, sources, report, entities: [{key, name, type}]}`；`status` 是 `active`／`disputed`／`invalid`，與 writer 寫背景時同一套規則（shared 的 `kg_store.statuses`，套用 `kg_flags.jsonl`）；`report` 是收錄這則的最新一份晨報（沒有是 null）。`links` 只含兩端都在圖裡的（`{src, dst, kind, quote, date}`，src 是較新的那個）。一張圖最多 150 個事件，超過時 `truncated`。`NEWSLETTER_DATABASE_URL` 以唯讀連線開 Postgres（`SET default_transaction_read_only = on`，不建表、不寫入）；未設定或還沒建表時 item／entity 回 404。摘要、引句、標題是外部網頁萃取來的文字，前端只當純文字顯示。這三條不回 ETag、不進離線副本。
 - `GET /api/today`、`/api/reports`、`/api/reports/<date>` 回 `ETag`（對最後的 JSON 取雜湊，所以標記變了也會變）；`If-None-Match` 相符時回 `304`、沒有 body。
   比對時忽略 `W/`（Cloudflare 可能把強 ETag 改成弱的）。`Cache-Control` 照舊是 `no-store`：條件請求由前端的離線副本同步自己帶，不靠瀏覽器的 HTTP cache。
+- **讀檔快取**（`reports.py` 的 `FileCache`）：晨報的解析結果（最近 40 份）、列表與搜尋用的頭條與純文字行（全部）、`feedback.jsonl`、`kg_flags.jsonl`、curated 的回饋欄位（不含原文）都留在記憶體，
+  以檔案的大小＋修改時間判斷要不要重讀，所以直接改檔、append 標記都會立刻反映；多個請求同時進來各自讀一次也無妨（多執行緒共用，有鎖）。
 - 頁面路由（清單見 [ui/README.md](../web-ui/README.md)）回 `index.html`，不認得的路徑回 404 的 `index.html`；新增前端路由時，`server.py` 的 `SPA_ROUTES` 要同步。
 - `/feedback/<uid>?v=…` 是 email 連結進來的確認頁：GET 只顯示確認頁（`GET /api/feedback/<uid>` 純讀取），按了確認才 `POST /api/feedback`。email 端見 [notify/README.md](../../packages/notify/README.md)。
 
