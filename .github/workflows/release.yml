@@ -1,7 +1,7 @@
 name: release
 
 # 在 main 打 v* tag 時建一次 web、worker 兩個映像推到 GHCR，同一個映像打上版本號、latest、sha（selftest 已在 PR 跑過），
-# 接著呼叫 deploy.yml 部署到正式機
+# 接著呼叫 service-core 的共用部署（.github/workflows/deploy.yml）部署到正式機
 on:
   push:
     tags: ['v*']
@@ -44,10 +44,12 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=${{ matrix.target }}
 
-  # 兩個映像都推上去之後才部署（正式機不再輪詢）
+  # 兩個映像都推上去之後才部署（正式機不再輪詢）。ssh 到正式機、由 command= 執行 deploy/deploy.sh <版本>
   deploy:
     needs: image
-    uses: ./.github/workflows/deploy.yml
+    uses: Ponywen0819/service-core/.github/workflows/deploy.yml@main
     with:
       tag: ${{ github.ref_name }}
-    secrets: inherit
+      host: ${{ vars.DEPLOY_HOST }}
+    secrets:
+      ssh_key: ${{ secrets.DEPLOY_SSH_KEY }}

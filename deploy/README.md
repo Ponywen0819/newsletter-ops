@@ -130,12 +130,14 @@ deploy/deploy.sh v1.4.0                           # 手動部署某個版本（�
 
 發行時在 `main` 打 `v*` tag（例如 `git tag v1.2.0 && git push origin v1.2.0`），[release.yml](../.github/workflows/release.yml) 會建一次兩個映像推到
 `ghcr.io/ponywen0819/newsletter-ops-web` 與 `ghcr.io/ponywen0819/newsletter-ops-worker`，同一個映像打上 `v1.2.0`、`latest`、`sha-<commit>`，只建 `linux/arm64`。
-兩個都推上去後，接著跑 [deploy.yml](../.github/workflows/deploy.yml)：ssh 到正式機執行 [`deploy.sh`](deploy.sh) `v1.2.0`——
+兩個都推上去後，接著呼叫 service-core 的共用部署 workflow（`Ponywen0819/service-core/.github/workflows/deploy.yml@main`，
+通用說明見 service-core 的 `deploy/README.md`）：ssh 到正式機執行這個 repo 的 [`deploy.sh`](deploy.sh) `v1.2.0`——
 repo 切到那個 tag（compose 檔跟著版本走）、拉同一個版本的映像、`up -d --remove-orphans`、等 web 與 worker healthy，結果就是 Actions 的成敗。
 每日流程、白天那輪或手動工作正在跑時，`deploy.sh` 會等它跑完（最多 30 分鐘）再重建，不打斷執行。
+`deploy.sh` 是 service-core 範本的這個專案版本（多了等 pipeline 鎖），跟著這個 repo 的 tag 走；ssh 那段只在 service-core 維護。
 
 `selftest` 只在 PR 跑，合併到 `main` 與打 tag 都不再重跑；**只合併不打 tag 不會出新映像，也不會部署**——正式機只在打 tag 時變動。
-workflow 都跑在自架 runner（標籤 `self-hosted, linux, x64`，Windows 的 WSL2，和正式機同一個區網），不用 GitHub 的分鐘數；x64 上建 arm64 映像靠 QEMU，比較慢。
+workflow 都跑在自架 runner（標籤 `self-hosted, linux, x64`，Windows 主機上的 Docker 容器，見 service-core 的 `common/github-runner.yml`；和正式機同一個區網），不用 GitHub 的分鐘數；x64 上建 arm64 映像靠 QEMU，比較慢。
 runner 關機時工作會排隊等它。repo 是公開的，fork 來的 PR 不會在 runner 上跑；deploy 只有 tag push 與手動觸發會跑。
 
 設定（一次）：
@@ -166,6 +168,7 @@ runner 關機時工作會排隊等它。repo 是公開的，fork 來的 PR 不�
 日常：
 
 - 部署紀錄就在 Actions 的 deploy job；重新部署或**退版**：Actions → deploy → Run workflow，填版本號（例如 `v1.4.0`）。
+  手動觸發用的是預設分支（`main`）上的 [deploy.yml](../.github/workflows/deploy.yml)。
   `deploy.sh` 之前的版本（v1.3.0 以前）沒有這支腳本，退到那麼舊要在 host 上手動 `git checkout` 與 `NEWSLETTER_TAG=… docker compose up -d`。
 - 也可以在 host 上直接跑 `deploy/deploy.sh v1.4.0`，效果一樣。
 - `.env` 的 `NEWSLETTER_TAG` 由 `deploy.sh` 維護，記的是目前部署的版本，所以在 host 上手動下 `docker compose …` 也是同一版；不要手動改它，要換版本就部署。
