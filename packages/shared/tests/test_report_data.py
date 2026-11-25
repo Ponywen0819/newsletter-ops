@@ -3,7 +3,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from newsletter_shared import DEFAULT_TZ, tz
-from newsletter_shared.report_data import check, parse_inline, parse_report, uids_of
+from newsletter_shared.report_data import (
+    check,
+    extract_headline,
+    extract_mark_uids,
+    extract_subject,
+    parse_inline,
+    parse_report,
+    uids_of,
+)
 
 UID_A, UID_B, UID_C, UID_D = "0123456789abcdef", "0123456789abcdee", "1111111111111111", "2222222222222222"
 HEAD = "> **今日頭條：** x\n<!-- subject: s -->\n"
@@ -144,3 +152,35 @@ def test_check(tmp_path, capsys, name, code, msg):
     assert check([name], tmp_path) == code
     err = capsys.readouterr().err
     assert msg in err if msg else err == ""
+
+
+def test_extract_headline():
+    assert extract_headline(MD) == "某事發生，見 來源。"
+    assert extract_headline("> **今日頭條：** 全形冒號與 **粗體** `code`") == "全形冒號與 粗體 code"
+    assert extract_headline("> **今日頭條:** 半形冒號") == "半形冒號"
+    assert extract_headline("> **今日頭條**：粗體外全形冒號") == "粗體外全形冒號"
+    assert extract_headline("> **今日頭條**: 粗體外半形冒號") == "粗體外半形冒號"
+    assert extract_headline("> 今日頭條：不加粗全形") == "不加粗全形"
+    assert extract_headline("> 今日頭條: 不加粗半形") == "不加粗半形"
+    assert extract_headline("# 只有大標沒有頭條\n- 內文\n") == ""
+    assert extract_headline("") == ""
+
+
+def test_extract_subject():
+    assert extract_subject(MD) == "測試頭條"
+    assert extract_subject("<!-- subject: 半形冒號主旨  -->") == "半形冒號主旨"
+    assert extract_subject("<!-- subject： 全形冒號主旨 -->") == "全形冒號主旨"
+    assert extract_subject("# 沒有主旨註解\n> **今日頭條：** x\n") == ""
+    assert extract_subject("") == ""
+
+
+def test_extract_mark_uids():
+    assert extract_mark_uids(MD) == [UID_A, UID_B, UID_C, UID_D]
+    sample = (
+        f"<!-- mark: + uid={UID_A} -->\n"
+        f"<!-- mark: -- uid={UID_B} -->\n"
+        f"正文網址 https://a.example/?uid={UID_C} 與一般註解 <!-- uid={UID_D} --> 不算\n"
+    )
+    assert extract_mark_uids(sample) == [UID_A, UID_B]
+    assert extract_mark_uids("# 沒有任何 mark\n") == []
+    assert extract_mark_uids("") == []

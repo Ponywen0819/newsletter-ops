@@ -18,7 +18,6 @@ MARKS = {"+", "-", ""}  # "" ＝ 取消
 SEARCH_LIMIT = 50
 SEARCH_MAX_QUERY = 100
 _COMMENT = re.compile(r"<!--.*?-->")
-_UID_MARK = re.compile(r"uid=([0-9a-f]{16})")
 _LINE_PREFIX = re.compile(r"^[\s>*-]*(?:#+\s*)?")
 
 
@@ -63,7 +62,7 @@ class Reports:
                 text = self._report_path(date).read_text(encoding="utf-8")
             except OSError:
                 continue
-            for uid in _UID_MARK.findall(text):
+            for uid in report_data.extract_mark_uids(text):
                 index.setdefault(uid, date)
         self._uid_index = (signature, index)
         return index
@@ -119,9 +118,7 @@ class Reports:
         rows = []
         for date in self.report_dates():
             text = self._report_path(date).read_text(encoding="utf-8")
-            line = next((ln for ln in text.splitlines() if "今日頭條" in ln), "")
-            headline = report_data.plain(re.sub(r"^[>\s]*\**今日頭條[：:]\**\s*", "", line))
-            rows.append({"date": date, "headline": headline})
+            rows.append({"date": date, "headline": report_data.extract_headline(text)})
         return {"reports": rows}
 
     def search(self, q: str) -> dict:
@@ -156,11 +153,7 @@ class Reports:
 
     def _find_report(self, uid: str) -> str | None:
         """含有這個 uid 的最新一份報告（日期）。"""
-        needle = f"uid={uid}"
-        for date in self.report_dates():
-            if needle in self._report_path(date).read_text(encoding="utf-8"):
-                return date
-        return None
+        return self.uid_dates().get(uid)
 
     def _curated_item(self, date: str, uid: str) -> dict:
         try:

@@ -44,6 +44,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from newsletter_shared.report_data import extract_headline, extract_mark_uids, extract_subject
+
 REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / ".devtools"  # 快照、比較結果、信件；不進版控（.gitignore 的白名單沒放行）
 SAMPLE = REPO / "deploy" / "sample-data"
@@ -59,7 +61,6 @@ KG_LOCK = "state/kg"  # writer 的 KG 鎖檔是 state/kg.lock
 EXIT_BUSY = 75  # 和 worker 的 EXIT_BUSY 一樣：pipeline 在跑
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 UID_RE = re.compile(r"[0-9a-f]{16}")
-MARK_RE = re.compile(r"<!--\s*mark:\s*[+-]{0,2}\s*uid=([0-9a-f]{16})\s*-->")
 JOB_TIMEOUT = 75 * 60  # 秒；重寫報告的上限（worker 那邊是 60 分鐘）
 
 
@@ -441,15 +442,13 @@ def sections(md: str) -> dict[str, list[str]]:
     for line in md.splitlines():
         if line.startswith("## "):
             current = line[3:].strip()
-        for uid in MARK_RE.findall(line):
+        for uid in extract_mark_uids(line):
             out.setdefault(current, []).append(uid)
     return out
 
 
 def meta(md: str) -> dict[str, str]:
-    subject = re.search(r"<!--\s*subject:\s*(.*?)\s*-->", md)
-    headline = re.search(r"^>\s*\*\*今日頭條：\*\*\s*(.*)$", md, re.M)
-    return {"subject": subject[1] if subject else "", "headline": headline[1].strip() if headline else ""}
+    return {"subject": extract_subject(md), "headline": extract_headline(md)}
 
 
 def _section_diff(a: list[str], b: list[str], where_p: dict, where_t: dict, name) -> list[str]:
