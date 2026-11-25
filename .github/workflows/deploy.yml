@@ -37,19 +37,23 @@ jobs:
           TAG: ${{ inputs.tag }}
           HOST: ${{ vars.DEPLOY_HOST }}
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::版本號要是 vX.Y.Z：$TAG"; exit 1; }
-          if [ -z "$HOST" ] || [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
-            echo "::error::還沒設定 vars.DEPLOY_HOST 或 secrets.DEPLOY_SSH_KEY／DEPLOY_KNOWN_HOSTS（見 deploy/README.md「部署」）"
+          if [ -z "$HOST" ] || [ -z "$SSH_KEY" ]; then
+            echo "::error::還沒設定 vars.DEPLOY_HOST 或 secrets.DEPLOY_SSH_KEY（見 deploy/README.md「部署」）"
             exit 1
+          fi
+          # runner 映像不一定有 ssh client
+          if ! command -v ssh >/dev/null; then
+            sudo=$(command -v sudo || true)
+            $sudo apt-get update -qq && $sudo apt-get install -y -qq openssh-client >/dev/null
           fi
           dir=$(mktemp -d)
           trap 'rm -rf "$dir"' EXIT
           printf '%s\n' "$SSH_KEY" > "$dir/key"
           chmod 600 "$dir/key"
-          printf '%s\n' "$KNOWN_HOSTS" > "$dir/known_hosts"
+          # 不檢查 host key（重灌會變）：這把 key 被 command= 限定，公鑰認證也無法轉送，冒充的主機拿不到東西。
           # 送出的「指令」只是版本號：host 端的 command= 固定執行 deploy.sh，版本號從 SSH_ORIGINAL_COMMAND 拿
           ssh -i "$dir/key" -o IdentitiesOnly=yes -o BatchMode=yes \
-            -o UserKnownHostsFile="$dir/known_hosts" -o StrictHostKeyChecking=yes \
-            -o ServerAliveInterval=30 "$HOST" "$TAG"
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 "$HOST" "$TAG"

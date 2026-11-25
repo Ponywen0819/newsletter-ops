@@ -146,15 +146,21 @@ runner 關機時工作會排隊等它。repo 是公開的，fork 來的 PR 不�
    command="/root/newsletter-ops/deploy/deploy.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA… newsletter-deploy
    ```
    CI 送過去的「指令」只是版本號，`deploy.sh` 從 `SSH_ORIGINAL_COMMAND` 讀它並檢查格式；拿到這把 key 的人頂多能部署某個已存在的 tag。
-3. repo 設定 → Environments → `production`（第一次跑會自動建立）：
-   - Variables：`DEPLOY_HOST` = `root@<正式機的區網 IP 或名稱>`（runner 解析得到的）
-   - Secrets：`DEPLOY_SSH_KEY` = 私鑰檔的內容；`DEPLOY_KNOWN_HOSTS` = 在 runner 上 `ssh-keyscan <host>` 的輸出（固定 host key，不接受第一次連線就信任）
-   - 想在部署前按一下核准的話，加 Required reviewers。
+3. repo 設定 → Secrets and variables → Actions（放 repo 層級或 Environments → `production` 都可以，`production` 第一次跑會自動建立）：
+   - Variables：`DEPLOY_HOST` = `root@<正式機的區網 IP>`。runner 是 Docker 容器，解析不到 `.local`（mDNS），所以用固定 IP（路由器設 DHCP 保留）。
+   - Secrets：`DEPLOY_SSH_KEY` = 私鑰檔的內容（含 BEGIN／END 兩行）。
+   - 不檢查正式機的 host key：host key 會因重灌改變，而這把 key 經 `command=` 限定、公鑰認證也無法被轉送，冒充的主機拿不到任何東西。
+   - 想在部署前按一下核准的話，在 Environments → `production` 加 Required reviewers。
 4. 正式機上的 repo 之後由 `deploy.sh` 切到 detached 的 tag，不必停在 `main`，也不要有本機修改（有的話 `deploy.sh` 拒絕部署）；本機設定放 `.env` 或 `docker-compose.override.yml`。
 5. 舊的輪詢 timer 停掉並刪除（以前的版本才有）：
    ```bash
    systemctl --user disable --now newsletter-autodeploy.timer
    rm ~/.config/systemd/user/newsletter-autodeploy.{service,timer} && systemctl --user daemon-reload
+   ```
+6. 第一次：正式機的 repo 若還停在沒有 `deploy.sh` 的版本，`command=` 指到的檔案不存在，CI 會失敗（`No such file or directory`）。
+   先在 host 上手動跑一次，之後就交給 CI：
+   ```bash
+   cd /root/newsletter-ops && git fetch --tags && git checkout --detach v1.4.0 && deploy/deploy.sh v1.4.0
    ```
 
 日常：
