@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(os.environ.get("NEWSLETTER_ROOT") or Path.cwd()).resolve()
 DEFAULT_TZ = "Asia/Taipei"
+PIPELINE_STEPS = ("collect", "write", "render", "send")
 
 
 def tz(root: Path = ROOT) -> ZoneInfo:

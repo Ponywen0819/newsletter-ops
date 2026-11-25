@@ -14,7 +14,7 @@ import re
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +23,8 @@ from newsletter_shared import ROOT, tz
 METRICS_DIR = ROOT / "logs" / "metrics"
 TZ = tz()
 RUN_ID_ENV = "NEWSLETTER_RUN_ID"  # worker 每次執行設一個，各步驟的紀錄才分得開
+STAGES = ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
+COST_STAGES = ("claude", "search", "kg_extract", "kg_relate")  # 有 total_cost_usd 的階段（只有 SDK 路線）
 TRANSCRIPTS = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ROOT))
 
 
@@ -174,42 +176,76 @@ def split_runs(rows: list[dict]) -> list[dict[str, dict]]:
     return runs
 
 
+def read_day_rows(root: Path, day: date | str) -> list[dict]:
+    """讀取 root/logs/metrics/<day>.jsonl；容忍不存在與寫到一半的殘缺 JSON 行。"""
+    try:
+        lines = (root / "logs" / "metrics" / f"{day}.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue  # 寫到一半的最後一行
+        if isinstance(row, dict) and isinstance(row.get("stage"), str) and isinstance(row.get("ts"), str):
+            rows.append(row)
+    return rows
+
+
+def summarize_run(day: date | str, run: dict[str, dict]) -> dict:
+    """單次執行的結構化彙總（CLI summary 與 /api/ops/metrics 共用）。"""
+    first = min(run.values(), key=lambda r: r["ts"])
+    claude, pipeline = run.get("claude", {}), run.get("pipeline")
+    tok = claude.get("tokens", {})
+    costs = [r["total_cost_usd"] for r in (run.get(s, {}) for s in COST_STAGES) if r.get("total_cost_usd") is not None]
+    return {
+        "date": str(day),
+        "time": first["ts"][11:16],
+        "label": first.get("label", "prod"),
+        "trigger": (pipeline or {}).get("trigger"),
+        "result": None if pipeline is None else {"exit_code": pipeline.get("exit_code"), "step": pipeline.get("step")},
+        "seconds": {s: run[s]["seconds"] for s in STAGES if isinstance(run.get(s, {}).get("seconds"), (int, float))},
+        "tokens": {"input": tok.get("input", 0) + tok.get("cache_write", 0) + tok.get("cache_read", 0),
+                   "output": tok.get("output", 0)} if tok else None,
+        "turns": claude.get("api_turns"),
+        "usd": round(sum(costs), 4) if costs else None,
+        "items": run.get("curate", {}).get("items"),
+    }
+
+
 def cmd_summary(argv: list[str]) -> int:
     show_all = "--all" in argv
     days = int(next((a for a in argv if a.isdigit()), 7))
     today = datetime.now(TZ).date()
-    stages = ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
-    header = (f"{'date':10} {'time':5} {'label':5} {'via':4} " + " ".join(f"{s[:6]:>6}" for s in stages) +
+    header = (f"{'date':10} {'time':5} {'label':5} {'via':4} " + " ".join(f"{s[:6]:>6}" for s in STAGES) +
               f" {'in+cache':>10} {'output':>8} {'turns':>5} {'usd':>6} {'s+':>3} {'miss':>4} {'nm':>3} {'result':8}  top tools")
     print(header)
     print("-" * len(header))
     for n in range(days - 1, -1, -1):
         day = today - timedelta(days=n)
-        path = METRICS_DIR / f"{day}.jsonl"
-        if not path.exists():
-            continue
-        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows = read_day_rows(ROOT, day)
         if not show_all:
             rows = [r for r in rows if r.get("label", "prod") == "prod"]  # 舊紀錄沒有 label，當 prod
         for run in split_runs(rows):
-            print(summary_line(day, run, stages))
+            if run:
+                print(summary_line(day, run, STAGES))
     return 0
 
 
-def summary_line(day, run: dict[str, dict], stages: tuple[str, ...]) -> str:
-    first = min(run.values(), key=lambda r: r["ts"])
-    c, cov, p, sy = run.get("claude", {}), run.get("coverage", {}), run.get("pipeline"), run.get("search_yield", {})
-    tok = c.get("tokens", {})
+def summary_line(day: date | str, run: dict[str, dict], stages: tuple[str, ...] = STAGES) -> str:
+    s = summarize_run(day, run)
+    c, cov, sy = run.get("claude", {}), run.get("coverage", {}), run.get("search_yield", {})
+    tok = s["tokens"] or {"input": 0, "output": 0}
     top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])
     via = c.get("runner", "chat") if c else "-"  # sdk＝newsletter-write；chat＝對話裡的 /news-digest（舊紀錄沒有 runner）
-    costs = [r["total_cost_usd"] for r in (c, *(run.get(s, {}) for s in ("search", "kg_extract", "kg_relate")))
-             if r.get("total_cost_usd") is not None]
-    usd = f"{sum(costs):.2f}" if costs else "-"  # writer＋搜尋＋KG；只有 sdk 路線拿得到
-    result = "-" if p is None else "ok" if not p["exit_code"] else f"{p['step']}:{p['exit_code']}"
-    secs = " ".join(f"{run[s]['seconds']:>6.1f}" if "seconds" in run.get(s, {}) else f"{'-':>6}" for s in stages)
-    return (f"{day!s:10} {first['ts'][11:16]:5} {first.get('label', 'prod'):5} {via:4} {secs} "
-            f"{tok.get('input', 0) + tok.get('cache_write', 0) + tok.get('cache_read', 0):>10,} "
-            f"{tok.get('output', 0):>8,} {c.get('api_turns', '-'):>5} {usd:>6} {sy.get('accepted', '-'):>3} {cov.get('missing', '-'):>4} "
+    usd = f"{s['usd']:.2f}" if s["usd"] is not None else "-"  # writer＋搜尋＋KG；只有 sdk 路線拿得到
+    res = s["result"]
+    result = "-" if res is None else "ok" if not res["exit_code"] else f"{res['step']}:{res['exit_code']}"
+    secs = " ".join(f"{s['seconds'][st]:>6.1f}" if st in s["seconds"] else f"{'-':>6}" for st in stages)
+    turns = "-" if s["turns"] is None else s["turns"]
+    return (f"{s['date']:10} {s['time']:5} {s['label']:5} {via:4} {secs} "
+            f"{tok['input']:>10,} {tok['output']:>8,} {turns:>5} {usd:>6} {sy.get('accepted', '-'):>3} {cov.get('missing', '-'):>4} "
             f"{cov.get('near_misses_used', '-'):>3} {result:8}  {top}")
 
 
