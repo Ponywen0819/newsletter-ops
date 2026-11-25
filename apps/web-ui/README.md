@@ -25,6 +25,7 @@ npm run typecheck
 - 深色模式：預設跟系統（`prefers-color-scheme`），頁首「配色」可改成淺色／深色，選擇存在瀏覽器的 localStorage（key `theme`，只收 `light`／`dark`，沒有＝自動），後端不知道。
   `<html data-theme>` 是唯一真相；顏色在 `styles/base.css` 的 `:root` 用 `light-dark(淺, 深)` 定義（需要 2024 年中以後的瀏覽器）。
   `public/theme-init.js` 在 `<head>` 同步套用儲存的主題，避免先閃一下錯的顏色；CSP 不許行內腳本，所以它必須是外部檔。
+  裝成 App 時狀態列的顏色（`theme-color`）：`index.html` 依系統淺色／深色各一個；選了固定的主題時 `theme-init.js` 與 `theme.ts` 把兩個都改成那一色（頁首底色 `--card`）。
   放進 `public/` 的檔案要同時放行 `.gitignore`（白名單）、`.dockerignore`，並在 `Dockerfile` 的前端階段 COPY，否則不會進版控或映像。
 
 ## PWA（可安裝，離線讀最近的晨報）

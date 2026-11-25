@@ -32,3 +32,16 @@ describe('theme-init.js', () => {
     expect(root.dataset.theme).toBeUndefined()
   })
 })
+
+describe('theme-init.js 的狀態列顏色', () => {
+  it('存的是深色：開頁前就把 theme-color 換成深色（裝成 App 時狀態列不會是一條白）', () => {
+    const meta = document.createElement('meta')
+    meta.name = 'theme-color'
+    meta.content = '#ffffff'
+    document.head.append(meta)
+    localStorage.setItem('theme', 'dark')
+    run()
+    expect(meta.content).toBe('#1f2937')
+    meta.remove()
+  })
+})
