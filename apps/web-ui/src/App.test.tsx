@@ -51,7 +51,7 @@ describe('路由', () => {
   })
 
   it.each([
-    [{ finished_at: null, exit_code: null, step: null }, '2026-10-03 的晨報正在產生', '完成後重新整理'],
+    [{ finished_at: null, exit_code: null, step: null }, '2026-10-03 的晨報正在產生', '完成後這一頁會自己換成新的晨報'],
     [{ finished_at: 'b', exit_code: 3, step: 'collect' }, '2026-10-03 的晨報產生失敗', '在「蒐集新聞」這步失敗（exit 3），30 分鐘後會自動重跑一次'],
     [{ finished_at: 'b', exit_code: 3, step: 'collect', trigger: 'retry' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
     [{ finished_at: 'b', exit_code: 5, step: 'write' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
@@ -60,6 +60,45 @@ describe('路由', () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run: rec } }) })
     expect(await screen.findByRole('heading', { name: title })).toBeInTheDocument()
     expect(screen.getByText(text, { exact: false })).toBeInTheDocument()
+  })
+
+  it('/ 晨報正在產生：每分鐘再問一次，好了就直接換上，中間不閃「載入中」', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let ready = false
+    const running = { trigger: 'schedule', started_at: 'a', finished_at: null, exit_code: null, step: null }
+    open('/', {
+      'GET /api/today': () => ({
+        json: ready
+          ? { date: '2026-10-03', latest: '2026-10-03', report, marks: {} }
+          : { date: '2026-10-03', latest: null, report: null, marks: {}, run: running },
+      }),
+    })
+    expect(await screen.findByRole('heading', { name: '2026-10-03 的晨報正在產生' })).toBeInTheDocument()
+    ready = true
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+    expect(screen.queryByText('載入中…')).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('/ 讀取失敗：可以再試一次', async () => {
+    let fail = true
+    open('/', {
+      'GET /api/today': () => (fail ? { status: 500, json: { error: '壞了' } } : { json: { date: '2026-09-28', latest: '2026-09-28', report, marks: {} } }),
+    })
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    fail = false
+    await userEvent.click(screen.getByRole('button', { name: '再試一次' }))
+    expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
+  })
+
+  it('/ 產生失敗：本機給維運頁的連結；提示在整個版面最上面（手機先看到它，不是舊晨報的標題）', async () => {
+    const fallback = { date: '2026-10-02', report, marks: {}, prev: null, next: null }
+    const run = { trigger: 'retry', started_at: 'a', finished_at: 'b', exit_code: 3, step: 'collect' }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run } }) }, true)
+    const banner = (await screen.findByText('2026-10-03 的晨報產生失敗')).closest('p')!
+    expect(await within(banner).findByRole('link', { name: '到維運頁重跑' })).toHaveAttribute('href', '/ops')
+    expect(banner.nextElementSibling).toHaveClass('reader') // 在兩欄版面之前
   })
 
   it('/ 當日跑成功但還沒有晨報檔：照一般的還沒產出', async () => {

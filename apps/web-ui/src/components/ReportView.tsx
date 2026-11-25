@@ -190,20 +190,17 @@ const ReportBody = memo(function ReportBody({
   grouped,
   sources,
   votes,
-  banner,
   adjacent,
   toc,
 }: {
   grouped: Grouped
   sources: Report['sources']
   votes: Votes
-  banner: ReactNode
   adjacent: Adjacent
   toc: ReactNode
 }) {
   return (
     <>
-      {banner}
       {grouped.callout && <BlockView block={grouped.callout} votes={votes} />}
       {toc}
       {grouped.groups.map((group, gi) => (
@@ -271,6 +268,7 @@ export function ReportView({
 
   return (
     <article ref={articleRef} className="report">
+      {banner}
       <ReaderShell
         side={
           <>
@@ -281,7 +279,7 @@ export function ReportView({
           </>
         }
       >
-        <ReportBody grouped={grouped} sources={report.sources} votes={votes} banner={banner} adjacent={adjacent} toc={toc} />
+        <ReportBody grouped={grouped} sources={report.sources} votes={votes} adjacent={adjacent} toc={toc} />
       </ReaderShell>
     </article>
   )
