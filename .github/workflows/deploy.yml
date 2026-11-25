@@ -1,0 +1,59 @@
+name: deploy
+
+# 把指定版本部署到正式機：ssh 到 host，由 authorized_keys 的 command= 執行 deploy/deploy.sh <版本>（見 deploy/README.md「部署」）。
+# release.yml 建好映像後呼叫；要重新部署或退版時，在 Actions 頁手動跑這個 workflow 並填版本號。
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要部署的版本（vX.Y.Z）
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# 同時只部署一個版本，後到的排隊
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # 自架 runner 和正式機在同一個區網。repo 是公開的，但只有 tag push 與手動觸發會跑，fork 碰不到
+    runs-on: [self-hosted, linux, x64]
+    # 要在部署前人工核准，就在 repo 設定的 Environments → production 加 Required reviewers
+    environment: production
+    # deploy.sh 最多等 pipeline 30 分鐘，加上拉映像與等 healthy
+    timeout-minutes: 45
+    steps:
+      - name: Deploy over ssh
+        env:
+          TAG: ${{ inputs.tag }}
+          HOST: ${{ vars.DEPLOY_HOST }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::版本號要是 vX.Y.Z：$TAG"; exit 1; }
+          if [ -z "$HOST" ] || [ -z "$SSH_KEY" ]; then
+            echo "::error::還沒設定 vars.DEPLOY_HOST 或 secrets.DEPLOY_SSH_KEY（見 deploy/README.md「部署」）"
+            exit 1
+          fi
+          # runner 映像不一定有 ssh client
+          if ! command -v ssh >/dev/null; then
+            sudo=$(command -v sudo || true)
+            $sudo apt-get update -qq && $sudo apt-get install -y -qq openssh-client >/dev/null
+          fi
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$dir/key"
+          chmod 600 "$dir/key"
+          # 不檢查 host key（重灌會變）：這把 key 被 command= 限定，公鑰認證也無法轉送，冒充的主機拿不到東西。
+          # 送出的「指令」只是版本號：host 端的 command= 固定執行 deploy.sh，版本號從 SSH_ORIGINAL_COMMAND 拿
+          ssh -i "$dir/key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+            -o ConnectTimeout=15 -o ServerAliveInterval=30 "$HOST" "$TAG"
