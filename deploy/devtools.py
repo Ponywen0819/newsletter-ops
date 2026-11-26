@@ -44,8 +44,6 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from newsletter_shared.report_data import extract_headline, extract_mark_uids, extract_subject
-
 REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / ".devtools"  # 快照、比較結果、信件；不進版控（.gitignore 的白名單沒放行）
 SAMPLE = REPO / "deploy" / "sample-data"
@@ -437,6 +435,8 @@ def cmd_snapshot(args, env) -> int:
 
 def sections(md: str) -> dict[str, list[str]]:
     """{段落標題: [uid, …]}；第一個 ## 之前的算「(開頭)」。"""
+    from newsletter_shared.report_data import extract_mark_uids  # 延遲 import：沒裝 shared 時其他子指令照舊能跑
+
     out: dict[str, list[str]] = {}
     current = "(開頭)"
     for line in md.splitlines():
@@ -448,6 +448,8 @@ def sections(md: str) -> dict[str, list[str]]:
 
 
 def meta(md: str) -> dict[str, str]:
+    from newsletter_shared.report_data import extract_headline, extract_subject
+
     return {"subject": extract_subject(md), "headline": extract_headline(md)}
 
 

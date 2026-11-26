@@ -156,7 +156,7 @@ class Ops:
         runs = []
         for n in range(span):  # 新到舊
             day = (end - timedelta(days=n)).isoformat()
-            rows = read_day_rows(self.root, day)
+            rows = read_day_rows(self.root / "logs" / "metrics", day)
             if not every:
                 rows = [r for r in rows if r.get("label", "prod") == "prod"]  # 舊紀錄沒有 label，當 prod
             runs.extend(reversed([self._run_row(day, run) for run in split_runs(rows) if run]))

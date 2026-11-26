@@ -105,4 +105,4 @@ SIGTERM：轉給執行中的那一步、等它結束、紀錄記成 143，然後
 
 ## 加一個步驟
 
-在 `daily.py` 的 `MODULES` 加一行模組名，在 `_run` 依序加一次 `go(...)`，並在 `tests/` 的測試裡涵蓋它（假步驟見 `tests/helpers.py`）。
+在 shared 的 `PIPELINE_STEPS` 加步驟名（web-server 的維運頁「從哪一步開始」也用它），在 `daily.py` 的 `MODULES` 加一行模組名，在 `_run` 依序加一次 `go(...)`，並在 `tests/` 的測試裡涵蓋它（假步驟見 `tests/helpers.py`）。

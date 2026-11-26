@@ -141,7 +141,6 @@ POST_HANDLERS: dict[str, Callable[[Site, object], dict]] = {
     "/api/auth/revoke": lambda site, _data: site.auth.revoke_token(),
     "/api/ops/request": lambda site, data: site.ops.request(data),
 }
-POST_ROUTES = frozenset(POST_HANDLERS)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -250,18 +249,12 @@ class Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise ApiError(HTTPStatus.BAD_REQUEST, "body 不是合法的 JSON") from None
 
-    def _post_payload(self, path: str, data) -> dict:
-        handler = POST_HANDLERS.get(path)
-        if handler is None:
-            raise NotFound(path)
-        return handler(self.site, data)
-
     def do_POST(self) -> None:
         path = urlsplit(self.path).path.rstrip("/")
         try:
-            if path not in POST_ROUTES:
-                raise NotFound(path)
-            self._send_json(200, self._post_payload(path, self._read_json()))
+            if (handler := POST_HANDLERS.get(path)) is None:
+                raise NotFound(path)  # 在讀 body 之前：未知路徑一律 404（不會因為少了 Content-Type 變 415）
+            self._send_json(200, handler(self.site, self._read_json()))
         except NotFound:
             self._send_json(404, {"error": "not found"})
         except ApiError as exc:

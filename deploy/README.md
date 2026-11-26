@@ -16,7 +16,7 @@ worker 容器：每天 08:00 跑每日流程（be 網路，只有 web 連得到�
 
 - `Dockerfile`：一個檔、兩個 target，建出兩個映像：`newsletter-ops-web`（`--target web`）與 `newsletter-ops-worker`（`--target worker`）。
   各自只帶自己 app 的 venv（`/opt/web-server`、`/opt/worker`，用 uv 鎖定的依賴、不可編輯安裝），**不帶原始碼、也沒有 uv**，指令直接在 PATH 上；
-  非 root 執行，兩邊共用 base 層（使用者、`config/`、volume 連結）。web 另外帶前端：先用 Node 建置 `apps/web-ui/`，只把 `dist` 帶進映像，
+  非 root 執行，兩邊共用 base 層（使用者、volume 連結）；`config/` 放在各映像最後一層，只改設定時前面的 venv 層不必重建。web 另外帶前端：先用 Node 建置 `apps/web-ui/`，只把 `dist` 帶進映像，
   所以 host 與映像裡都不需要 Node；worker 另外帶 `.claude/`（寫報告的 skill）。`.dockerignore` 是白名單，前端原始碼與 `apps/web-ui/public/`（圖示）要放行才進得了 build context。
 - `docker-compose.yml`：`web`、`worker` 兩個服務與 volume。`worker` 跑 `worker`（見 [apps/worker/README.md](../apps/worker/README.md)），
   它的 `/status`、`/run`、`/job` 不 publish，而且只在 `be` 網路：`/run` 會燒額度、寄信，只有 web 的維運頁（`/ops`，閘門只在區網入口放行）連得到，閘門碰不到 worker。

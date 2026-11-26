@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
@@ -39,7 +39,8 @@ MAX_EVENTS, SUMMARY_LEN, QUOTE_LEN, NAME_LEN = 5, 120, 300, 60
 TEXT_LIMIT = 4000           # 每則送給模型的原文上限（字元）
 RELATE_BATCH = 40           # 一次比對幾個事件（原文只送這批用到的）
 EXTRACT_BATCH = 20          # 一次呼叫萃取幾則：加上別家報導後一天六、七十則，一次送完回覆太長
-PARALLEL_ASKS = 2           # 同一階段的各批互不相依，同時問幾批（每批一個 claude 子程序；樹莓派上別開太多）
+# 同一階段的各批互不相依，同時問幾批（每批一個 claude 子程序，各約 200～300 MB；記憶體吃緊時設 NEWSLETTER_KG_PARALLEL=1）
+PARALLEL_ASKS = max(1, int(os.environ.get("NEWSLETTER_KG_PARALLEL", "2") or "2"))
 MIN_QUOTE = 8               # 正規化後少於這個長度的引句不算證據
 RELATE_DAYS, CONTEXT_DAYS = 90, 30
 CANDIDATES, MAX_BACKGROUND = 5, 40
@@ -94,6 +95,8 @@ def model_ask(token: str) -> Ask:
 
 def forget(con: psycopg.Connection, *uids: str) -> None:
     """刪掉這幾則的事件，連同它們的實體與連結。"""
+    if not uids:
+        return
     ids = [r[0] for r in con.execute("SELECT id FROM events WHERE uid = ANY(%s)", (list(uids),))]
     if ids:
         con.execute("DELETE FROM links WHERE src = ANY(%s) OR dst = ANY(%s)", (ids, ids))
@@ -125,6 +128,8 @@ def _events_of(row: dict, text: str) -> tuple[list[tuple[str, str, dict]], int]:
 def extract(con: psycopg.Connection, stamp: str, items: list[dict], ask: Ask) -> dict:
     """萃取還沒抽過（或萃取器版本較舊）的則。回傳統計。"""
     wanted = [i["uid"] for i in items if i.get("uid")]
+    if not wanted:
+        return {"items": 0, "extracted": 0, "dropped": 0}
     done = {r[0] for r in con.execute("SELECT uid FROM items WHERE uid = ANY(%s) AND version = %s", (wanted, VERSION))}
     todo = {i["uid"]: i for i in items if i.get("uid") and i["uid"] not in done}
     if not todo:
@@ -166,10 +171,18 @@ def extract(con: psycopg.Connection, stamp: str, items: list[dict], ask: Ask) ->
 
 def ask_all(ask: Ask, prompts: list[str], stage: str) -> list[dict]:
     """依序回傳每個 prompt 的回覆；多批時同時問 PARALLEL_ASKS 個（各批互不相依）。任一批失敗就拋出。"""
-    if len(prompts) <= 1:
+    if len(prompts) <= 1 or PARALLEL_ASKS == 1:
         return [ask(p, stage) for p in prompts]
-    with ThreadPoolExecutor(max_workers=PARALLEL_ASKS) as pool:
-        return list(pool.map(lambda p: ask(p, stage), prompts))
+    pool = ThreadPoolExecutor(max_workers=PARALLEL_ASKS)
+    futures = [pool.submit(ask, p, stage) for p in prompts]
+    try:
+        done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+        for future in done:
+            if future.exception() is not None:
+                raise future.exception()  # type: ignore[misc]
+        return [f.result() for f in futures]
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)  # 有一批失敗（多半是額度或認證）：排隊中的不必再啟動、白花額度
 
 
 def _candidates(con: psycopg.Connection, ids: list[int], stamp: str) -> dict[int, list[dict]]:
@@ -184,9 +197,9 @@ def _candidates(con: psycopg.Connection, ids: list[int], stamp: str) -> dict[int
                    FROM mentions pm JOIN mentions m ON m.key=pm.key JOIN events e ON e.id=m.event JOIN items i ON i.uid=e.uid
                    WHERE pm.event=p.id AND e.uid != p.uid AND e.date >= %s
                      AND (e.date < %s OR (e.date = %s AND e.id < p.id))
-                   GROUP BY e.id, i.uid ORDER BY shared DESC, e.date DESC LIMIT %s) c
+                   GROUP BY e.id, i.uid ORDER BY shared DESC, e.date DESC, e.id DESC LIMIT %s) c
                WHERE p.id = ANY(%s)
-               ORDER BY p.id, c.shared DESC, c.date DESC""", (since, stamp, stamp, CANDIDATES, ids)):
+               ORDER BY p.id, c.shared DESC, c.date DESC, c.id DESC""", (since, stamp, stamp, CANDIDATES, ids)):
         out.setdefault(eid, []).append({"id": cid, "date": day, "summary": summary, "source": source})
     return out
 

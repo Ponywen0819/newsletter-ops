@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
@@ -25,6 +26,7 @@ TZ = tz()
 RUN_ID_ENV = "NEWSLETTER_RUN_ID"  # worker 每次執行設一個，各步驟的紀錄才分得開
 STAGES = ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
 COST_STAGES = ("claude", "search", "kg_extract", "kg_relate")  # 有 total_cost_usd 的階段（只有 SDK 路線）
+_WRITE_LOCK = threading.Lock()  # 同一個程序裡多個執行緒（KG 的各批同時問）各寫一行，不能交錯
 TRANSCRIPTS = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(ROOT))
 
 
@@ -47,9 +49,10 @@ def record(stage: str, **fields) -> None:
            "label": os.environ.get("NEWSLETTER_RUN_LABEL", "prod"), **fields}
     if run_id := os.environ.get(RUN_ID_ENV):
         row["run_id"] = run_id
+    line = json.dumps(row, ensure_ascii=False) + "\n"
     METRICS_DIR.mkdir(parents=True, exist_ok=True)
-    with (METRICS_DIR / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    with _WRITE_LOCK, (METRICS_DIR / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(line)
     if "seconds" in fields:
         print(f"[metrics] {stage} {fields['seconds']}s", file=sys.stderr)
 
@@ -176,10 +179,10 @@ def split_runs(rows: list[dict]) -> list[dict[str, dict]]:
     return runs
 
 
-def read_day_rows(root: Path, day: date | str) -> list[dict]:
-    """讀取 root/logs/metrics/<day>.jsonl；容忍不存在與寫到一半的殘缺 JSON 行。"""
+def read_day_rows(metrics_dir: Path, day: date | str) -> list[dict]:
+    """讀取 <metrics_dir>/<day>.jsonl（record 寫的是 METRICS_DIR）；容忍不存在與寫到一半的殘缺 JSON 行。"""
     try:
-        lines = (root / "logs" / "metrics" / f"{day}.jsonl").read_text(encoding="utf-8").splitlines()
+        lines = (metrics_dir / f"{day}.jsonl").read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
     rows = []
@@ -193,8 +196,14 @@ def read_day_rows(root: Path, day: date | str) -> list[dict]:
     return rows
 
 
-def summarize_run(day: date | str, run: dict[str, dict]) -> dict:
-    """單次執行的結構化彙總（CLI summary 與 /api/ops/metrics 共用）。"""
+def _number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def summarize_run(day: date | str, run: dict[str, dict], stages: tuple[str, ...] = STAGES) -> dict:
+    """單次執行的結構化彙總（CLI summary 與 /api/ops/metrics 共用）。run 不能是空的（split_runs 不會切出空的）。"""
+    if not run:
+        raise ValueError("run 不能是空的")
     first = min(run.values(), key=lambda r: r["ts"])
     claude, pipeline = run.get("claude", {}), run.get("pipeline")
     tok = claude.get("tokens", {})
@@ -205,7 +214,7 @@ def summarize_run(day: date | str, run: dict[str, dict]) -> dict:
         "label": first.get("label", "prod"),
         "trigger": (pipeline or {}).get("trigger"),
         "result": None if pipeline is None else {"exit_code": pipeline.get("exit_code"), "step": pipeline.get("step")},
-        "seconds": {s: run[s]["seconds"] for s in STAGES if isinstance(run.get(s, {}).get("seconds"), (int, float))},
+        "seconds": {s: run[s]["seconds"] for s in stages if _number(run.get(s, {}).get("seconds"))},
         "tokens": {"input": tok.get("input", 0) + tok.get("cache_write", 0) + tok.get("cache_read", 0),
                    "output": tok.get("output", 0)} if tok else None,
         "turns": claude.get("api_turns"),
@@ -224,7 +233,7 @@ def cmd_summary(argv: list[str]) -> int:
     print("-" * len(header))
     for n in range(days - 1, -1, -1):
         day = today - timedelta(days=n)
-        rows = read_day_rows(ROOT, day)
+        rows = read_day_rows(METRICS_DIR, day)
         if not show_all:
             rows = [r for r in rows if r.get("label", "prod") == "prod"]  # 舊紀錄沒有 label，當 prod
         for run in split_runs(rows):
@@ -234,7 +243,7 @@ def cmd_summary(argv: list[str]) -> int:
 
 
 def summary_line(day: date | str, run: dict[str, dict], stages: tuple[str, ...] = STAGES) -> str:
-    s = summarize_run(day, run)
+    s = summarize_run(day, run, stages)
     c, cov, sy = run.get("claude", {}), run.get("coverage", {}), run.get("search_yield", {})
     tok = s["tokens"] or {"input": 0, "output": 0}
     top = ", ".join(f"{k}×{v['calls']}({v['seconds']:.0f}s)" for k, v in list(c.get("tools", {}).items())[:3])

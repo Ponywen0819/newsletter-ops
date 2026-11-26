@@ -60,3 +60,50 @@ def test_reports_cache_sees_changes(tmp_path):
 
     report.unlink()
     assert reports.list_payload() == {"reports": []}
+
+
+def test_file_cache_atomic_replace_same_size(tmp_path):
+    """atomic.write_text 式的換檔（新檔、os.replace）大小相同、時間戳又在同一個粒度內：靠 inode 認得出來。"""
+    path = tmp_path / "a.json"
+    path.write_text("v1", encoding="utf-8")
+    cache = FileCache(lambda p: p.read_text(encoding="utf-8"))
+    assert cache.get(path) == "v1"
+    st = path.stat()
+    fresh = tmp_path / "a.json.tmp"
+    fresh.write_text("v2", encoding="utf-8")
+    os.utime(fresh, ns=(st.st_atime_ns, st.st_mtime_ns))  # 刻意做成同樣的大小與修改時間
+    os.replace(fresh, path)
+    assert cache.get(path) == "v2"
+
+
+def test_file_cache_evicts_deleted(tmp_path):
+    path = tmp_path / "a"
+    path.write_text("a", encoding="utf-8")
+    cache = FileCache(lambda p: p.read_text(encoding="utf-8"))
+    cache.get(path)
+    path.unlink()
+    with pytest.raises(FileNotFoundError):
+        cache.get(path)
+    assert path not in cache._entries  # 刪掉的檔案不留在記憶體
+
+
+def test_curated_read_error_not_cached(tmp_path, monkeypatch):
+    """讀 curated 暫時失敗（OSError）不能把「沒有資料」快取起來；檔案沒變、下次讀得到就要拿到。"""
+    from pathlib import Path
+
+    (tmp_path / "data" / "curated").mkdir(parents=True)
+    curated = tmp_path / "data" / "curated" / "2026-01-02.json"
+    curated.write_text('{"items": [{"uid": "aaaaaaaaaaaaaaaa", "title": "T", "fulltext": "很長"}]}', encoding="utf-8")
+    reports = Reports(tmp_path, today=lambda: "2026-01-02")
+    real = Path.read_text
+    fail = {"on": True}
+
+    def flaky(self, *a, **k):
+        if fail["on"] and self == curated:
+            raise PermissionError("busy")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    assert reports._curated_item("2026-01-02", "aaaaaaaaaaaaaaaa") == {}
+    fail["on"] = False
+    assert reports._curated_item("2026-01-02", "aaaaaaaaaaaaaaaa") == {"title": "T"}  # 不留原文

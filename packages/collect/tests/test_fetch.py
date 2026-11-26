@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 import pytest
 
 from newsletter_collect.fetch import (
-    Item, http_get, fetch_all, parse_feed, retryable, source_host, stale_warning, wait_seconds,
+    Item, clean_html, http_get, fetch_all, page_getter, parse_date, parse_feed, retryable, run_by_host, source_host,
+    stale_warning, wait_seconds,
 )
 
 CFG = {"delay_seconds": 1.0, "domain_delay_seconds": {"export.arxiv.org": 3.0}}
@@ -94,3 +95,37 @@ def test_skip_pattern():
            b"</channel></rss>")
     assert [i.title for i in parse_feed(rss, {"name": "s", "skip": r"^Watch:|/videos/"}, 10)] == ["Real news"]
     assert len(parse_feed(rss, {"name": "s"}, 10)) == 3
+
+
+def test_page_getter(monkeypatch):
+    """抓網頁：不重試、逾時 15 秒（可改）、壞掉的 UTF-8 不丟例外。"""
+    from newsletter_collect import fetch
+
+    seen = {}
+
+    def fake(url, cfg):
+        seen.update(cfg, url=url)
+        return b"ok \xff"
+    monkeypatch.setattr(fetch, "http_get", fake)
+    get = page_getter({"request": {"retries": 3, "timeout": 25, "user_agent": "ua"}})
+    assert get("https://a.example/x") == "ok \ufffd"
+    assert seen == {"retries": 0, "timeout": 15, "user_agent": "ua", "url": "https://a.example/x"}
+    page_getter({}, timeout=5)("https://b")
+    assert seen["timeout"] == 5
+
+
+def test_run_by_host():
+    """沒有工作不出錯；同一網域依序、不同網域各自做。"""
+    run_by_host([], lambda j: "h", lambda j: None, {})
+    done: list[str] = []
+    run_by_host(["a1", "b1", "a2"], lambda j: j[0], done.append, {"delay_seconds": 0})
+    assert sorted(done) == ["a1", "a2", "b1"] and done.index("a1") < done.index("a2")
+
+
+def test_parse_date_and_clean_html():
+    assert parse_date("Mon, 05 Oct 2026 08:00:00 GMT") == "2026-10-05T08:00:00+00:00"
+    assert parse_date("2026-10-05T08:00:00Z") == "2026-10-05T08:00:00+00:00"
+    assert parse_date("2026-10-05T08:00:00") == "2026-10-05T08:00:00+00:00"  # 沒有時區當 UTC
+    assert parse_date("不是日期") is None and parse_date(None) is None
+    assert clean_html("<p>a&amp;b <script>x()</script> c</p>") == "a&b c"
+    assert clean_html("x" * 50, limit=10) == "x" * 10

@@ -41,24 +41,40 @@ class FileCache(Generic[T]):
     def __init__(self, load: Callable[[Path], T], limit: int | None = None):
         self._load = load
         self._limit = limit
-        self._entries: OrderedDict[Path, tuple[tuple[int, int], T]] = OrderedDict()
+        self._entries: OrderedDict[Path, tuple[tuple[int, int, int], T]] = OrderedDict()
         self._mu = threading.Lock()
 
     def get(self, path: Path) -> T:
-        st = path.stat()
-        signature = (st.st_size, st.st_mtime_ns)
+        try:
+            signature = _signature(path)
+        except FileNotFoundError:
+            with self._mu:
+                self._entries.pop(path, None)
+            raise
         with self._mu:
             hit = self._entries.get(path)
             if hit is not None and hit[0] == signature:
                 self._entries.move_to_end(path)
                 return hit[1]
         value = self._load(path)  # 不在鎖裡：讀大檔時不擋別的請求；同時兩個請求各讀一次也無妨
+        try:
+            unchanged = _signature(path) == signature
+        except FileNotFoundError:
+            unchanged = False
+        if not unchanged:  # 讀的期間檔案被換掉：這次的結果照用，但不存（簽章與內容可能對不上）
+            return value
         with self._mu:
             self._entries[path] = (signature, value)
             self._entries.move_to_end(path)
             while self._limit is not None and len(self._entries) > self._limit:
                 self._entries.popitem(last=False)
         return value
+
+
+def _signature(path: Path) -> tuple[int, int, int]:
+    """大小、修改時間、inode：atomic.write_text 換檔時 inode 一定變，同大小、時間戳粒度內的覆寫也認得出來。"""
+    st = path.stat()
+    return st.st_size, st.st_mtime_ns, st.st_ino
 
 
 @dataclass(frozen=True)
@@ -92,8 +108,9 @@ def _curated_index(path: Path) -> dict[str, dict]:
     """uid → 回饋紀錄要的欄位（不留原文，整份 curated 有數百 KB）。"""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except json.JSONDecodeError:  # 壞掉的檔案：檔案沒變就一直是壞的，可以快取
         return {}
+    # 讀檔失敗（OSError）往外拋，不要把暫時的錯誤當成「沒有資料」存起來；_curated_item 接住
     found = [*payload.get("items", []), *payload.get("near_misses", [])]  # writer 可能撈回 near_misses
     index: dict[str, dict] = {}
     for item in found:
@@ -129,10 +146,9 @@ class Reports:
         stats = []
         for date in dates:
             try:
-                st = self._report_path(date).stat()
+                stats.append((date, *_signature(self._report_path(date))))
             except OSError:
                 continue
-            stats.append((date, st.st_size, st.st_mtime_ns))
         signature = tuple(stats)
         cached_sig, cached = self._uid_index
         if signature == cached_sig:
@@ -245,7 +261,7 @@ class Reports:
     def _curated_item(self, date: str, uid: str) -> dict:
         try:
             return self._curated.get(self.root / "data" / "curated" / f"{date}.json").get(uid, {})
-        except FileNotFoundError:
+        except OSError:
             return {}
 
     def feedback_target(self, uid: str) -> dict:

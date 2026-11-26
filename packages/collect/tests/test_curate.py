@@ -174,3 +174,29 @@ def test_save_seen_interrupted(monkeypatch):
 def test_corrupt_seen(bad):
     mod.STATE.write_text(bad, encoding="utf-8")
     assert load_seen() == {}
+
+
+def test_dedupe_by_title_similarity():
+    """標題相似度 ≥ 0.88 合併、以下保留；剪枝不能改變結果（字元相同但順序打亂的標題上界是 1.0，實際很低，不能合併）。"""
+    from difflib import SequenceMatcher
+
+    def item(uid, title, rank, source="s"):
+        return {"uid": uid, "url": f"https://{uid}", "source": source, "topic": "t", "title": title, "summary": "", "rank": rank}
+
+    titles = ["OpenAI releases GPT-6 with longer context", "OpenAI releases GPT-6 with longer context!",  # 幾乎一樣
+              "txetnoc regnol htiw 6-TPG sesaeler IAnepO",  # 同一組字元、順序全反：quick_ratio 1.0，ratio 很低
+              "Nvidia earnings beat estimates", "Nvidia earnings beat estimate", "Totally different headline"]
+    batch = [item(f"u{n}", t, 10 - n, source=f"s{n}") for n, t in enumerate(titles)]
+    got = dedupe([dict(i) for i in batch])
+    assert [i["uid"] for i in got] == ["u0", "u2", "u3", "u5"]
+    assert got[0]["also_in"] == ["s1"] and got[2]["also_in"] == ["s4"]
+
+    # 與不剪枝的直接比較逐一相同
+    def naive(items, threshold=0.88):
+        kept = []
+        for it in sorted(items, key=lambda i: i["rank"], reverse=True):
+            norm = mod.norm_title(it["title"])
+            if not any(SequenceMatcher(None, norm, mod.norm_title(k["title"])).ratio() >= threshold for k in kept):
+                kept.append(it)
+        return [i["uid"] for i in kept]
+    assert naive([dict(i) for i in batch]) == [i["uid"] for i in got]

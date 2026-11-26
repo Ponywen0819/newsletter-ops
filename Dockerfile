@@ -21,15 +21,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /usr/local/bin/
 ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 WORKDIR /src
 COPY .python-version ./
+
+# 各自只 COPY 自己會用到的模組的 pyproject.toml／uv.lock：改 worker 那邊的依賴不會讓 web 的依賴層失效，反之亦然
+FROM build AS build-web
 COPY packages/shared/pyproject.toml packages/shared/uv.lock ./packages/shared/
 COPY packages/llm/pyproject.toml packages/llm/uv.lock ./packages/llm/
-COPY packages/collect/pyproject.toml packages/collect/uv.lock ./packages/collect/
-COPY packages/writer/pyproject.toml packages/writer/uv.lock ./packages/writer/
-COPY packages/notify/pyproject.toml packages/notify/uv.lock ./packages/notify/
-COPY apps/worker/pyproject.toml apps/worker/uv.lock ./apps/worker/
 COPY apps/web-server/pyproject.toml apps/web-server/uv.lock ./apps/web-server/
-
-FROM build AS build-web
 # 先只裝第三方依賴，讓只動程式碼時這層走快取
 RUN UV_PROJECT_ENVIRONMENT=/opt/web-server uv sync --locked --no-dev --no-editable --no-install-project --no-install-local \
       --project apps/web-server
@@ -40,6 +37,12 @@ COPY apps/web-server ./apps/web-server
 RUN UV_PROJECT_ENVIRONMENT=/opt/web-server uv sync --locked --no-dev --no-editable --project apps/web-server
 
 FROM build AS build-worker
+COPY packages/shared/pyproject.toml packages/shared/uv.lock ./packages/shared/
+COPY packages/llm/pyproject.toml packages/llm/uv.lock ./packages/llm/
+COPY packages/collect/pyproject.toml packages/collect/uv.lock ./packages/collect/
+COPY packages/writer/pyproject.toml packages/writer/uv.lock ./packages/writer/
+COPY packages/notify/pyproject.toml packages/notify/uv.lock ./packages/notify/
+COPY apps/worker/pyproject.toml apps/worker/uv.lock ./apps/worker/
 RUN UV_PROJECT_ENVIRONMENT=/opt/worker uv sync --locked --no-dev --no-editable --no-install-project --no-install-local \
       --project apps/worker
 COPY packages ./packages
@@ -64,13 +67,13 @@ ENTRYPOINT ["/app/docker/entrypoint.sh"]
 FROM base AS web
 COPY --from=build-web /opt/web-server /opt/web-server
 COPY --from=ui --chown=app:app /web/dist ./apps/web-ui/dist
-COPY --chown=app:app config ./config
 ENV PATH="/opt/web-server/bin:${PATH}"
 CMD ["newsletter-web", "--host", "127.0.0.1", "--port", "8787"]
+COPY --chown=app:app config ./config
 
 FROM base AS worker
 COPY --from=build-worker /opt/worker /opt/worker
 COPY --chown=app:app .claude ./.claude
-COPY --chown=app:app config ./config
 ENV PATH="/opt/worker/bin:${PATH}"
 CMD ["worker", "--port", "8790"]
+COPY --chown=app:app config ./config

@@ -98,8 +98,8 @@ def test_read_day_rows(tmp_path):
         json.dumps(r2),
         '{"ts": "2026-01-01T08:05',
     ]), encoding="utf-8")
-    assert read_day_rows(tmp_path, "2026-01-01") == [r1, r2]
-    assert read_day_rows(tmp_path, date(2026, 1, 1)) == [r1, r2]
+    assert read_day_rows(metrics_dir, "2026-01-01") == [r1, r2]
+    assert read_day_rows(metrics_dir, date(2026, 1, 1)) == [r1, r2]
 
 
 def test_summarize_run():
@@ -140,3 +140,37 @@ def test_summarize_run():
         "usd": None,
         "items": None,
     }
+
+
+def test_summarize_run_custom_stages_and_guards():
+    """summary_line 傳自己的 stages 時秒數照印；bool 不算秒數；空的 run 明確報錯。"""
+    run = {"cluster": {"ts": "2026-01-01T08:00:00+08:00", "seconds": 3.0},
+           "fetch": {"ts": "2026-01-01T08:00:01+08:00", "seconds": True}}
+    assert summarize_run("2026-01-01", run, ("cluster", "fetch"))["seconds"] == {"cluster": 3.0}
+    assert "   3.0" in summary_line("2026-01-01", run, ("cluster",))
+    try:
+        summarize_run("2026-01-01", {})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("空的 run 應該報錯")
+
+
+def test_record_is_thread_safe(tmp_path, monkeypatch):
+    """KG 的各批同時寫紀錄：每一行都要是完整的 JSON，一筆都不能少。"""
+    import threading
+
+    from newsletter_shared import metrics
+
+    monkeypatch.setattr(metrics, "METRICS_DIR", tmp_path)
+    monkeypatch.setattr(metrics, "enabled", lambda: True)
+    payload = "x" * 5000  # 比一次 write 的緩衝區大，沒有鎖時容易交錯
+    threads = [threading.Thread(target=lambda n=n: [metrics.record("kg_extract", n=n, blob=payload) for _ in range(20)])
+               for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    (path,) = tmp_path.glob("*.jsonl")
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 80 and all(r["blob"] == payload for r in rows)
