@@ -289,9 +289,11 @@ def test_ask_all_stops_queued_batches_on_failure(monkeypatch):
         time.sleep(0.2)  # 讓失敗那條執行緒有機會去拿下一批
         release.set()
 
-    threading.Thread(target=free_slow).start()
+    helper = threading.Thread(target=free_slow)
+    helper.start()
     with pytest.raises(RuntimeError, match="quota"):
         kg.ask_all(ask, ["slow", "boom", "later1", "later2"], "kg_extract")
+    helper.join(timeout=2)
     assert sorted(started) == ["boom", "slow"]  # 後面兩批一個都沒啟動
 
 

@@ -201,7 +201,7 @@ def ask_all(ask: Ask, prompts: list[str], stage: str) -> list[dict]:
     with ThreadPoolExecutor(max_workers=PARALLEL_ASKS) as pool:
         futures = [pool.submit(one, p) for p in prompts]
         wait(futures, return_when=FIRST_EXCEPTION)
-        for future in futures:  # 照批的順序找第一個失敗的，例外是哪一個才固定
+        for future in futures:  # 已經結束的批裡，照批的順序取第一個失敗的
             if future.done() and future.exception() is not None:
                 aborted.set()
                 raise future.exception()  # type: ignore[misc]

@@ -49,6 +49,8 @@ export function TodayPage() {
   // 重問期間、或重問遇到暫時性的錯誤（網路瞬斷）時照舊顯示上一次的結果：不閃「載入中」，也不把正在讀的舊晨報換成錯誤頁
   const [kept, setKept] = useState(fetched.data)
   if (fetched.data && fetched.data !== kept) setKept(fetched.data)
+  // 確定的錯誤（500、登入逾時）：丟掉舊的，按「再試一次」時才不會先閃回舊晨報
+  if (fetched.error && kept && !transient(fetched.error)) setKept(undefined)
   const loadedAt = useRef(0)
   useEffect(() => {
     if (fetched.data) loadedAt.current = Date.now()

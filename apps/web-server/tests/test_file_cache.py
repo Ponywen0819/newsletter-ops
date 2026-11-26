@@ -125,3 +125,24 @@ def test_file_cache_replaced_while_loading(tmp_path):
     assert cache.get(path) == "v1"
     assert path not in cache._entries  # 簽章與內容可能對不上：不存
     assert cache.get(path) == "v2"
+
+
+def test_file_cache_recheck_oserror_still_returns(tmp_path, monkeypatch):
+    """讀完後確認簽章時遇到 PermissionError（Windows 換檔的一瞬間）：已讀到的照樣回傳，只是不存。"""
+    from newsletter_web_server import reports as mod
+
+    path = tmp_path / "a"
+    path.write_text("v1", encoding="utf-8")
+    real = mod._signature
+    calls = {"n": 0}
+
+    def flaky(p):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise PermissionError("busy")
+        return real(p)
+
+    monkeypatch.setattr(mod, "_signature", flaky)
+    cache = FileCache(lambda p: p.read_text(encoding="utf-8"))
+    assert cache.get(path) == "v1"
+    assert path not in cache._entries

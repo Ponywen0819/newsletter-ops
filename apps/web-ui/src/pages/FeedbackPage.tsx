@@ -33,10 +33,11 @@ export function FeedbackPage() {
   const [failed, setFailed] = useState(false)
   // 確認過一次（全部寫入成功）之後就一直是「目前的標記＋改標按鈕」；之後改標失敗也留在這裡，不退回確認句
   const [confirmed, setConfirmed] = useState(false)
-  const [seenVote, setSeenVote] = useState(vote)
-  if (seenVote !== vote) {
-    // 同一則換了 ?v=（上一頁、站內連結）：頁面不會重掛，要自己回到確認的流程
-    setSeenVote(vote)
+  const [seen, setSeen] = useState({ param, vote })
+  if (seen.param !== param || seen.vote !== vote) {
+    // 換了 ?v= 或換了一則（上一頁、站內連結）：頁面不會重掛，要自己回到確認的流程；換則時剛存的標記也不算
+    if (seen.param !== param) setSaved({})
+    setSeen({ param, vote })
     setConfirmed(false)
     setFailed(false)
   }

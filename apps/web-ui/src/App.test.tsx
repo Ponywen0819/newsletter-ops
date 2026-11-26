@@ -138,6 +138,20 @@ describe('路由', () => {
     expect(found).toEqual(link ? [link] : [])
   })
 
+  it('/ 開著過夜的 App：回到前景時上次載入超過 10 分鐘就重問，換成今天的晨報', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let day = '2026-10-02'
+    const net = open('/', { 'GET /api/today': () => ({ json: { date: day, latest: day, report, marks: {} } }) })
+    await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange'))) // 剛載入：不重問
+    expect(net.calls.filter((c) => c.path === '/api/today')).toHaveLength(1)
+    day = '2026-10-03'
+    await act(() => vi.advanceTimersByTimeAsync(11 * 60_000))
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange')))
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-10-03'))
+    vi.useRealTimers()
+  })
+
   it('/ 讀取失敗：可以再試一次', async () => {
     let fail = true
     open('/', {
