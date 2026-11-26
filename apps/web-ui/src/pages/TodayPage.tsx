@@ -19,21 +19,20 @@ function runNote(run: RunRecord | null | undefined): { title: string; text: stri
   if (!run.finished_at) return { title: '晨報正在產生', text: '完成後這一頁會自己換成新的晨報。' }
   if (!run.exit_code) return null
   const step = run.step ? `在「${STEP[run.step] ?? run.step}」這步` : ''
-  const next =
-    run.trigger === 'retry' || NO_RETRY.has(run.exit_code)
-      ? '不會自動重跑，修好後在主機上補跑。'
-      : '30 分鐘後會自動重跑一次。'
+  const next = noRetry(run) ? '不會自動重跑，修好後在主機上補跑。' : '30 分鐘後會自動重跑一次。'
   return { title: '晨報產生失敗', text: `${step}失敗（exit ${run.exit_code}），${next}` }
 }
 
-/** 執行失敗、不會自動重跑時：本機（能開維運頁）直接給重跑的入口，遠端只說要在主機上處理。 */
+const noRetry = (run: RunRecord) => run.trigger === 'retry' || NO_RETRY.has(run.exit_code ?? 0)
+
+/** 執行失敗、不會自動重跑時：本機直接給處理的入口（認證失敗去授權頁，其他去維運頁重跑），遠端只說要在主機上處理。 */
 function FixHint({ run }: { run: RunRecord | null | undefined }) {
   const local = useSession()?.local
-  if (!local || !run?.finished_at || !run.exit_code) return null
+  if (!local || !run?.finished_at || !run.exit_code || !noRetry(run)) return null
   return (
     <>
       {' '}
-      <Link to="/ops">到維運頁重跑</Link>
+      {run.exit_code === 5 ? <Link to="/auth">到授權頁處理</Link> : <Link to="/ops">到維運頁重跑</Link>}
     </>
   )
 }
@@ -42,22 +41,25 @@ function FixHint({ run }: { run: RunRecord | null | undefined }) {
 export function TodayPage() {
   const [attempt, setAttempt] = useState(0) // 「再試一次」與產生中的定時重問
   const fetched = useFetch(api.today, [useRecovered(), attempt])
-  // 重問期間照舊顯示上一次的結果，不要每分鐘閃一下「載入中」
+  // 重問期間、或重問失敗（網路瞬斷）時照舊顯示上一次的結果：不閃「載入中」，也不把正在讀的舊晨報換成錯誤頁
   const [kept, setKept] = useState(fetched.data)
   if (fetched.data && fetched.data !== kept) setKept(fetched.data)
-  const data = fetched.data ?? (fetched.loading ? kept : undefined)
-  const error = fetched.error
+  const data = fetched.data ?? kept
+  const error = data ? undefined : fetched.error
   const shown = data?.report ? data.date : data?.fallback?.date
   useDocumentTitle(shown ? `每日晨間簡報 ${shown}` : '每日晨間簡報')
 
-  // 晨報正在產生：每分鐘再問一次，好了就直接換上（裝成 App 時沒有重新整理鈕）；頁面在背景時不問
+  // 晨報正在產生：每分鐘再問一次，好了就直接換上（裝成 App 時沒有重新整理鈕）；頁面在背景時不問，回到前景馬上問
   const generating = !!data && !data.report && !!data.run && !data.run.finished_at
   useEffect(() => {
     if (!generating) return
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') setAttempt((n) => n + 1)
-    }, RECHECK_MS)
-    return () => window.clearInterval(timer)
+    const recheck = () => document.visibilityState === 'visible' && setAttempt((n) => n + 1)
+    const timer = window.setInterval(recheck, RECHECK_MS)
+    document.addEventListener('visibilitychange', recheck)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', recheck)
+    }
   }, [generating])
 
   if (error)

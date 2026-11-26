@@ -106,6 +106,7 @@ header nav a[aria-current='page'] {
 @media (pointer: coarse) {
   .theme-select {
     min-height: 44px;
+    font-size: 16px; /* iOS Safari 對小於 16px 的表單元件會自動放大頁面 */
   }
 }
 

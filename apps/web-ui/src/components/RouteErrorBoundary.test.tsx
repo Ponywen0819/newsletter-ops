@@ -39,6 +39,16 @@ describe('RouteErrorBoundary', () => {
     expect(screen.getByText('內容')).toBeInTheDocument()
   })
 
+  it('兩欄版面（reader）出錯：錯誤畫面放在 ReaderShell 裡，#content 還在', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(
+      <RouteErrorBoundary reader>
+        <Boom message="x" />
+      </RouteErrorBoundary>,
+    )
+    expect(document.getElementById('content')).toContainElement(screen.getByRole('heading', { name: '畫面出錯了' }))
+  })
+
   it('isChunkError 認得各瀏覽器的訊息', () => {
     expect(isChunkError(new TypeError('Failed to fetch dynamically imported module: x'))).toBe(true) // Chrome
     expect(isChunkError(new TypeError('error loading dynamically imported module: x'))).toBe(true) // Firefox

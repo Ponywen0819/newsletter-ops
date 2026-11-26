@@ -81,6 +81,31 @@ describe('路由', () => {
     vi.useRealTimers()
   })
 
+  it('/ 晨報正在產生、下面顯示最新一份：重問失敗（網路瞬斷）照舊顯示，不換成錯誤頁；回到前景馬上重問', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let mode: 'running' | 'down' | 'ready' = 'running'
+    const fallback = { date: '2026-10-02', report, marks: {}, prev: null, next: null }
+    const running = { trigger: 'schedule', started_at: 'a', finished_at: null, exit_code: null, step: null }
+    const net = open('/', {
+      'GET /api/today': () =>
+        mode === 'down'
+          ? { status: 500, json: { error: 'x' } }
+          : mode === 'ready'
+            ? { json: { date: '2026-10-03', latest: '2026-10-03', report, marks: {} } }
+            : { json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run: running } },
+    })
+    expect(await screen.findByText('2026-10-03 的晨報正在產生')).toBeInTheDocument()
+    mode = 'down'
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+    await waitFor(() => expect(net.calls.filter((c) => c.path === '/api/today')).toHaveLength(2))
+    expect(screen.getByText('2026-10-03 的晨報正在產生')).toBeInTheDocument() // 舊晨報與提示都還在
+    expect(screen.queryByRole('heading', { name: '讀取失敗' })).toBeNull()
+    mode = 'ready'
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange'))) // 回到前景：不必等滿一分鐘
+    await waitFor(() => expect(screen.queryByText('2026-10-03 的晨報正在產生')).toBeNull())
+    vi.useRealTimers()
+  })
+
   it('/ 讀取失敗：可以再試一次', async () => {
     let fail = true
     open('/', {
@@ -340,11 +365,11 @@ describe('版面由路由決定', () => {
         json: { q: 'a', results: [{ date: '2026-09-28', text: 'a 第一行' }, { date: '2026-09-28', text: 'a 第二行' }], truncated: false },
       }),
     })
-    const rows = await screen.findAllByRole('link', { name: /^2026-09-28a 第/ })
+    const rows = await screen.findAllByRole('link', { name: /^2026-09-28 a 第/ })
     expect(rows.map((a) => a.getAttribute('href'))).toEqual(['/reports/2026-09-28', '/reports/2026-09-28'])
     expect(rows[0]).not.toHaveAccessibleName(rows[1]!.textContent ?? '') // 同一天兩筆：名稱分得出來
     await userEvent.clear(screen.getByRole('searchbox')) // 刪光（含按輸入框裡的 ×）
-    expect(await screen.findByRole('link', { name: '2026-09-28某事發生' })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: '2026-09-28 某事發生' })).toBeInTheDocument()
     expect(screen.queryByText(/找到/)).not.toBeInTheDocument()
     expect(screen.getByRole('searchbox')).toHaveFocus()
     await userEvent.type(screen.getByRole('searchbox'), 'a{Enter}') // 直接打下一個詞

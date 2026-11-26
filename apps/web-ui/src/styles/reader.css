@@ -13,11 +13,10 @@
   border-radius: 8px;
   font-size: var(--fs-list);
 }
+/* 維持 summary 預設的 list-item：瀏覽器的展開／收合三角形才會在（display:flex 會把它弄不見） */
 .mobile-toc summary {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 14px;
+  padding: 11px 14px; /* 一行字＋上下內距約 44px，手指點得到 */
+  line-height: 1.4;
   color: var(--heading);
   font-weight: 600;
   cursor: pointer;
@@ -150,10 +149,12 @@
   .reader-body > .unit:first-child > h2 {
     margin-top: 0;
   }
-  /* 點目錄／j／k 捲過去時，停在 sticky 標頭的下面，而不是被它蓋住 */
+}
+/* 點目錄／j／k 捲過去時停在 sticky 標頭的下面，而不是被它蓋住；標頭從 1024px 起就是 sticky（layout.css） */
+@media (min-width: 1024px) {
   .reader .unit,
   .reader .group-title {
-    scroll-margin-top: calc(var(--header-h) + 16px);
+    scroll-margin-top: calc(var(--header-h, 45px) + 16px);
   }
 }
 /* 點目錄時平順捲過去；系統設定「減少動態效果」的人不套用 */

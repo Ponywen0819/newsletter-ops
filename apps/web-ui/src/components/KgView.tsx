@@ -235,20 +235,18 @@ export function KgView({ graph, seeds = [], onFlagged = () => {} }: Props) {
   // 從下面的列表或關係選事件時，詳情在畫面外（手機上常常隔了好幾屏）：捲過去並把焦點移到標題。
   // 點圖上的節點時詳情就在圖下面，只在看不到時捲到剛好看得到，焦點不動
   const detailRef = useRef<HTMLElement>(null)
-  const reveal = useRef<'focus' | 'nearest' | null>(null)
+  // 每次點選都是一個新的要求（seq 遞增）：再點一次目前選中的那則（例如在列表裡）也會捲過去
+  const [reveal, setReveal] = useState<{ how: 'focus' | 'nearest'; seq: number } | null>(null)
   const pick = (how: 'focus' | 'nearest') => (id: number) => {
-    reveal.current = how
     setPicked(id)
+    setReveal((r) => ({ how, seq: (r?.seq ?? 0) + 1 }))
   }
   useEffect(() => {
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- selected 換了（換成另一個事件）才捲、移焦點
-    const how = reveal.current
     const detail = detailRef.current
-    reveal.current = null
-    if (!how || !detail) return
-    detail.scrollIntoView?.({ block: how === 'focus' ? 'start' : 'nearest' })
-    if (how === 'focus') detail.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true })
-  }, [selected])
+    if (!reveal || !detail) return
+    detail.scrollIntoView?.({ block: reveal.how === 'focus' ? 'start' : 'nearest' })
+    if (reveal.how === 'focus') detail.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true })
+  }, [reveal])
 
   return (
     <div className="kg">
@@ -273,8 +271,7 @@ export function KgView({ graph, seeds = [], onFlagged = () => {} }: Props) {
           {listed.map((e) => (
             <li key={e.id}>
               <button type="button" className="kg-linkish" aria-current={e.id === selected || undefined} onClick={() => pick('focus')(e.id)}>
-                <span className="kg-list-date">{e.date}</span>
-                {e.summary}
+                <span className="kg-list-date">{e.date}</span> {e.summary}
               </button>
               <StatusBadge status={e.status} />
             </li>

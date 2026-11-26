@@ -1,4 +1,4 @@
-import { cleanup, render as rtlRender, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render as rtlRender, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { act, type ReactElement } from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -177,6 +177,18 @@ describe('ReportView 筆電新聞目錄', () => {
     expect(toc.open).toBe(false)
     expect(scrolledTo()).toEqual(['s-sources'])
     expect(window.location.hash).toBe('#s-sources')
+  })
+
+  it('窄螢幕目錄：跳過去後焦點在那一則（不會困在收起來的目錄裡）；帶修飾鍵（新分頁）不收', async () => {
+    setup()
+    const toc = document.querySelector<HTMLDetailsElement>('details.mobile-toc')!
+    toc.open = true
+    const link = within(toc).getByRole('link', { name: '資料來源', hidden: true })
+    fireEvent.click(link, { ctrlKey: true }) // 新分頁開：照瀏覽器的預設，不攔、不收
+    expect(toc.open).toBe(true)
+    await userEvent.click(link)
+    expect(toc.open).toBe(false)
+    expect(document.activeElement).toBe(document.querySelector('[data-unit="s-sources"]'))
   })
 
   it('內文一整頁依序顯示：所有單位都在、沒有翻頁按鈕；目錄預設標在第一則', () => {

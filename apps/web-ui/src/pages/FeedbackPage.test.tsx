@@ -87,6 +87,28 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
     expect(screen.queryByText(/已記下/)).toBeNull()
   })
 
+  it('確認後再改標失敗：留在改標的畫面（按鈕都還在、說明失敗），不退回確認句', async () => {
+    let fail = false
+    open('?v=%2B', { 'POST /api/feedback': (body) => (fail ? { status: 500, json: { error: 'x' } } : { json: body }) })
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 有用' }))
+    expect(await screen.findByText('已記下 有用。')).toHaveFocus() // 確認鈕不見了，焦點移到結果
+    fail = true
+    await userEvent.click(screen.getByRole('button', { name: '取消標記' }))
+    expect(await screen.findByText(/儲存失敗/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '改成 沒用' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '取消標記' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /確認/ })).toBeNull()
+  })
+
+  it('讀取失敗：有「再試一次」（裝成 App 時沒有重新整理鈕）', async () => {
+    let down = true
+    open('?v=-', { [`GET /api/feedback/${UID}`]: () => (down ? { status: 500, json: { error: '壞了' } } : { json: target() }) })
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    down = false
+    await userEvent.click(screen.getByRole('button', { name: '再試一次' }))
+    expect(await screen.findByRole('button', { name: '確認標為 沒用' })).toBeInTheDocument()
+  })
+
   it('沒有 v、v 不認得：提示連結不完整，不去讀資料也不寫入', async () => {
     for (const query of ['', '?v=x']) {
       document.body.innerHTML = ''
@@ -109,7 +131,7 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
 
   it('連不上伺服器：說連不上，不是瀏覽器的英文訊息', async () => {
     open('?v=-', { [`GET /api/feedback/${UID}`]: () => Promise.reject(new TypeError('Failed to fetch')) })
-    expect(await screen.findByText('連不上伺服器，確認網路後重新整理這一頁。')).toBeInTheDocument()
+    expect(await screen.findByText('連不上伺服器，確認網路後再試一次。')).toBeInTheDocument()
   })
 })
 

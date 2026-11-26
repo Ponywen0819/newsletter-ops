@@ -80,7 +80,7 @@ function BlockView({ block, votes }: { block: Block; votes: Votes }) {
 function UnitView({ unit, sources, votes }: { unit: Unit; sources: Report['sources']; votes: Votes }) {
   // 用 data-unit 而不是 id：自己捲動才能避開 sticky 標頭
   return (
-    <section className="unit" data-unit={unit.id}>
+    <section className="unit" data-unit={unit.id} tabIndex={-1}>
       {unit.kind === 'sources' ? (
         <>
           <h2>資料來源</h2>
@@ -168,8 +168,9 @@ function MobileToc({ groups, onLinkClick }: { groups: NavGroup[]; onLinkClick: L
   const jump: LinkClick = (id) => {
     const go = onLinkClick(id)
     return (e) => {
-      if (ref.current) ref.current.open = false
       go(e)
+      // 帶修飾鍵（新分頁開）時照舊、目錄不收；真的跳過去了才收起來（焦點已由 goTo 移到那一則）
+      if (e.defaultPrevented && ref.current) ref.current.open = false
     }
   }
   return (
@@ -206,7 +207,7 @@ const ReportBody = memo(function ReportBody({
       {grouped.groups.map((group, gi) => (
         <div key={gi} className="group">
           {group.heading && (
-            <h2 className="group-title">
+            <h2 className="group-title" tabIndex={-1}>
               <Inline nodes={group.heading.inline} />
             </h2>
           )}
@@ -264,7 +265,10 @@ export function ReportView({
     ],
     [grouped],
   )
-  const toc = useMemo(() => <MobileToc groups={navGroups} onLinkClick={onLinkClick} />, [navGroups, onLinkClick])
+  const toc = useMemo(
+    () => (navGroups.some((g) => g.units.length) ? <MobileToc groups={navGroups} onLinkClick={onLinkClick} /> : null),
+    [navGroups, onLinkClick],
+  )
 
   return (
     <article ref={articleRef} className="report">

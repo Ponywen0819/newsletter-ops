@@ -25,6 +25,8 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
       setActiveId(id)
       lockUntil.current = Date.now() + 800
       target.scrollIntoView?.({ block: 'start', behavior: instant ? 'instant' : 'auto' })
+      // 焦點跟著過去：鍵盤與螢幕閱讀器接著讀的是那一則，而不是停在目錄（手機的目錄還會收起來）
+      if (!instant) (target as HTMLElement).focus?.({ preventScroll: true })
     },
     [rootRef],
   )

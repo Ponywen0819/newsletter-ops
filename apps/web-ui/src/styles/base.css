@@ -106,7 +106,7 @@ body {
 
 /* 「跳到主要內容」：平常在畫面外，Tab 到它才出現在左上角 */
 .skip-link {
-  position: absolute;
+  position: fixed;
   top: 8px;
   left: 8px;
   z-index: 100;
@@ -116,7 +116,11 @@ body {
   background: var(--card);
   color: var(--link);
   font-size: var(--fs-body);
+  text-decoration: none;
   transform: translateY(-200%);
+}
+.skip-link:focus-visible {
+  outline: none; /* 本身已經有 2px 的框 */
 }
 .skip-link:focus {
   transform: none;

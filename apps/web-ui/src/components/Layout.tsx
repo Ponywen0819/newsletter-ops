@@ -119,7 +119,7 @@ export function Layout({ variant }: { variant: 'reader' | 'single' }) {
       <div className="page">
         {/* 兩欄版面的內文欄由 ReaderShell 帶 id；單欄就是整張卡片 */}
         <main className="card" id={variant === 'single' ? CONTENT_ID : undefined} tabIndex={variant === 'single' ? -1 : undefined}>
-          <RouteErrorBoundary key={pathname}>
+          <RouteErrorBoundary key={pathname} reader={variant === 'reader'}>
             <Outlet />
           </RouteErrorBoundary>
         </main>

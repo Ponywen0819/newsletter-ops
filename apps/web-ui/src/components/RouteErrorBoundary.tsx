@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Notice } from './Notice'
+import { ReaderShell } from './ReaderShell'
 
 // 各瀏覽器載入分包（lazy 的頁面）失敗時的訊息：Chrome、Firefox、Safari
 const CHUNK_FAILED = /dynamically imported module|Importing a module script failed|error loading dynamically imported module/i
@@ -28,7 +29,7 @@ function Failed({ error }: { error: unknown }) {
 }
 
 /** 頁面（含 lazy 載入）出錯時只換掉內容區，頁首與導覽照常能用。Layout 以路徑當 key，換頁就重來。 */
-export class RouteErrorBoundary extends Component<{ children: ReactNode }, { error: unknown }> {
+export class RouteErrorBoundary extends Component<{ children: ReactNode; reader?: boolean }, { error: unknown }> {
   state: { error: unknown } = { error: null }
 
   static getDerivedStateFromError(error: unknown) {
@@ -40,6 +41,9 @@ export class RouteErrorBoundary extends Component<{ children: ReactNode }, { err
   }
 
   render() {
-    return this.state.error == null ? this.props.children : <Failed error={this.state.error} />
+    if (this.state.error == null) return this.props.children
+    const failed = <Failed error={this.state.error} />
+    // 兩欄版面的 #content（跳到主要內容的目標）與外框都在 ReaderShell 裡
+    return this.props.reader ? <ReaderShell>{failed}</ReaderShell> : failed
   }
 }

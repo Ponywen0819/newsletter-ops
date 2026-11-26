@@ -1,4 +1,4 @@
-import { type ChangeEvent, useMemo, useRef, type FormEvent, type ReactNode } from 'react'
+import { type ChangeEvent, useEffect, useMemo, useRef, type FormEvent, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { Loading, Notice } from '../components/Notice'
@@ -13,8 +13,7 @@ function Row({ date, children }: { date: string; children: ReactNode }) {
   return (
     <li>
       <Link to={`/reports/${date}`}>
-        <span className="reports-date">{date}</span>
-        <span className="reports-text">{children}</span>
+        <span className="reports-date">{date}</span> <span className="reports-text">{children}</span>
       </Link>
     </li>
   )
@@ -38,6 +37,10 @@ function SearchBox({ q }: { q: string }) {
   const [, setParams] = useSearchParams()
   // 清空時整頁換回列表、輸入框跟著重建：帶著 focusSearch 回來，焦點留在框裡，可以直接打下一個詞
   const refocus = (useLocation().state as { focusSearch?: boolean } | null)?.focusSearch === true
+  // 用過就從 history 拿掉：之後從單日晨報按上一頁回來，不要又彈出鍵盤、把列表拉回頂端
+  useEffect(() => {
+    if (refocus) setParams({}, { replace: true })
+  }, [refocus, setParams])
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const next = String(new FormData(e.currentTarget).get('q') ?? '').trim()

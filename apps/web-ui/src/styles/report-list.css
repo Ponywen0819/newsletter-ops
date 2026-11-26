@@ -54,7 +54,7 @@
   padding: 6px 10px;
   border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: transparent;
+  background: var(--card); /* 筆電左欄是灰底：透明時外框對比不到 3:1 */
   color: inherit;
   font: inherit;
 }

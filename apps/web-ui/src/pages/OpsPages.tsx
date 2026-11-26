@@ -200,7 +200,7 @@ function JobView({ status }: { status: OpsStatus }) {
         <dd className={state.tone ? `ops-${state.tone}` : undefined}>{state.text}</dd>
       </dl>
       {log.length > 0 && (
-        <pre className="ops-log" aria-label="執行輸出（最後幾行）" tabIndex={0}>
+        <pre className="ops-log" role="region" aria-label="執行輸出（最後幾行）" tabIndex={0}>
           {log.join('\n')}
         </pre>
       )}
@@ -547,7 +547,7 @@ function ConfigPanel() {
       </section>
       <section className="ops-section" aria-label="興趣">
         <h2>興趣（interests.md）</h2>
-        {data.interests === null ? <p className="ops-note">沒有 config/interests.md。</p> : <pre className="ops-pre" tabIndex={0}>{data.interests}</pre>}
+        {data.interests === null ? <p className="ops-note">沒有 config/interests.md。</p> : <pre className="ops-pre" role="region" aria-label="interests.md" tabIndex={0}>{data.interests}</pre>}
       </section>
       <section className="ops-section" aria-label="主設定">
         <h2>主設定（config.json）</h2>
@@ -556,7 +556,7 @@ function ConfigPanel() {
         ) : (
           <details>
             <summary>展開</summary>
-            <pre className="ops-pre" tabIndex={0}>{JSON.stringify(data.config, null, 2)}</pre>
+            <pre className="ops-pre" role="region" aria-label="config.json" tabIndex={0}>{JSON.stringify(data.config, null, 2)}</pre>
           </details>
         )}
       </section>
