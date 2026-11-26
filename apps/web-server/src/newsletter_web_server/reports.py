@@ -59,7 +59,7 @@ class FileCache(Generic[T]):
         value = self._load(path)  # 不在鎖裡：讀大檔時不擋別的請求；同時兩個請求各讀一次也無妨
         try:
             unchanged = _signature(path) == signature
-        except FileNotFoundError:
+        except OSError:  # 剛被換掉、Windows 上換檔的一瞬間：確認不了就不存
             unchanged = False
         if not unchanged:  # 讀的期間檔案被換掉：這次的結果照用，但不存（簽章與內容可能對不上）
             return value

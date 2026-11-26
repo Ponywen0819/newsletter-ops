@@ -89,7 +89,7 @@ describe('路由', () => {
     const net = open('/', {
       'GET /api/today': () =>
         mode === 'down'
-          ? { status: 500, json: { error: 'x' } }
+          ? { status: 503, json: { error: 'x' } } // 閘道暫時錯誤
           : mode === 'ready'
             ? { json: { date: '2026-10-03', latest: '2026-10-03', report, marks: {} } }
             : { json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run: running } },
@@ -104,6 +104,38 @@ describe('路由', () => {
     await act(async () => void document.dispatchEvent(new Event('visibilitychange'))) // 回到前景：不必等滿一分鐘
     await waitFor(() => expect(screen.queryByText('2026-10-03 的晨報正在產生')).toBeNull())
     vi.useRealTimers()
+  })
+
+  it('/ 正在顯示舊晨報時，伺服器確定的錯誤（500）要讓人看到，不默默沿用', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let broken = false
+    const fallback = { date: '2026-10-02', report, marks: {}, prev: null, next: null }
+    const running = { trigger: 'schedule', started_at: 'a', finished_at: null, exit_code: null, step: null }
+    open('/', {
+      'GET /api/today': () =>
+        broken
+          ? { status: 500, json: { error: '報告格式不符' } }
+          : { json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run: running } },
+    })
+    expect(await screen.findByText('2026-10-03 的晨報正在產生')).toBeInTheDocument()
+    broken = true
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    expect(screen.getByText('報告格式不符')).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it.each([
+    [{ exit_code: 3, trigger: 'schedule' }, null], // 30 分鐘後會自動重跑：不叫人手動
+    [{ exit_code: 3, trigger: 'retry' }, ['到維運頁重跑', '/ops']],
+    [{ exit_code: 5, trigger: 'schedule' }, ['到授權頁處理', '/auth']], // 認證失敗：去授權頁
+  ])('/ 產生失敗的處理入口（本機）%#', async (over, link) => {
+    const run = { started_at: 'a', finished_at: 'b', step: 'collect', ...over }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run } }) }, true)
+    await screen.findByRole('heading', { name: '2026-10-03 的晨報產生失敗' })
+    await waitFor(() => expect(screen.getByRole('link', { name: '維運' })).toBeInTheDocument()) // session 已經到了
+    const found = screen.queryAllByRole('link', { name: /重跑|授權頁/ }).map((a) => [a.textContent, a.getAttribute('href')])
+    expect(found).toEqual(link ? [link] : [])
   })
 
   it('/ 讀取失敗：可以再試一次', async () => {

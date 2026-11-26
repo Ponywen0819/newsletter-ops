@@ -15,7 +15,7 @@
 }
 /* 維持 summary 預設的 list-item：瀏覽器的展開／收合三角形才會在（display:flex 會把它弄不見） */
 .mobile-toc summary {
-  padding: 11px 14px; /* 一行字＋上下內距約 44px，手指點得到 */
+  padding: 12px 14px; /* 一行字＋上下內距超過 44px，手指點得到 */
   line-height: 1.4;
   color: var(--heading);
   font-weight: 600;

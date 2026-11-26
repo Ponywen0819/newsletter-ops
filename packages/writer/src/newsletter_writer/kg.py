@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+import threading
 import traceback
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from datetime import date, datetime, time, timedelta
@@ -39,8 +40,19 @@ MAX_EVENTS, SUMMARY_LEN, QUOTE_LEN, NAME_LEN = 5, 120, 300, 60
 TEXT_LIMIT = 4000           # 每則送給模型的原文上限（字元）
 RELATE_BATCH = 40           # 一次比對幾個事件（原文只送這批用到的）
 EXTRACT_BATCH = 20          # 一次呼叫萃取幾則：加上別家報導後一天六、七十則，一次送完回覆太長
-# 同一階段的各批互不相依，同時問幾批（每批一個 claude 子程序，各約 200～300 MB；記憶體吃緊時設 NEWSLETTER_KG_PARALLEL=1）
-PARALLEL_ASKS = max(1, int(os.environ.get("NEWSLETTER_KG_PARALLEL", "2") or "2"))
+
+
+def parallel_asks(raw: str | None) -> int:
+    """同一階段的各批互不相依，同時問幾批（每批一個 claude 子程序，各約 200～300 MB）。
+    NEWSLETTER_KG_PARALLEL 設 1 就逐批問；不合法的值當預設的 2，最多 4（不能讓設定打錯就讓寫報告失敗）。"""
+    try:
+        n = int((raw or "").strip() or 2)
+    except ValueError:
+        return 2
+    return min(max(n, 1), 4)
+
+
+PARALLEL_ASKS = parallel_asks(os.environ.get("NEWSLETTER_KG_PARALLEL"))
 MIN_QUOTE = 8               # 正規化後少於這個長度的引句不算證據
 RELATE_DAYS, CONTEXT_DAYS = 90, 30
 CANDIDATES, MAX_BACKGROUND = 5, 40
@@ -173,16 +185,27 @@ def ask_all(ask: Ask, prompts: list[str], stage: str) -> list[dict]:
     """依序回傳每個 prompt 的回覆；多批時同時問 PARALLEL_ASKS 個（各批互不相依）。任一批失敗就拋出。"""
     if len(prompts) <= 1 or PARALLEL_ASKS == 1:
         return [ask(p, stage) for p in prompts]
-    pool = ThreadPoolExecutor(max_workers=PARALLEL_ASKS)
-    futures = [pool.submit(ask, p, stage) for p in prompts]
-    try:
-        done, _ = wait(futures, return_when=FIRST_EXCEPTION)
-        for future in done:
-            if future.exception() is not None:
+    # 有一批失敗（多半是額度或認證）：之後輪到的批直接跳過，不再啟動 claude 子程序白花額度。
+    # 只靠 shutdown(cancel_futures) 不夠：失敗的那條執行緒會在主執行緒取消之前就先拿走下一批
+    aborted = threading.Event()
+
+    def one(prompt: str) -> dict:
+        if aborted.is_set():
+            return {}
+        try:
+            return ask(prompt, stage)
+        except BaseException:
+            aborted.set()
+            raise
+
+    with ThreadPoolExecutor(max_workers=PARALLEL_ASKS) as pool:
+        futures = [pool.submit(one, p) for p in prompts]
+        wait(futures, return_when=FIRST_EXCEPTION)
+        for future in futures:  # 照批的順序找第一個失敗的，例外是哪一個才固定
+            if future.done() and future.exception() is not None:
+                aborted.set()
                 raise future.exception()  # type: ignore[misc]
         return [f.result() for f in futures]
-    finally:
-        pool.shutdown(wait=True, cancel_futures=True)  # 有一批失敗（多半是額度或認證）：排隊中的不必再啟動、白花額度
 
 
 def _candidates(con: psycopg.Connection, ids: list[int], stamp: str) -> dict[int, list[dict]]:

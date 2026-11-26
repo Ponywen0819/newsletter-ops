@@ -107,3 +107,21 @@ def test_curated_read_error_not_cached(tmp_path, monkeypatch):
     assert reports._curated_item("2026-01-02", "aaaaaaaaaaaaaaaa") == {}
     fail["on"] = False
     assert reports._curated_item("2026-01-02", "aaaaaaaaaaaaaaaa") == {"title": "T"}  # 不留原文
+
+
+def test_file_cache_replaced_while_loading(tmp_path):
+    path = tmp_path / "a"
+    path.write_text("v1", encoding="utf-8")
+
+    def load(p):
+        text = p.read_text(encoding="utf-8")
+        if text == "v1":  # 讀完、存進快取之前，檔案被換成新版
+            fresh = tmp_path / "a.tmp"
+            fresh.write_text("v2", encoding="utf-8")
+            os.replace(fresh, p)
+        return text
+
+    cache = FileCache(load)
+    assert cache.get(path) == "v1"
+    assert path not in cache._entries  # 簽章與內容可能對不上：不存
+    assert cache.get(path) == "v2"

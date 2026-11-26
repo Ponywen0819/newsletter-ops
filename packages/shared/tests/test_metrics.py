@@ -174,3 +174,23 @@ def test_record_is_thread_safe(tmp_path, monkeypatch):
     (path,) = tmp_path.glob("*.jsonl")
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 80 and all(r["blob"] == payload for r in rows)
+
+
+def test_record_writes_under_lock(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from newsletter_shared import metrics
+
+    monkeypatch.setattr(metrics, "METRICS_DIR", tmp_path)
+    monkeypatch.setattr(metrics, "enabled", lambda: True)
+    real_open = Path.open
+    held: list[bool] = []
+
+    def spy(self, *a, **k):
+        if self.parent == tmp_path:
+            held.append(metrics._WRITE_LOCK.locked())
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(Path, "open", spy)
+    metrics.record("kg_extract", n=1)
+    assert held == [True]

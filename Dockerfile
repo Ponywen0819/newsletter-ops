@@ -22,10 +22,10 @@ ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 WORKDIR /src
 COPY .python-version ./
 
-# 各自只 COPY 自己會用到的模組的 pyproject.toml／uv.lock：改 worker 那邊的依賴不會讓 web 的依賴層失效，反之亦然
+# 各自只 COPY 自己會用到的模組的 pyproject.toml（鎖檔只用 app 自己的 uv.lock）：改 worker 那邊的依賴不會讓 web 的依賴層失效，反之亦然
 FROM build AS build-web
-COPY packages/shared/pyproject.toml packages/shared/uv.lock ./packages/shared/
-COPY packages/llm/pyproject.toml packages/llm/uv.lock ./packages/llm/
+COPY packages/shared/pyproject.toml ./packages/shared/
+COPY packages/llm/pyproject.toml ./packages/llm/
 COPY apps/web-server/pyproject.toml apps/web-server/uv.lock ./apps/web-server/
 # 先只裝第三方依賴，讓只動程式碼時這層走快取
 RUN UV_PROJECT_ENVIRONMENT=/opt/web-server uv sync --locked --no-dev --no-editable --no-install-project --no-install-local \
@@ -37,11 +37,11 @@ COPY apps/web-server ./apps/web-server
 RUN UV_PROJECT_ENVIRONMENT=/opt/web-server uv sync --locked --no-dev --no-editable --project apps/web-server
 
 FROM build AS build-worker
-COPY packages/shared/pyproject.toml packages/shared/uv.lock ./packages/shared/
-COPY packages/llm/pyproject.toml packages/llm/uv.lock ./packages/llm/
-COPY packages/collect/pyproject.toml packages/collect/uv.lock ./packages/collect/
-COPY packages/writer/pyproject.toml packages/writer/uv.lock ./packages/writer/
-COPY packages/notify/pyproject.toml packages/notify/uv.lock ./packages/notify/
+COPY packages/shared/pyproject.toml ./packages/shared/
+COPY packages/llm/pyproject.toml ./packages/llm/
+COPY packages/collect/pyproject.toml ./packages/collect/
+COPY packages/writer/pyproject.toml ./packages/writer/
+COPY packages/notify/pyproject.toml ./packages/notify/
 COPY apps/worker/pyproject.toml apps/worker/uv.lock ./apps/worker/
 RUN UV_PROJECT_ENVIRONMENT=/opt/worker uv sync --locked --no-dev --no-editable --no-install-project --no-install-local \
       --project apps/worker

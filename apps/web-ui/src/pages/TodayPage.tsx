@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../api'
+import { api, ApiError, AuthExpiredError } from '../api'
 import { Loading, Notice } from '../components/Notice'
 import { ReaderShell } from '../components/ReaderShell'
 import { ReportPanel } from '../components/ReportView'
@@ -9,6 +9,11 @@ import { useSession } from '../session'
 import type { RunRecord } from '../types'
 
 const RECHECK_MS = 60_000 // 晨報正在產生時多久再問一次（不常駐輪詢：只在這個狀態、頁面在前景時）
+const STALE_MS = 10 * 60_000 // 回到前景時，上次載入超過這麼久就重問（隔夜開著的 App 才會換成今天的）
+
+/** 網路瞬斷、連不上、閘道暫時錯誤：可以先沿用上一次的結果；伺服器確定的錯誤（4xx、500）與登入逾時要讓人看到 */
+const transient = (e: Error) =>
+  e instanceof ApiError ? e.status >= 502 && e.status <= 504 : !(e instanceof AuthExpiredError)
 
 const STEP: Record<string, string> = { collect: '蒐集新聞', write: '撰寫報告', render: '排版', send: '寄信' }
 const NO_RETRY = new Set([5, 6, 143]) // 和 worker 的 service.NO_RETRY 一致：認證、額度、被停止
@@ -41,11 +46,15 @@ function FixHint({ run }: { run: RunRecord | null | undefined }) {
 export function TodayPage() {
   const [attempt, setAttempt] = useState(0) // 「再試一次」與產生中的定時重問
   const fetched = useFetch(api.today, [useRecovered(), attempt])
-  // 重問期間、或重問失敗（網路瞬斷）時照舊顯示上一次的結果：不閃「載入中」，也不把正在讀的舊晨報換成錯誤頁
+  // 重問期間、或重問遇到暫時性的錯誤（網路瞬斷）時照舊顯示上一次的結果：不閃「載入中」，也不把正在讀的舊晨報換成錯誤頁
   const [kept, setKept] = useState(fetched.data)
   if (fetched.data && fetched.data !== kept) setKept(fetched.data)
-  const data = fetched.data ?? kept
-  const error = data ? undefined : fetched.error
+  const loadedAt = useRef(0)
+  useEffect(() => {
+    if (fetched.data) loadedAt.current = Date.now()
+  }, [fetched.data])
+  const error = fetched.error && (!kept || !transient(fetched.error)) ? fetched.error : undefined
+  const data = error ? undefined : (fetched.data ?? kept)
   const shown = data?.report ? data.date : data?.fallback?.date
   useDocumentTitle(shown ? `每日晨間簡報 ${shown}` : '每日晨間簡報')
 
@@ -53,13 +62,17 @@ export function TodayPage() {
   const generating = !!data && !data.report && !!data.run && !data.run.finished_at
   useEffect(() => {
     if (!generating) return
-    const recheck = () => document.visibilityState === 'visible' && setAttempt((n) => n + 1)
-    const timer = window.setInterval(recheck, RECHECK_MS)
-    document.addEventListener('visibilitychange', recheck)
-    return () => {
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', recheck)
+    const timer = window.setInterval(() => document.visibilityState === 'visible' && setAttempt((n) => n + 1), RECHECK_MS)
+    return () => window.clearInterval(timer)
+  }, [generating])
+  // 回到前景：產生中馬上問；否則上次載入太久（例如昨晚開著的 App）也重問，才會換成今天的晨報
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      if (generating || (loadedAt.current && Date.now() - loadedAt.current > STALE_MS)) setAttempt((n) => n + 1)
     }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
   }, [generating])
 
   if (error)

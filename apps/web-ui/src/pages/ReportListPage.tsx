@@ -140,7 +140,7 @@ function AllReports() {
   else if (!grouped) body = <Rows items={data} />
   else
     body = months.map((month) => (
-      <section key={month.id} className="unit" data-unit={month.id}>
+      <section key={month.id} className="unit" data-unit={month.id} tabIndex={-1}>
         <h2>{month.label}</h2>
         <Rows items={month.items} />
       </section>

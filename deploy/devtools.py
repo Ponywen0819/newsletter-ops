@@ -504,6 +504,10 @@ def cmd_compare(args, env) -> int:
     stamp = args.date
     if not DATE_RE.fullmatch(stamp):
         raise DevError("日期要是 YYYY-MM-DD", 2)
+    try:  # 先確認比得了，免得在測試區重寫完（花額度、等好幾分鐘）才發現少了 shared
+        import newsletter_shared.report_data  # noqa: F401
+    except ImportError:
+        raise DevError("compare 需要 newsletter_shared：用 npm run devtools -- compare … 執行", 2) from None
     snap = Path(args.snapshot) if args.snapshot else latest_snapshot()
     files = snapshot_members(snap.read_bytes())
     prod_md = files.get(f"reports/{stamp}.md")

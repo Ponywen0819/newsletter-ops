@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { Link, MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../App'
 import { mockFetch } from '../test/fetchMock'
@@ -98,6 +98,34 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
     expect(screen.getByRole('button', { name: '改成 沒用' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '取消標記' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: /確認/ })).toBeNull()
+  })
+
+  it('改標畫面連續改兩次：每次存完焦點都移到結果', async () => {
+    open('?v=%2B', { [`GET /api/feedback/${UID}`]: () => ({ json: target('+') }), 'POST /api/feedback': (body) => ({ json: body }) })
+    await userEvent.click(await screen.findByRole('button', { name: '改成 沒用' }))
+    expect(await screen.findByText('已記下 沒用。')).toHaveFocus()
+    await userEvent.click(screen.getByRole('button', { name: '取消標記' }))
+    expect(await screen.findByText('已取消標記。')).toHaveFocus()
+  })
+
+  it('同一則換了 ?v=：回到確認的流程，不沿用上一個選擇的結果', async () => {
+    const net = mockFetch({
+      'GET /api/session': () => ({ json: { local: false } }),
+      [`GET /api/feedback/${UID}`]: () => ({ json: target() }),
+      'POST /api/feedback': (body) => ({ json: body }),
+    })
+    render(
+      <MemoryRouter initialEntries={[`/feedback/${UID}?v=%2B`]}>
+        <App />
+        <Link to={`/feedback/${UID}?v=-`}>改按沒用</Link>
+      </MemoryRouter>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 有用' }))
+    await screen.findByText('已記下 有用。')
+    await userEvent.click(screen.getByRole('link', { name: '改按沒用' }))
+    expect(await screen.findByRole('button', { name: '確認標為 沒用' })).toBeInTheDocument()
+    expect(screen.getByText('目前標記是 有用，確認後會改成 沒用。')).toBeInTheDocument()
+    expect(posts(net)).toHaveLength(1)
   })
 
   it('讀取失敗：有「再試一次」（裝成 App 時沒有重新整理鈕）', async () => {

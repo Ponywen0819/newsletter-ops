@@ -33,11 +33,19 @@ export function FeedbackPage() {
   const [failed, setFailed] = useState(false)
   // 確認過一次（全部寫入成功）之後就一直是「目前的標記＋改標按鈕」；之後改標失敗也留在這裡，不退回確認句
   const [confirmed, setConfirmed] = useState(false)
+  const [seenVote, setSeenVote] = useState(vote)
+  if (seenVote !== vote) {
+    // 同一則換了 ?v=（上一頁、站內連結）：頁面不會重掛，要自己回到確認的流程
+    setSeenVote(vote)
+    setConfirmed(false)
+    setFailed(false)
+  }
   const statusRef = useRef<HTMLParagraphElement>(null)
+  const [saves, setSaves] = useState(0) // 每存完一次加一：按鈕可能被換掉或在 busy 時失焦，焦點移到結果
   useDocumentTitle('回饋')
   useEffect(() => {
-    if (confirmed) statusRef.current?.focus() // 確認鈕換成改標按鈕：焦點不要掉回頁首
-  }, [confirmed])
+    if (saves) statusRef.current?.focus()
+  }, [saves])
 
   if (!vote) return <Notice title="連結不完整">缺少「有用／沒用」的選擇，請回信件再按一次。</Notice>
   if (badLink) return <Notice title="連結不完整">這個連結看起來不對，請回信件再按一次。</Notice>
@@ -69,11 +77,13 @@ export function FeedbackPage() {
 
   const save = async (mark: Mark) => {
     setBusy(true)
+    setFailed(false) // 再失敗一次時 status 的文字會變，螢幕閱讀器才會再唸
     const result = await api.feedbackAll(uids, mark)
     setSaved((prev) => ({ ...prev, ...Object.fromEntries(result.saved.map((row) => [row.uid, row.mark])) }))
     setFailed(result.failed)
-    if (!result.failed) setConfirmed(true)
+    if (settled || !result.failed) setConfirmed(true) // 已經在改標畫面：部分失敗也留在這裡
     setBusy(false)
+    setSaves((n) => n + 1)
   }
 
   const state = !same ? '這幾篇目前的標記不一致。' : first ? `已記下 ${LABEL[first]}。` : '已取消標記。'
