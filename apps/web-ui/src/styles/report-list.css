@@ -72,7 +72,7 @@
 }
 .reports mark {
   background: light-dark(#fde68a, #5c4a12);
-  color: inherit;
+  color: var(--text); /* 命中的字在淡灰的內文裡：用 inherit 時灰字配黃底只有 3.9:1 */
   border-radius: 2px;
 }
 .report-stats-link {

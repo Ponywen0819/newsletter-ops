@@ -333,4 +333,14 @@
   .kg-list .kg-linkish {
     min-height: 44px;
   }
+  /* 實體膠囊、關係、「回到晨報」「以這則為中心」、實體清單：原本只有 17～24px 高，手指點不準 */
+  .kg-chips a,
+  .kg-relations .kg-linkish,
+  .kg-actions a,
+  .kg-items a,
+  .kg-entity-list a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }
