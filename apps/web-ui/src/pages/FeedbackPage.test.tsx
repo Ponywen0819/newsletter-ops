@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { Link, MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../App'
 import { mockFetch } from '../test/fetchMock'
@@ -51,11 +51,21 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
     expect(await screen.findByRole('button', { name: '確認標為 有用' })).toBeInTheDocument()
   })
 
-  it('已經是同一個標記：只顯示已記下，沒有按鈕；不同的標記：說明會覆蓋', async () => {
-    const same = open('?v=%2B', { [`GET /api/feedback/${UID}`]: () => ({ json: target('+') }) })
+  it('已經是同一個標記：顯示已記下，不用再確認，但能改成另一個或取消（信裡按錯時）', async () => {
+    const same = open('?v=%2B', {
+      [`GET /api/feedback/${UID}`]: () => ({ json: target('+') }),
+      'POST /api/feedback': (body) => ({ json: body }),
+    })
     expect(await screen.findByText('已記下 有用。')).toBeInTheDocument()
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('button', { name: /確認/ })).toBeNull()
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['改成 沒用', '取消標記'])
     expect(posts(same)).toEqual([])
+    await userEvent.click(screen.getByRole('button', { name: '改成 沒用' }))
+    expect(await screen.findByText('已記下 沒用。')).toBeInTheDocument()
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['改成 有用', '取消標記'])
+    await userEvent.click(screen.getByRole('button', { name: '取消標記' }))
+    expect(await screen.findByText('已取消標記。')).toBeInTheDocument()
+    expect(posts(same).map((c) => c.body)).toEqual([{ uid: UID, mark: '-' }, { uid: UID, mark: '' }])
   })
 
   it('目前是沒用、信裡按有用：說明會改成有用，確認後送 +', async () => {
@@ -77,6 +87,56 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
     expect(screen.queryByText(/已記下/)).toBeNull()
   })
 
+  it('確認後再改標失敗：留在改標的畫面（按鈕都還在、說明失敗），不退回確認句', async () => {
+    let fail = false
+    open('?v=%2B', { 'POST /api/feedback': (body) => (fail ? { status: 500, json: { error: 'x' } } : { json: body }) })
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 有用' }))
+    expect(await screen.findByText('已記下 有用。')).toHaveFocus() // 確認鈕不見了，焦點移到結果
+    fail = true
+    await userEvent.click(screen.getByRole('button', { name: '取消標記' }))
+    expect(await screen.findByText(/儲存失敗/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '改成 沒用' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '取消標記' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /確認/ })).toBeNull()
+  })
+
+  it('改標畫面連續改兩次：每次存完焦點都移到結果', async () => {
+    open('?v=%2B', { [`GET /api/feedback/${UID}`]: () => ({ json: target('+') }), 'POST /api/feedback': (body) => ({ json: body }) })
+    await userEvent.click(await screen.findByRole('button', { name: '改成 沒用' }))
+    expect(await screen.findByText('已記下 沒用。')).toHaveFocus()
+    await userEvent.click(screen.getByRole('button', { name: '取消標記' }))
+    expect(await screen.findByText('已取消標記。')).toHaveFocus()
+  })
+
+  it('同一則換了 ?v=：回到確認的流程，不沿用上一個選擇的結果', async () => {
+    const net = mockFetch({
+      'GET /api/session': () => ({ json: { local: false } }),
+      [`GET /api/feedback/${UID}`]: () => ({ json: target() }),
+      'POST /api/feedback': (body) => ({ json: body }),
+    })
+    render(
+      <MemoryRouter initialEntries={[`/feedback/${UID}?v=%2B`]}>
+        <App />
+        <Link to={`/feedback/${UID}?v=-`}>改按沒用</Link>
+      </MemoryRouter>,
+    )
+    await userEvent.click(await screen.findByRole('button', { name: '確認標為 有用' }))
+    await screen.findByText('已記下 有用。')
+    await userEvent.click(screen.getByRole('link', { name: '改按沒用' }))
+    expect(await screen.findByRole('button', { name: '確認標為 沒用' })).toBeInTheDocument()
+    expect(screen.getByText('目前標記是 有用，確認後會改成 沒用。')).toBeInTheDocument()
+    expect(posts(net)).toHaveLength(1)
+  })
+
+  it('讀取失敗：有「再試一次」（裝成 App 時沒有重新整理鈕）', async () => {
+    let down = true
+    open('?v=-', { [`GET /api/feedback/${UID}`]: () => (down ? { status: 500, json: { error: '壞了' } } : { json: target() }) })
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    down = false
+    await userEvent.click(screen.getByRole('button', { name: '再試一次' }))
+    expect(await screen.findByRole('button', { name: '確認標為 沒用' })).toBeInTheDocument()
+  })
+
   it('沒有 v、v 不認得：提示連結不完整，不去讀資料也不寫入', async () => {
     for (const query of ['', '?v=x']) {
       document.body.innerHTML = ''
@@ -92,9 +152,14 @@ describe('/feedback/<uid>（email 連結的確認頁）', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 
-  it('標題為空（沒有 curated 資料）：用「這則新聞」代替', async () => {
+  it('標題為空（沒有 curated 資料）：說是哪一天晨報裡的', async () => {
     open('?v=-', { [`GET /api/feedback/${UID}`]: () => ({ json: { ...target(), title: '' } }) })
-    expect(await screen.findByText('「這則新聞」')).toBeInTheDocument()
+    expect(await screen.findByText('「2026-09-28 晨報裡的一則新聞」')).toBeInTheDocument()
+  })
+
+  it('連不上伺服器：說連不上，不是瀏覽器的英文訊息', async () => {
+    open('?v=-', { [`GET /api/feedback/${UID}`]: () => Promise.reject(new TypeError('Failed to fetch')) })
+    expect(await screen.findByText('連不上伺服器，確認網路後再試一次。')).toBeInTheDocument()
   })
 })
 
@@ -140,7 +205,7 @@ describe('/feedback/<uid>,<uid>（併了多篇的新聞）', () => {
       [`GET /api/feedback/${B}`]: () => ({ json: targetOf(B, 'Pixel 10a 調漲', '+') }),
     })
     expect(await screen.findByText('已記下 有用。')).toBeInTheDocument()
-    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('button', { name: /確認/ })).toBeNull()
     cleanup()
 
     openMulti(`/feedback/${A},${B}?v=%2B`, {

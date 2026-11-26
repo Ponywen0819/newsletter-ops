@@ -17,20 +17,19 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlencode
 
-from newsletter_shared.metrics import split_runs
+from newsletter_shared import PIPELINE_STEPS
+from newsletter_shared.metrics import read_day_rows, split_runs, summarize_run
 
 from .errors import ApiError
 
 WORKER_URL_ENV = "NEWSLETTER_WORKER_URL"
 DEFAULT_WORKER_URL = "http://127.0.0.1:8790"  # systemd 版與本機開發；compose 設成 http://worker:8790
 WORKER_TIMEOUT = 5  # 秒；/status 與 /run 都是馬上回（執行在背景）
-RUN_FROM = ("collect", "write", "render", "send")
+RUN_FROM = PIPELINE_STEPS
 JOB_KINDS = ("kg-rebuild", "sources-check")
 LOG_TAIL_LINES = 80
 LOG_TAIL_BYTES = 64 * 1024
 METRICS_DAYS = (7, 14, 30, 90)
-STAGES = ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
-COST_STAGES = ("claude", "search", "kg_extract", "kg_relate")  # 有 total_cost_usd 的階段（只有 SDK 路線）
 
 
 def _read(path: Path) -> dict | None:
@@ -143,23 +142,7 @@ class Ops:
     @staticmethod
     def _run_row(day: str, run: dict[str, dict]) -> dict:
         """newsletter-metrics summary 的一列，換成結構化資料。"""
-        first = min(run.values(), key=lambda r: r["ts"])
-        claude, pipeline = run.get("claude", {}), run.get("pipeline")
-        tok = claude.get("tokens", {})
-        costs = [r["total_cost_usd"] for r in (run.get(s, {}) for s in COST_STAGES) if r.get("total_cost_usd") is not None]
-        return {
-            "date": day,
-            "time": first["ts"][11:16],
-            "label": first.get("label", "prod"),
-            "trigger": (pipeline or {}).get("trigger"),
-            "result": None if pipeline is None else {"exit_code": pipeline.get("exit_code"), "step": pipeline.get("step")},
-            "seconds": {s: run[s]["seconds"] for s in STAGES if isinstance(run.get(s, {}).get("seconds"), (int, float))},
-            "tokens": {"input": tok.get("input", 0) + tok.get("cache_write", 0) + tok.get("cache_read", 0),
-                       "output": tok.get("output", 0)} if tok else None,
-            "turns": claude.get("api_turns"),
-            "usd": round(sum(costs), 4) if costs else None,
-            "items": run.get("curate", {}).get("items"),
-        }
+        return summarize_run(day, run)
 
     def metrics(self, days: str, show_all: str) -> dict:
         try:
@@ -173,18 +156,7 @@ class Ops:
         runs = []
         for n in range(span):  # 新到舊
             day = (end - timedelta(days=n)).isoformat()
-            try:
-                lines = (self.root / "logs" / "metrics" / f"{day}.jsonl").read_text(encoding="utf-8").splitlines()
-            except OSError:
-                continue
-            rows = []
-            for line in lines:
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue  # 寫到一半的最後一行
-                if isinstance(row, dict) and isinstance(row.get("stage"), str) and isinstance(row.get("ts"), str):
-                    rows.append(row)
+            rows = read_day_rows(self.root / "logs" / "metrics", day)
             if not every:
                 rows = [r for r in rows if r.get("label", "prod") == "prod"]  # 舊紀錄沒有 label，當 prod
             runs.extend(reversed([self._run_row(day, run) for run in split_runs(rows) if run]))

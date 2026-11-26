@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react'
+import { type MouseEvent as ReactMouseEvent, useSyncExternalStore } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import type { Status } from '../connectivity'
 import { useAuthHealth } from '../authHealth'
@@ -7,6 +7,7 @@ import { useSession } from '../session'
 import { lastSync, type SyncRecord } from '../sync'
 import { clearNotice, getNotice, subscribeQueue } from '../feedbackQueue'
 import type { AuthHealth } from '../types'
+import { RouteErrorBoundary } from './RouteErrorBoundary'
 import { ThemeSelect } from './ThemeSelect'
 
 const BANNER: Record<Exclude<Status, 'ok'>, string> = {
@@ -61,15 +62,29 @@ function AuthBar({ local }: { local: boolean }) {
   )
 }
 
+export const CONTENT_ID = 'content'
+
+function skipToContent(e: ReactMouseEvent) {
+  const target = document.getElementById(CONTENT_ID)
+  if (!target) return
+  e.preventDefault()
+  target.focus()
+}
+
 /** reader：兩欄（頁面自己用 ReaderShell）；single：單欄卡片。由路由指定，載入中與出錯時外框不變。 */
 export function Layout({ variant }: { variant: 'reader' | 'single' }) {
   const session = useSession()
   const connectivity = useConnectivity()
+  const { pathname } = useLocation()
   const notice = useSyncExternalStore(subscribeQueue, getNotice) // 補送離線標記時的衝突、放棄
   return (
     <div data-layout={variant}>
+      {/* 鍵盤使用者跳過頁首（筆電晨報頁還有一長串目錄）直接到內文；不改網址，只移焦點 */}
+      <a className="skip-link" href={`#${CONTENT_ID}`} onClick={skipToContent}>
+        跳到主要內容
+      </a>
       <header>
-        <nav>
+        <nav aria-label="主選單">
           <span className="site-name">晨報</span>
           <NavLink to="/" end>
             今日晨報
@@ -102,8 +117,11 @@ export function Layout({ variant }: { variant: 'reader' | 'single' }) {
       </div>
       <AuthBar local={!!session?.local} />
       <div className="page">
-        <main className="card">
-          <Outlet />
+        {/* 兩欄版面的內文欄由 ReaderShell 帶 id；單欄就是整張卡片 */}
+        <main className="card" id={variant === 'single' ? CONTENT_ID : undefined} tabIndex={variant === 'single' ? -1 : undefined}>
+          <RouteErrorBoundary key={pathname} reader={variant === 'reader'}>
+            <Outlet />
+          </RouteErrorBoundary>
         </main>
       </div>
     </div>

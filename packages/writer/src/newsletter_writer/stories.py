@@ -16,8 +16,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from newsletter_shared import ROOT, atomic, kg_flags, metrics
-from newsletter_shared.kg_store import open_readonly, statuses
-from newsletter_shared.kg_store import sources as _sources
+from newsletter_shared.kg_store import open_readonly, sources_many, statuses
 
 PAST_DAYS = 30
 MAX_PAST = 8         # 每組最多附幾個過去事件（有直接連結的才算）
@@ -68,17 +67,17 @@ def _past_events(con, ids: list[tuple[int, str]], flags: dict, since: str) -> li
             kinds[eid] = kind
     if not kinds:
         return []
-    marks = ",".join(["%s"] * len(kinds))
     rows = list(con.execute(
-        f"""SELECT e.id, e.date, e.summary, i.title, i.url, i.source FROM events e JOIN items i ON i.uid=e.uid
-            WHERE e.id IN ({marks}) AND e.date >= %s ORDER BY e.date""", [*kinds, since]))
+        """SELECT e.id, e.date, e.summary, i.title, i.url, i.source FROM events e JOIN items i ON i.uid=e.uid
+           WHERE e.id = ANY(%s) AND e.date >= %s ORDER BY e.date""", (list(kinds), since)))
     status = statuses(con, [r[0] for r in rows], flags)
+    counts = sources_many(con, {r[0]: r[5] for r in rows})
     out = []
     for eid, day, summary, title, url, source in rows:
         if status[eid] == "invalid" and kinds[eid] not in ("retract", "contradict"):
             continue  # 已失效的舊說法不當前因；被今天撤回的要留著，報告才寫得出「先前報導已被否認」
         out.append({"date": day, "summary": summary, "title": title, "url": url, "source": source,
-                    "kind": kinds[eid], "status": status[eid], "sources": _sources(con, eid, source)})
+                    "kind": kinds[eid], "status": status[eid], "sources": counts[eid]})
     return out[-MAX_PAST:]
 
 

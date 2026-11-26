@@ -1,5 +1,5 @@
-import { useMemo, useRef, type FormEvent, type ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { type ChangeEvent, useEffect, useMemo, useRef, type FormEvent, type ReactNode } from 'react'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { Loading, Notice } from '../components/Notice'
 import { ReaderShell } from '../components/ReaderShell'
@@ -8,31 +8,61 @@ import { groupByMonth } from '../reportMonths'
 import type { ReportSummary } from '../types'
 import { useSectionNav } from '../useSectionNav'
 
+/** 一列＝一個連結（日期＋頭條或命中的那一行）：點哪裡都進那份晨報，螢幕閱讀器唸得出是哪一則。 */
+function Row({ date, children }: { date: string; children: ReactNode }) {
+  return (
+    <li>
+      <Link to={`/reports/${date}`}>
+        <span className="reports-date">{date}</span> <span className="reports-text">{children}</span>
+      </Link>
+    </li>
+  )
+}
+
 function Rows({ items }: { items: ReportSummary[] }) {
   return (
     <ul className="reports">
       {items.length === 0 && <li>目前還沒有任何晨報。</li>}
       {items.map(({ date, headline }) => (
-        <li key={date}>
-          <Link to={`/reports/${date}`}>{date}</Link>
-          <span>{headline}</span>
-        </li>
+        <Row key={date} date={date}>
+          {headline}
+        </Row>
       ))}
     </ul>
   )
 }
 
-/** 左欄的搜尋框：送出後改網址的 ?q=，可以分享、上一頁回得去；清空就回到列表。 */
+/** 左欄的搜尋框：送出後改網址的 ?q=，可以分享、上一頁回得去；清空（含輸入框裡的 ×）就回到列表。 */
 function SearchBox({ q }: { q: string }) {
   const [, setParams] = useSearchParams()
+  // 清空時整頁換回列表、輸入框跟著重建：帶著 focusSearch 回來，焦點留在框裡，可以直接打下一個詞
+  const refocus = (useLocation().state as { focusSearch?: boolean } | null)?.focusSearch === true
+  // 用過就從 history 拿掉：之後從單日晨報按上一頁回來，不要又彈出鍵盤、把列表拉回頂端
+  useEffect(() => {
+    if (refocus) setParams({}, { replace: true })
+  }, [refocus, setParams])
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const next = String(new FormData(e.currentTarget).get('q') ?? '').trim()
     setParams(next ? { q: next } : {})
   }
+  const change = (e: ChangeEvent<HTMLInputElement>) => {
+    if (q && !e.currentTarget.value) setParams({}, { state: { focusSearch: true } })
+  }
   return (
     <form role="search" className="report-search" onSubmit={submit}>
-      <input key={q} type="search" name="q" defaultValue={q} placeholder="搜尋歷史晨報" aria-label="搜尋歷史晨報" maxLength={100} />
+      <input
+        key={q}
+        type="search"
+        name="q"
+        defaultValue={q}
+        placeholder="搜尋歷史晨報"
+        aria-label="搜尋歷史晨報"
+        maxLength={100}
+        enterKeyHint="search"
+        autoFocus={refocus}
+        onChange={change}
+      />
     </form>
   )
 }
@@ -74,10 +104,9 @@ function SearchResults({ q }: { q: string }) {
         </p>
         <ul className="reports">
           {data.results.map(({ date, text }, i) => (
-            <li key={`${date}-${i}`}>
-              <Link to={`/reports/${date}`}>{date}</Link>
-              <span>{highlight(text, q)}</span>
-            </li>
+            <Row key={`${date}-${i}`} date={date}>
+              {highlight(text, q)}
+            </Row>
           ))}
         </ul>
         {data.truncated && <p className="report-search-count">只列出最新的 {data.results.length} 筆，請用更精確的字詞。</p>}
@@ -111,7 +140,7 @@ function AllReports() {
   else if (!grouped) body = <Rows items={data} />
   else
     body = months.map((month) => (
-      <section key={month.id} className="unit" data-unit={month.id}>
+      <section key={month.id} className="unit" data-unit={month.id} tabIndex={-1}>
         <h2>{month.label}</h2>
         <Rows items={month.items} />
       </section>

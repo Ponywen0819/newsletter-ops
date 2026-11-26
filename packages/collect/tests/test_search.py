@@ -68,7 +68,7 @@ def test_accept():
     assert [i["url"] for i in kept] == ["https://r.example/ok"]
     k = kept[0]
     assert k["origin"] == "search" and k["source"] == "搜尋：r.example" and k["query"] == "q" and len(k["uid"]) == 16
-    assert k["published"] == fetch._parse_date((NOW - timedelta(hours=3)).isoformat())
+    assert k["published"] == fetch.parse_date((NOW - timedelta(hours=3)).isoformat())
     assert [r["reason"] for r in rejected] == [
         "超過每個主題 1 則", "主題不在這次要補的清單", "網址不是 http(s)", "發佈時間無法解析",
         "發佈時間不在 48 小時內", "網址抓不到：404", "頁面標題對不上", "和已收錄的項目重複",

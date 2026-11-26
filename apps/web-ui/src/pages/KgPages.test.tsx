@@ -105,7 +105,7 @@ describe('知識圖譜', () => {
     expect(document.querySelectorAll('.kg-node')).toHaveLength(2)
     expect(document.querySelector('.kg-node[data-seed][data-selected]')).not.toBeNull()
     const list = within(screen.getByRole('heading', { name: '事件列表' }).parentElement!)
-    expect(list.getAllByRole('button').map((b) => b.textContent)).toEqual(['2026-09-28Acme 完成收購', '2026-09-20Beta 否認收購'])
+    expect(list.getAllByRole('button').map((b) => b.textContent)).toEqual(['2026-09-28 Acme 完成收購', '2026-09-20 Beta 否認收購'])
     expect(list.getByText('已失效')).toBeInTheDocument()
   })
 
@@ -118,10 +118,45 @@ describe('知識圖譜', () => {
     expect(detail().getByText('被撤回／否認')).toBeInTheDocument()
     expect(detail().queryByRole('button', { name: '事實有誤' })).toBeNull()
     expect(detail().getByRole('link', { name: '以這則為中心' })).toHaveAttribute('href', `/kg/item/${U1}`)
-    await userEvent.click(screen.getByRole('button', { name: '2026-09-28Acme 完成收購' }))
+    await userEvent.click(screen.getByRole('button', { name: '2026-09-28 Acme 完成收購' }))
     expect(detail().getByRole('heading', { name: 'Acme 完成收購' })).toBeInTheDocument()
     await userEvent.click(document.querySelectorAll('.kg-node')[0]!)
     expect(detail().getByRole('heading', { name: 'Beta 否認收購' })).toBeInTheDocument()
+  })
+
+  it('/kg/item：從下面的列表選事件，詳情（可能在好幾屏外）捲進畫面、焦點移到標題；點圖只捲到看得到', async () => {
+    const scrolled: { el: Element; arg?: ScrollIntoViewOptions }[] = []
+    Element.prototype.scrollIntoView = function (this: Element, arg?: boolean | ScrollIntoViewOptions) {
+      scrolled.push({ el: this, arg: typeof arg === 'object' ? arg : undefined })
+    }
+    open(`/kg/item/${UID_A}`, { [`GET /api/kg/item/${UID_A}?depth=1`]: () => ({ json: item() }) })
+    await screen.findByRole('heading', { name: '事件列表' })
+    expect(screen.getByRole('region', { name: '事件詳情' })).not.toHaveAttribute('aria-live') // 不整塊重唸
+    expect(scrolled).toHaveLength(0) // 剛進來不捲
+    await userEvent.click(screen.getByRole('button', { name: '2026-09-20 Beta 否認收購' }))
+    expect(detail().getByRole('heading', { name: 'Beta 否認收購' })).toHaveFocus()
+    expect(scrolled.at(-1)!.el).toBe(screen.getByRole('region', { name: '事件詳情' }))
+    expect(scrolled.at(-1)!.arg).toMatchObject({ block: 'start' })
+    await userEvent.click(document.querySelectorAll('.kg-node')[1]!)
+    expect(scrolled.at(-1)!.arg).toMatchObject({ block: 'nearest' })
+    expect(document.querySelectorAll('.kg-node rect.kg-hit')).toHaveLength(document.querySelectorAll('.kg-node').length)
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  it('/kg/item：在列表裡點目前已經選中的事件（進頁預設選的那個）也會捲到詳情、移焦點', async () => {
+    const scrolled: Element[] = []
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this)
+    }
+    open(`/kg/item/${UID_A}`, { [`GET /api/kg/item/${UID_A}?depth=1`]: () => ({ json: item() }) })
+    await screen.findByRole('heading', { name: '事件列表' })
+    const current = document.querySelector<HTMLButtonElement>('.kg-list button[aria-current]')!
+    await userEvent.click(current)
+    expect(scrolled).toHaveLength(1)
+    expect(detail().getByRole('heading', { level: 2 })).toHaveFocus()
+    await userEvent.click(current) // 再點一次也一樣
+    expect(scrolled).toHaveLength(2)
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
   })
 
   it('/kg/item：換範圍重新載入；標了事實有誤也重新載入（狀態要重算），選取不跑掉', async () => {

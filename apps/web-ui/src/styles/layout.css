@@ -41,6 +41,15 @@
   color: inherit;
   text-decoration: underline;
 }
+@media (pointer: coarse) {
+  .offline-bar button,
+  .auth-bar a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px; /* 橫幅本身上下還有 8px：整條約 48px，不會比內容還搶眼 */
+    padding: 0 8px;
+  }
+}
 
 /* 標頭列：白底、下緣一條細線，滿版（卡片才受 --content-w 限制） */
 header {
@@ -87,7 +96,7 @@ header nav a[aria-current='page'] {
 .theme-select {
   margin-left: auto;
   padding: 4px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   background: var(--card);
   color: var(--text);
@@ -97,6 +106,7 @@ header nav a[aria-current='page'] {
 @media (pointer: coarse) {
   .theme-select {
     min-height: 44px;
+    font-size: 16px; /* iOS Safari 對小於 16px 的表單元件會自動放大頁面 */
   }
 }
 

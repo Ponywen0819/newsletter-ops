@@ -4,7 +4,7 @@
 
 ```
 src/newsletter_shared/
-  __init__.py            資料根目錄 ROOT（環境變數 NEWSLETTER_ROOT，沒設就是工作目錄）與報告日期 tz()／today()（config.json 的 timezone）；其他模組一律從這裡取
+  __init__.py            資料根目錄 ROOT（環境變數 NEWSLETTER_ROOT，沒設就是工作目錄）與報告日期 tz()／today()（config.json 的 timezone）；每日流程的四步 PIPELINE_STEPS（worker 與 web-server 共用）；其他模組一律從這裡取
   report_data.py         報告 Markdown → 結構化資料：報告格式（SKILL.md 規定的子集）唯一的解析與驗證者，網頁與 email 共用
                          （newsletter-report-check 用它驗證 reports/<date>.md）
   lock.py                跨程序檔案鎖 locked(path, timeout)：多個服務讀寫同一個檔案時一律從這裡排隊
@@ -91,7 +91,7 @@ NEWSLETTER_DEBUG=1 NEWSLETTER_RUN_LABEL=test uv run --project packages/collect n
 
 - 紀錄一律保留，不要刪；測試用 `NEWSLETTER_RUN_LABEL=test` 區分，預設是 `prod`。
 - worker 跑的每筆紀錄帶 `run_id`（`NEWSLETTER_RUN_ID`，子程序繼承），summary 依它分列，`?from=write` 補跑也自成一列；沒有 `run_id` 的（舊紀錄、手動跑）每遇到一筆 `fetch` 算新的一次。
-- summary 的 `s+` 是搜尋補進幾則（`search_yield`，用來判斷 `search.always` 值不值得）；`usd` 是 writer 加搜尋的估算；`miss`／`nm` 是 coverage；`result` 是 `ok` 或 `<步驟>:<exit code>`。
+- summary 的 `s+` 是搜尋補進幾則（`search_yield`，用來判斷 `search.always` 值不值得）；`usd` 是 writer、搜尋與知識圖譜（`COST_STAGES`）的估算；`miss`／`nm` 是 coverage；`result` 是 `ok` 或 `<步驟>:<exit code>`。
 - 測試不記（nx 的 `test` 任務設 `NEWSLETTER_DEBUG=0`）。
 - token 只含主 session 的 API 回合；工具內部用的小模型不在紀錄裡，所以不計。
 - `non_tool_seconds` 是總時間扣掉工具時間，含模型生成、串流與排隊。

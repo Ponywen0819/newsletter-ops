@@ -54,9 +54,6 @@ STATIC_TYPES = {  # 副檔名白名單
 IMMUTABLE = "public, max-age=31536000, immutable"
 CSP = "default-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-POST_ROUTES = {"/api/feedback", "/api/kg-flag", "/api/auth/token", "/api/auth/test", "/api/auth/revoke",
-               "/api/ops/request"}
-
 
 class Site:
     """Handler 用到的全部狀態。root 可換掉，測試用暫存目錄。"""
@@ -64,7 +61,7 @@ class Site:
     def __init__(self, root: Path = ROOT, today: Callable[[], str] | None = None,
                  checker: Callable[[str], dict] | None = None, worker_url: str | None = None):
         self.reports = Reports(root, today)
-        self.kg = Graph(root, self.reports.today, self.reports.uid_dates)
+        self.kg = Graph(root, self.reports.today, self.reports.uid_dates, self.reports.flags)
         self.auth = Auth(root, checker)
         self.ops = Ops(root, self.reports.today, worker_url)
         self.dist = root / "apps" / "web-ui" / "dist"
@@ -87,6 +84,63 @@ class Site:
             return target.read_bytes(), ctype, cache
         except (OSError, ValueError):
             return None
+
+
+Query = dict[str, list[str]]
+
+
+def _param(query: Query, name: str, default: str = "") -> str:
+    return query.get(name, [default])[0]
+
+
+def _record_uid(data: object, field: str, save: Callable[[str, str], dict]) -> dict:
+    if not (isinstance(data, dict) and isinstance(data.get("uid"), str) and isinstance(data.get(field), str)):
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"需要字串欄位 uid、{field}")
+    row = save(data["uid"], data[field])
+    return {"uid": row["uid"], field: row[field]}
+
+
+def _post_token(site: Site, data: object) -> dict:
+    if not (isinstance(data, dict) and isinstance(data.get("token"), str)):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
+    return site.auth.submit_token(data["token"])
+
+
+GET_ROUTES: dict[str, Callable[[Site, Query], dict]] = {
+    "/api/session": lambda _site, _q: {"local": True},  # 閘門在對外那一側改回 false（不顯示 /auth）
+    "/api/heartbeat": lambda _site, _q: {"ok": True},
+    "/api/today": lambda site, _q: site.reports.today_payload(),
+    "/api/reports": lambda site, _q: site.reports.list_payload(),
+    "/api/auth-health": lambda site, _q: site.auth.health(),
+    "/api/auth": lambda site, _q: site.auth.status(),
+    "/api/feedback-stats": lambda site, _q: site.reports.feedback_stats(),
+    # 維運（只限本機，由閘門擋）
+    "/api/ops": lambda site, _q: site.ops.status(),
+    "/api/ops/config": lambda site, _q: site.ops.config(),
+    "/api/ops/metrics": lambda site, q: site.ops.metrics(_param(q, "days", "14"), _param(q, "all", "0")),
+    "/api/search": lambda site, q: site.reports.search(_param(q, "q")),
+    # 知識圖譜（唯讀）
+    "/api/kg/entities": lambda site, q: site.kg.entities(_param(q, "q")),
+}
+
+GET_REGEX_ROUTES: list[tuple[re.Pattern[str], Callable[[Site, re.Match[str], Query], dict]]] = [
+    (re.compile(r"/api/reports/(\d{4}-\d{2}-\d{2})"), lambda site, m, _q: site.reports.report_payload(m[1])),
+    (re.compile(r"/api/feedback/([0-9a-f]{16})"), lambda site, m, _q: site.reports.feedback_target(m[1])),
+    (re.compile(r"/api/kg/item/([0-9a-f]{16}(?:,[0-9a-f]{16})*)"),
+     lambda site, m, q: site.kg.item(m[1].split(","), _param(q, "depth", "1"))),
+    # 實體的 key 是 Unicode，網址裡是百分比編碼
+    (re.compile(r"/api/kg/entity/([^/]+)"),
+     lambda site, m, q: site.kg.entity(unquote(m[1]), _param(q, "days", str(DEFAULT_KG_DAYS)))),
+]
+
+POST_HANDLERS: dict[str, Callable[[Site, object], dict]] = {
+    "/api/feedback": lambda site, data: _record_uid(data, "mark", site.reports.record),
+    "/api/kg-flag": lambda site, data: _record_uid(data, "flag", site.reports.record_flag),
+    "/api/auth/token": _post_token,
+    "/api/auth/test": lambda site, _data: site.auth.test_token(),
+    "/api/auth/revoke": lambda site, _data: site.auth.revoke_token(),
+    "/api/ops/request": lambda site, data: site.ops.request(data),
+}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -148,42 +202,13 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send_shell(404)
 
-    def _api_payload(self, path: str):
-        fixed = {
-            "/api/session": lambda: {"local": True},  # 閘門在對外那一側改回 false（不顯示 /auth）
-            "/api/heartbeat": lambda: {"ok": True},
-            "/api/today": self.site.reports.today_payload,
-            "/api/reports": self.site.reports.list_payload,
-            "/api/auth-health": self.site.auth.health,
-            "/api/auth": self.site.auth.status,
-            "/api/feedback-stats": self.site.reports.feedback_stats,
-            # 維運（只限本機，由閘門擋）
-            "/api/ops": self.site.ops.status,
-            "/api/ops/config": self.site.ops.config,
-        }
-        if path in fixed:
-            return fixed[path]()
-        if m := re.fullmatch(r"/api/reports/(\d{4}-\d{2}-\d{2})", path):
-            return self.site.reports.report_payload(m[1])
-        if m := re.fullmatch(r"/api/feedback/([0-9a-f]{16})", path):
-            return self.site.reports.feedback_target(m[1])
+    def _api_payload(self, path: str) -> dict:
         query = parse_qs(urlsplit(self.path).query)
-        if path == "/api/ops/metrics":
-            return self.site.ops.metrics(query.get("days", ["14"])[0], query.get("all", ["0"])[0])
-        if path == "/api/search":
-            return self.site.reports.search(query.get("q", [""])[0])
-        if path.startswith("/api/kg/"):
-            return self._kg_payload(path, query)
-        raise NotFound(path)
-
-    def _kg_payload(self, path: str, query: dict[str, list[str]]) -> dict:
-        """知識圖譜（唯讀）。實體的 key 是 Unicode，網址裡是百分比編碼。"""
-        if m := re.fullmatch(r"/api/kg/item/([0-9a-f]{16}(?:,[0-9a-f]{16})*)", path):
-            return self.site.kg.item(m[1].split(","), query.get("depth", ["1"])[0])
-        if m := re.fullmatch(r"/api/kg/entity/([^/]+)", path):
-            return self.site.kg.entity(unquote(m[1]), query.get("days", [str(DEFAULT_KG_DAYS)])[0])
-        if path == "/api/kg/entities":
-            return self.site.kg.entities(query.get("q", [""])[0])
+        if (handler := GET_ROUTES.get(path)) is not None:
+            return handler(self.site, query)
+        for pattern, regex_handler in GET_REGEX_ROUTES:
+            if m := pattern.fullmatch(path):
+                return regex_handler(self.site, m, query)
         raise NotFound(path)
 
     def _get_api(self, path: str) -> None:
@@ -224,31 +249,14 @@ class Handler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise ApiError(HTTPStatus.BAD_REQUEST, "body 不是合法的 JSON") from None
 
-    def _post_payload(self, path: str, data) -> dict:
-        if path in ("/api/feedback", "/api/kg-flag"):
-            field = "mark" if path == "/api/feedback" else "flag"
-            if not (isinstance(data, dict) and isinstance(data.get("uid"), str) and isinstance(data.get(field), str)):
-                raise ApiError(HTTPStatus.BAD_REQUEST, f"需要字串欄位 uid、{field}")
-            record = self.site.reports.record if field == "mark" else self.site.reports.record_flag
-            row = record(data["uid"], data[field])
-            return {"uid": row["uid"], field: row[field]}
-        if path == "/api/auth/token":
-            if not (isinstance(data, dict) and isinstance(data.get("token"), str)):
-                raise ApiError(HTTPStatus.BAD_REQUEST, "需要字串欄位 token")
-            return self.site.auth.submit_token(data["token"])
-        if path == "/api/auth/test":
-            return self.site.auth.test_token()
-        if path == "/api/ops/request":
-            return self.site.ops.request(data)
-        return self.site.auth.revoke_token()  # /api/auth/revoke
-
     def do_POST(self) -> None:
         path = urlsplit(self.path).path.rstrip("/")
-        if path not in POST_ROUTES:
-            self._send_json(404, {"error": "not found"})
-            return
         try:
-            self._send_json(200, self._post_payload(path, self._read_json()))
+            if (handler := POST_HANDLERS.get(path)) is None:
+                raise NotFound(path)  # 在讀 body 之前：未知路徑一律 404（不會因為少了 Content-Type 變 415）
+            self._send_json(200, handler(self.site, self._read_json()))
+        except NotFound:
+            self._send_json(404, {"error": "not found"})
         except ApiError as exc:
             self._send_json(exc.status, {"error": str(exc)})
         except Exception:

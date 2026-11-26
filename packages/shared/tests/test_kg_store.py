@@ -4,7 +4,7 @@ import psycopg
 import pytest
 
 from newsletter_shared import kg_store
-from newsletter_shared.kg_store import connect, dump, load, norm, open_readonly, sources, statuses
+from newsletter_shared.kg_store import connect, dump, load, norm, open_readonly, sources, sources_many, statuses
 
 
 def test_norm():
@@ -50,6 +50,21 @@ def test_statuses(ro):
 
 def test_sources(ro):
     assert sources(ro, 1, "S1") == 2
+    assert sources(ro, 2, "S2") == 1  # contradict 不算同一件事
+
+
+def test_sources_many(ro):
+    """批次版與逐筆的 sources() 一致：same 兩端都算到，自己的來源只算一次。"""
+    own = {1: "S1", 2: "S2", 3: "S3"}
+    assert sources_many(ro, own) == {eid: sources(ro, eid, src) for eid, src in own.items()} == {1: 2, 2: 1, 3: 2}
+    assert sources_many(ro, {1: "S3"}) == {1: 1}  # 連到的來源和自己同一家
+    assert sources_many(ro, {}) == {}
+
+
+def test_statuses_trusted_overrides(ro):
+    """使用者標可信的優先於矛盾。"""
+    assert statuses(ro, [1, 2, 3], {"a": "trusted"}) == {1: "active", 2: "active", 3: "active"}
+    assert statuses(ro, [1, 99], {}) == {1: "disputed", 99: "active"}  # 不存在的 id 當 active
 
 
 def test_readonly(ro):

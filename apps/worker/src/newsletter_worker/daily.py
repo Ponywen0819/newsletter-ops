@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timezone
 from typing import IO
 
-from newsletter_shared import ROOT, atomic, lock, metrics, today, tz
+from newsletter_shared import PIPELINE_STEPS, ROOT, atomic, lock, metrics, today, tz
 
 TZ = tz()  # log 的時間跟 config 的 timezone，不跟容器的 TZ
 EXIT_BUSY = 75
@@ -30,7 +30,7 @@ KILL_AFTER = 30  # 秒；送 SIGTERM 後還不結束就 SIGKILL
 TIMEOUTS = {"collect": 30 * 60, "write": 60 * 60, "render": 5 * 60, "send": 5 * 60}  # 秒，平常遠低於此
 LOCK = ROOT / "state" / "pipeline"  # 實際鎖的是 state/pipeline.lock
 RECORD = ROOT / "state" / "last_run.json"
-STEPS = ("collect", "write", "render", "send")
+STEPS = PIPELINE_STEPS
 MODULES = {
     "collect": "newsletter_collect.run",
     "write": "newsletter_writer.write",

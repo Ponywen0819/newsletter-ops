@@ -5,9 +5,10 @@ from datetime import datetime
 import pytest
 
 from newsletter_shared import kg_flags, kg_store
+from newsletter_shared.kg_store import sources as _sources
 from newsletter_writer import kg
 from newsletter_writer.kg import (
-    VERSION, _sources, background, build, edition, extract, grounded, grow_pool, main, norm, parse_json, prepare, rebuild, relate,
+    VERSION, background, build, edition, extract, grounded, grow_pool, main, norm, parse_json, prepare, rebuild, relate,
     statuses,
 )
 
@@ -40,11 +41,14 @@ def fake(stamp: str, calls: list[str] | None = None):
             calls.append(stage)
         if stage == "kg_extract":
             return REPLIES[stamp]
-        pairs = json.loads(prompt.rsplit("\n\n", 1)[1])["pairs"]
-        nb, nc = (next(p["new"] for p in pairs if p["uid"] == x) for x in (B, C))
-        return {"links": [{"new": nb, "old": 1, "kind": "retract", "quote": "denied the report"},
-                          {"new": nc, "old": 1, "kind": "contradict", "quote": "made up evidence"},  # 引句對不上
-                          {"new": nc, "old": 999, "kind": "follow"}]}  # 沒提供的候選
+        new = {p["uid"]: p["new"] for p in json.loads(prompt.rsplit("\n\n", 1)[1])["pairs"]}  # 這一批有的事件
+        links = []
+        if B in new:
+            links.append({"new": new[B], "old": 1, "kind": "retract", "quote": "denied the report"})
+        if C in new:
+            links += [{"new": new[C], "old": 1, "kind": "contradict", "quote": "made up evidence"},  # 引句對不上
+                      {"new": new[C], "old": 999, "kind": "follow"}]  # 沒提供的候選
+        return {"links": links}
     return ask
 
 
@@ -240,5 +244,123 @@ def test_import_sqlite(tmp_path, pg, monkeypatch):
         }
         assert con.execute("INSERT INTO events(uid) VALUES (%s) RETURNING id", (C,)).fetchone()[0] == 6
         assert con.execute("INSERT INTO mentions(event, key) VALUES (6, 'k') RETURNING id").fetchone()[0] == 4
+    finally:
+        con.close()
+
+
+def test_ask_all():
+    """多批同時問，回覆仍照 prompt 的順序；任一批失敗就整個拋出。"""
+    import time
+
+    def ask(prompt: str, stage: str) -> dict:
+        time.sleep(0.05 if prompt == "a" else 0)  # 第一批最慢：結果仍要排第一
+        if prompt == "boom":
+            raise RuntimeError("quota")
+        return {"p": prompt, "stage": stage}
+
+    assert kg.ask_all(ask, [], "kg_extract") == []
+    assert kg.ask_all(ask, ["a"], "kg_extract") == [{"p": "a", "stage": "kg_extract"}]
+    assert [r["p"] for r in kg.ask_all(ask, ["a", "b", "c"], "kg_relate")] == ["a", "b", "c"]
+    with pytest.raises(RuntimeError, match="quota"):
+        kg.ask_all(ask, ["a", "boom"], "kg_relate")
+
+
+def test_ask_all_stops_queued_batches_on_failure(monkeypatch):
+    """一批失敗（多半是額度或認證）：還在排隊的批不再啟動，不白花額度。"""
+    import threading
+
+    monkeypatch.setattr(kg, "PARALLEL_ASKS", 2)
+    started: list[str] = []
+    slow_running, release = threading.Event(), threading.Event()
+
+    def ask(prompt: str, stage: str) -> dict:
+        started.append(prompt)
+        if prompt == "slow":
+            slow_running.set()
+            release.wait(5)  # 失敗發生時它還在跑：失敗那條執行緒會先空出來去拿下一批
+            return {}
+        if prompt == "boom":
+            slow_running.wait(5)
+            raise RuntimeError("quota")
+        return {}
+
+    def free_slow():
+        import time
+        time.sleep(0.2)  # 讓失敗那條執行緒有機會去拿下一批
+        release.set()
+
+    helper = threading.Thread(target=free_slow)
+    helper.start()
+    with pytest.raises(RuntimeError, match="quota"):
+        kg.ask_all(ask, ["slow", "boom", "later1", "later2"], "kg_extract")
+    helper.join(timeout=2)
+    assert sorted(started) == ["boom", "slow"]  # 後面兩批一個都沒啟動
+
+
+@pytest.mark.parametrize("raw, want", [(None, 2), ("", 2), (" ", 2), ("abc", 2), ("1", 1), (" 3 ", 3), ("0", 1), ("-5", 1), ("99", 4)])
+def test_parallel_asks(raw, want):
+    """NEWSLETTER_KG_PARALLEL 打錯不能讓 import 失敗（newsletter-write 一 import 就會掛）。"""
+    assert kg.parallel_asks(raw) == want
+
+
+def test_extract_relate_multi_batch(root, pg, monkeypatch):
+    """每批一則、各批同時問：結果和一次問完相同；別批的 uid 出現在這批的回覆裡不收。"""
+    monkeypatch.setattr(kg, "EXTRACT_BATCH", 1)
+    monkeypatch.setattr(kg, "RELATE_BATCH", 1)
+    con = kg_store.connect()
+    try:
+        assert extract(con, "2026-01-01", DAY1, fake("2026-01-01"))["extracted"] == 1
+        stats = extract(con, "2026-01-02", DAY2, fake("2026-01-02"))
+        assert stats == {"items": 2, "extracted": 2, "dropped": 0}  # 回覆含另一批的 uid：只收這批的，不重複
+        assert con.execute("SELECT COUNT(*) FROM events WHERE date='2026-01-02'").fetchone()[0] == 2
+        calls: list[str] = []
+        related = relate(con, "2026-01-02", {i["uid"]: kg.article(i) for i in DAY2}, fake("2026-01-02", calls))
+        assert calls == ["kg_relate", "kg_relate"]  # 兩個事件各一批
+        assert related == {"compared": 2, "links": 1, "links_rejected": 2}  # 與一次問完相同
+        assert con.execute("SELECT kind FROM links").fetchall() == [("retract",)]
+    finally:
+        con.close()
+
+
+def test_reextract_forgets_old_events(root, pg, monkeypatch):
+    """萃取器版本變了：同一則重抽，舊事件連同實體與連結一起刪掉。"""
+    con = kg_store.connect()
+    try:
+        extract(con, "2026-01-01", DAY1, fake("2026-01-01"))
+        extract(con, "2026-01-02", DAY2, fake("2026-01-02"))
+        relate(con, "2026-01-02", {i["uid"]: kg.article(i) for i in DAY2}, fake("2026-01-02"))
+        assert con.execute("SELECT COUNT(*) FROM links").fetchone()[0] > 0
+        monkeypatch.setattr(kg, "VERSION", kg.VERSION + 1)
+        extract(con, "2026-01-01", DAY1, fake("2026-01-01"))
+        old = con.execute("SELECT COUNT(*) FROM events WHERE uid=%s AND id=1", (A,)).fetchone()[0]
+        assert old == 0  # 原本的 1 號事件不在了
+        assert con.execute("SELECT COUNT(*) FROM links WHERE src=1 OR dst=1").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM mentions WHERE event=1").fetchone()[0] == 0
+    finally:
+        con.close()
+
+
+def test_candidates_limit_and_order(pg):
+    """候選依共同實體數、日期、id 排，各取 CANDIDATES 個；同一則與比自己晚的不算。"""
+    con = kg_store.connect()
+    try:
+        with con.transaction():
+            for n in range(8):
+                uid = f"{n:016x}"
+                con.execute("INSERT INTO items VALUES (%s, '2026-01-01', 't', 'u', 's', 1)", (uid,))
+                eid = con.execute("INSERT INTO events(uid, date, summary, quote, related) VALUES (%s, '2026-01-01', %s, 'q', 1) "
+                                  "RETURNING id", (uid, f"e{n}")).fetchone()[0]
+                keys = ["acme", "beta"] if n % 2 else ["acme"]
+                for k in keys:
+                    con.execute("INSERT INTO mentions(event, key, name, type) VALUES (%s, %s, %s, 'org')", (eid, k, k))
+            con.execute("INSERT INTO items VALUES ('ffffffffffffffff', '2026-01-02', 't', 'u', 's', 1)")
+            new = con.execute("INSERT INTO events(uid, date, summary, quote) VALUES ('ffffffffffffffff', '2026-01-02', 'new', 'q') "
+                              "RETURNING id").fetchone()[0]
+            for k in ("acme", "beta"):
+                con.execute("INSERT INTO mentions(event, key, name, type) VALUES (%s, %s, %s, 'org')", (new, k, k))
+        got = kg._candidates(con, [new], "2026-01-02")[new]
+        # 共同兩個實體的（奇數號）先，同分時 id 大的（較新）先；最多 CANDIDATES 個
+        assert [c["summary"] for c in got] == ["e7", "e5", "e3", "e1", "e6"][:kg.CANDIDATES]
+        assert kg._candidates(con, [], "2026-01-02") == {}
     finally:
         con.close()

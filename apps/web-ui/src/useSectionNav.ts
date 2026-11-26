@@ -25,6 +25,8 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
       setActiveId(id)
       lockUntil.current = Date.now() + 800
       target.scrollIntoView?.({ block: 'start', behavior: instant ? 'instant' : 'auto' })
+      // 焦點跟著過去：鍵盤與螢幕閱讀器接著讀的是那一則，而不是停在目錄（手機的目錄還會收起來）
+      if (!instant) (target as HTMLElement).focus?.({ preventScroll: true })
     },
     [rootRef],
   )
@@ -68,7 +70,9 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
 
   // 開頭已越過頁面上方 30% 的最後一項是目前項；捲到底時是最後一項
   useEffect(() => {
-    const onScroll = () => {
+    let frame = 0
+    const update = () => {
+      frame = 0
       if (Date.now() < lockUntil.current || !isWide()) return
       const units = [...(rootRef.current?.querySelectorAll<HTMLElement>('[data-unit]') ?? [])]
       let id = units[0]?.dataset.unit
@@ -79,9 +83,13 @@ export function useSectionNav(ids: string[], rootRef: RefObject<HTMLElement | nu
       if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) id = units.at(-1)?.dataset.unit
       if (id) setActiveId(id)
     }
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update)
+    }
     window.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('resize', onScroll)
     return () => {
+      cancelAnimationFrame(frame)
       window.removeEventListener('scroll', onScroll)
       window.removeEventListener('resize', onScroll)
     }

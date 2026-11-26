@@ -1,8 +1,19 @@
+from datetime import date
 import json
 import re
 
-from newsletter_shared import ROOT
-from newsletter_shared.metrics import METRICS_DIR, TRANSCRIPTS, claude_usage, split_runs, summary_line
+from newsletter_shared import PIPELINE_STEPS, ROOT
+from newsletter_shared.metrics import (
+    COST_STAGES,
+    METRICS_DIR,
+    STAGES,
+    TRANSCRIPTS,
+    claude_usage,
+    read_day_rows,
+    split_runs,
+    summarize_run,
+    summary_line,
+)
 
 
 def test_paths_from_root():
@@ -63,3 +74,123 @@ def test_summary_line():
     line = summary_line("2026-01-01", run, ("fetch", "search", "enrich", "pipeline"))
     assert line.split()[4:14] == ["20.0", "60.0", "-", "400.0", "3", "3", "9", "1.77", "0", "2"]
     assert "write:6" in line
+
+
+def test_constants():
+    assert PIPELINE_STEPS == ("collect", "write", "render", "send")
+    assert STAGES == ("fetch", "curate", "search", "enrich", "claude", "render", "pipeline")
+    assert COST_STAGES == ("claude", "search", "kg_extract", "kg_relate")
+
+
+def test_read_day_rows(tmp_path):
+    """容忍不存在的檔案、空行、寫到一半的殘缺 JSON 行，以及缺 stage/ts 的列。"""
+    assert read_day_rows(tmp_path, "2026-01-01") == []
+    metrics_dir = tmp_path / "logs" / "metrics"
+    metrics_dir.mkdir(parents=True)
+    r1 = {"ts": "2026-01-01T08:00:00+08:00", "stage": "fetch", "seconds": 10.0}
+    r2 = {"ts": "2026-01-01T08:01:00+08:00", "stage": "curate", "seconds": 2.0, "items": 15}
+    (metrics_dir / "2026-01-01.jsonl").write_text("\n".join([
+        json.dumps(r1),
+        "",
+        "123",
+        json.dumps({"ts": "2026-01-01T08:00:30+08:00"}),
+        json.dumps({"stage": "search"}),
+        json.dumps(r2),
+        '{"ts": "2026-01-01T08:05',
+    ]), encoding="utf-8")
+    assert read_day_rows(metrics_dir, "2026-01-01") == [r1, r2]
+    assert read_day_rows(metrics_dir, date(2026, 1, 1)) == [r1, r2]
+
+
+def test_summarize_run():
+    run = {
+        "claude": {"ts": "2026-01-01T08:05:00+08:00", "label": "ops", "seconds": 200.0, "api_turns": 12,
+                   "total_cost_usd": 0.5,
+                   "tokens": {"input": 10, "cache_write": 20, "cache_read": 30, "output": 40}},
+        "fetch": {"ts": "2026-01-01T08:00:00+08:00", "label": "test", "seconds": 10.0},
+        "curate": {"ts": "2026-01-01T08:01:00+08:00", "seconds": 2.5, "items": 30},
+        "search": {"ts": "2026-01-01T08:02:00+08:00", "seconds": 15.0, "total_cost_usd": 0.125},
+        "kg_extract": {"ts": "2026-01-01T08:06:00+08:00", "seconds": 5.0, "total_cost_usd": 0.05},
+        "kg_relate": {"ts": "2026-01-01T08:06:30+08:00", "total_cost_usd": 0.025},
+        "pipeline": {"ts": "2026-01-01T08:07:00+08:00", "seconds": 420.0, "trigger": "schedule",
+                     "exit_code": 0, "step": None},
+    }
+    assert summarize_run(date(2026, 1, 1), run) == {
+        "date": "2026-01-01",
+        "time": "08:00",
+        "label": "test",
+        "trigger": "schedule",
+        "result": {"exit_code": 0, "step": None},
+        "seconds": {"fetch": 10.0, "curate": 2.5, "search": 15.0, "claude": 200.0, "pipeline": 420.0},
+        "tokens": {"input": 60, "output": 40},
+        "turns": 12,
+        "usd": 0.7,
+        "items": 30,
+    }
+    minimal = {"render": {"ts": "2026-01-02T09:15:30+08:00", "seconds": 1.2}}
+    assert summarize_run("2026-01-02", minimal) == {
+        "date": "2026-01-02",
+        "time": "09:15",
+        "label": "prod",
+        "trigger": None,
+        "result": None,
+        "seconds": {"render": 1.2},
+        "tokens": None,
+        "turns": None,
+        "usd": None,
+        "items": None,
+    }
+
+
+def test_summarize_run_custom_stages_and_guards():
+    """summary_line 傳自己的 stages 時秒數照印；bool 不算秒數；空的 run 明確報錯。"""
+    run = {"cluster": {"ts": "2026-01-01T08:00:00+08:00", "seconds": 3.0},
+           "fetch": {"ts": "2026-01-01T08:00:01+08:00", "seconds": True}}
+    assert summarize_run("2026-01-01", run, ("cluster", "fetch"))["seconds"] == {"cluster": 3.0}
+    assert "   3.0" in summary_line("2026-01-01", run, ("cluster",))
+    try:
+        summarize_run("2026-01-01", {})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("空的 run 應該報錯")
+
+
+def test_record_is_thread_safe(tmp_path, monkeypatch):
+    """KG 的各批同時寫紀錄：每一行都要是完整的 JSON，一筆都不能少。"""
+    import threading
+
+    from newsletter_shared import metrics
+
+    monkeypatch.setattr(metrics, "METRICS_DIR", tmp_path)
+    monkeypatch.setattr(metrics, "enabled", lambda: True)
+    payload = "x" * 5000  # 比一次 write 的緩衝區大，沒有鎖時容易交錯
+    threads = [threading.Thread(target=lambda n=n: [metrics.record("kg_extract", n=n, blob=payload) for _ in range(20)])
+               for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    (path,) = tmp_path.glob("*.jsonl")
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 80 and all(r["blob"] == payload for r in rows)
+
+
+def test_record_writes_under_lock(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from newsletter_shared import metrics
+
+    monkeypatch.setattr(metrics, "METRICS_DIR", tmp_path)
+    monkeypatch.setattr(metrics, "enabled", lambda: True)
+    real_open = Path.open
+    held: list[bool] = []
+
+    def spy(self, *a, **k):
+        if self.parent == tmp_path:
+            held.append(metrics._WRITE_LOCK.locked())
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(Path, "open", spy)
+    metrics.record("kg_extract", n=1)
+    assert held == [True]

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { edgePath, layoutEvents, RADIUS, shortDate, shortLabel } from '../kgLayout'
+import { edgePath, HIT, layoutEvents, RADIUS, shortDate, shortLabel } from '../kgLayout'
 import type { Flags, KgEntityType, KgEvent, KgFlag, KgGraph, KgKind, KgLink, KgStatus } from '../types'
 import { FactFlagButton } from './FactFlagButton'
 import { EXTERNAL } from './Inline'
@@ -109,6 +109,8 @@ function Canvas({ graph, seeds, selected, onSelect }: { graph: KgGraph; seeds: S
               onClick={() => onSelect(event.id)}
             >
               <title>{event.summary}</title>
+              {/* 圓只有 18px，手指點不準：底下墊一塊透明的 44px 點擊區 */}
+              <rect className="kg-hit" x={-HIT / 2} y={-HIT / 2} width={HIT} height={HIT} />
               <circle r={RADIUS} />
               <text y={RADIUS + 14} textAnchor="middle">
                 {shortLabel(event.summary)}
@@ -152,16 +154,18 @@ interface DetailProps {
   onFlag: (uid: string, flag: KgFlag | '') => void
   onSelect: (id: number) => void
   centered: boolean
+  ref: RefObject<HTMLElement | null>
 }
 
-function Detail({ event, graph, byId, flags, onFlag, onSelect, centered }: DetailProps) {
+/** 選了別的事件：不整塊用 aria-live（每次都把引句、實體、關係全唸一遍），改由 KgView 把焦點移到標題。 */
+function Detail({ event, graph, byId, flags, onFlag, onSelect, centered, ref }: DetailProps) {
   return (
-    <section className="kg-detail" aria-label="事件詳情" aria-live="polite">
+    <section ref={ref} className="kg-detail" aria-label="事件詳情">
       <p className="kg-meta">
         {event.date} · {event.source}
         {event.sources > 1 && ` 等 ${event.sources} 個來源`} <StatusBadge status={event.status} />
       </p>
-      <h2>{event.summary}</h2>
+      <h2 tabIndex={-1}>{event.summary}</h2>
       {event.quote && <blockquote className="kg-quote">{event.quote}</blockquote>}
       <p className="kg-source">
         原文：
@@ -228,22 +232,46 @@ export function KgView({ graph, seeds = [], onFlagged = () => {} }: Props) {
   // 列表新到舊：最近的事最常被找
   const listed = useMemo(() => graph.events.toReversed(), [graph.events])
 
+  // 從下面的列表或關係選事件時，詳情在畫面外（手機上常常隔了好幾屏）：捲過去並把焦點移到標題。
+  // 點圖上的節點時詳情就在圖下面，只在看不到時捲到剛好看得到，焦點不動
+  const detailRef = useRef<HTMLElement>(null)
+  // 每次點選都是一個新的要求（seq 遞增）：再點一次目前選中的那則（例如在列表裡）也會捲過去
+  const [reveal, setReveal] = useState<{ how: 'focus' | 'nearest'; seq: number } | null>(null)
+  const pick = (how: 'focus' | 'nearest') => (id: number) => {
+    setPicked(id)
+    setReveal((r) => ({ how, seq: (r?.seq ?? 0) + 1 }))
+  }
+  useEffect(() => {
+    const detail = detailRef.current
+    if (!reveal || !detail) return
+    detail.scrollIntoView?.({ block: reveal.how === 'focus' ? 'start' : 'nearest' })
+    if (reveal.how === 'focus') detail.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true })
+  }, [reveal])
+
   return (
     <div className="kg">
       <Legend />
-      <Canvas graph={graph} seeds={seedSet} selected={selected} onSelect={setPicked} />
+      <Canvas graph={graph} seeds={seedSet} selected={selected} onSelect={pick('nearest')} />
       {graph.truncated && <p className="kg-note">事件太多，只畫出其中一部分。</p>}
       {event && (
-        <Detail event={event} graph={graph} byId={byId} flags={flags} onFlag={onFlag} onSelect={setPicked} centered={seedSet.has(event.id)} />
+        <Detail
+          ref={detailRef}
+          event={event}
+          graph={graph}
+          byId={byId}
+          flags={flags}
+          onFlag={onFlag}
+          onSelect={pick('focus')}
+          centered={seedSet.has(event.id)}
+        />
       )}
       <section className="kg-list">
         <h2>事件列表</h2>
         <ol>
           {listed.map((e) => (
             <li key={e.id}>
-              <button type="button" className="kg-linkish" aria-current={e.id === selected || undefined} onClick={() => setPicked(e.id)}>
-                <span className="kg-list-date">{e.date}</span>
-                {e.summary}
+              <button type="button" className="kg-linkish" aria-current={e.id === selected || undefined} onClick={() => pick('focus')(e.id)}>
+                <span className="kg-list-date">{e.date}</span> {e.summary}
               </button>
               <StatusBadge status={e.status} />
             </li>

@@ -157,3 +157,15 @@ describe('授權橫幅', () => {
     await vi.waitFor(() => expect(net.calls.filter((c) => c.path === '/api/auth-health')).toHaveLength(2))
   })
 })
+
+describe('跳到主要內容', () => {
+  it('第一個可以 Tab 到的連結；按了焦點移到內容區，網址不變', async () => {
+    open(() => 200)
+    const skip = screen.getByRole('link', { name: '跳到主要內容' })
+    expect(skip).toHaveAttribute('href', '#content')
+    act(() => skip.click())
+    expect(document.activeElement).toBe(document.getElementById('content'))
+    expect(document.activeElement?.tagName).toBe('MAIN')
+    expect(screen.getByRole('navigation', { name: '主選單' })).toBeInTheDocument()
+  })
+})

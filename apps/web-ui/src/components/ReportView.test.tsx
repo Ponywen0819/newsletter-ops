@@ -1,4 +1,4 @@
-import { cleanup, render as rtlRender, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render as rtlRender, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { act, type ReactElement } from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -141,6 +141,8 @@ describe('ReportView 筆電新聞目錄', () => {
     Element.prototype.scrollIntoView = function (this: HTMLElement, arg?: boolean | ScrollIntoViewOptions) {
       scrolled.push({ el: this, arg: typeof arg === 'object' ? arg : undefined })
     }
+    // scroll-spy 一個畫格才算一次：測試裡讓畫格立刻到，每次捲動事件都看得到結果
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => (cb(0), 0))
   })
   afterEach(() => {
     window.history.replaceState(null, '', '/')
@@ -148,6 +150,7 @@ describe('ReportView 筆電新聞目錄', () => {
     Reflect.deleteProperty(document.documentElement, 'scrollHeight')
     Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
     vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   const setup = () => render(<ReportView report={report} marks={{}} onMark={() => {}} />)
@@ -160,6 +163,33 @@ describe('ReportView 筆電新聞目錄', () => {
   }
   const scrollWindow = () => act(() => void window.dispatchEvent(new Event('scroll')))
   const tallPage = () => Object.defineProperty(document.documentElement, 'scrollHeight', { configurable: true, value: 5000 })
+
+  it('窄螢幕的收合目錄：在今日頭條之後、預設收起；點一則就捲過去、收起來（左欄目錄同一份清單）', async () => {
+    setup()
+    const toc = document.querySelector<HTMLDetailsElement>('details.mobile-toc')!
+    expect(toc.previousElementSibling).toHaveClass('callout')
+    expect(toc.open).toBe(false)
+    expect(within(toc).getByText('本期目錄').tagName).toBe('SUMMARY')
+    const links = within(within(toc).getByRole('navigation', { name: '新聞目錄（窄螢幕）', hidden: true })).getAllByRole('link', { hidden: true })
+    expect(links.map((a) => a.textContent)).toEqual(list().getAllByRole('link').map((a) => a.textContent))
+    toc.open = true
+    await userEvent.click(within(toc).getByRole('link', { name: '資料來源' }))
+    expect(toc.open).toBe(false)
+    expect(scrolledTo()).toEqual(['s-sources'])
+    expect(window.location.hash).toBe('#s-sources')
+  })
+
+  it('窄螢幕目錄：跳過去後焦點在那一則（不會困在收起來的目錄裡）；帶修飾鍵（新分頁）不收', async () => {
+    setup()
+    const toc = document.querySelector<HTMLDetailsElement>('details.mobile-toc')!
+    toc.open = true
+    const link = within(toc).getByRole('link', { name: '資料來源', hidden: true })
+    fireEvent.click(link, { ctrlKey: true }) // 新分頁開：照瀏覽器的預設，不攔、不收
+    expect(toc.open).toBe(true)
+    await userEvent.click(link)
+    expect(toc.open).toBe(false)
+    expect(document.activeElement).toBe(document.querySelector('[data-unit="s-sources"]'))
+  })
 
   it('內文一整頁依序顯示：所有單位都在、沒有翻頁按鈕；目錄預設標在第一則', () => {
     setup()

@@ -5,7 +5,9 @@ import os
 import pytest
 
 from newsletter_llm import runner
-from newsletter_llm.runner import EXIT_AUTH, EXIT_QUOTA, Usage, agent_env, failure, main, pick_auth, probe, run
+from newsletter_llm.runner import (
+    EXIT_AUTH, EXIT_QUOTA, FAST_MODEL, Usage, agent_env, ask_json, failure, main, parse_json_object, pick_auth, probe, run,
+)
 from newsletter_shared import auth_store
 
 sdk = runner.sdk
@@ -223,3 +225,66 @@ def test_probe_api_key_source(monkeypatch):
     assert res["ok"] is False and res["kind"] == "api_key" and res["api_key_source"] == "ANTHROPIC_API_KEY"
     res = stream(monkeypatch, init("none"), AUTH_MSG, BAD, raises=RuntimeError("ResultError"))
     assert res["kind"] == "auth" and res["api_key_source"] == "none"
+
+
+# parse_json_object() 與 ask_json()
+
+
+def test_parse_json_object(monkeypatch):
+    assert FAST_MODEL == "claude-haiku-5-5"
+    assert parse_json_object('好的\n```json\n{"a": 1, "b": {"c": 2}}\n```\n完') == {"a": 1, "b": {"c": 2}}
+    for bad in ("沒有", "", "} {"):
+        with pytest.raises(ValueError, match="回覆裡沒有 JSON 物件"):
+            parse_json_object(bad)
+    with pytest.raises(ValueError):
+        parse_json_object("{bad json}")
+    monkeypatch.setattr(json, "loads", lambda _: [1, 2])
+    with pytest.raises(ValueError, match="回覆不是 JSON 物件"):
+        parse_json_object("{}")
+
+
+def _reply_usage(text: str | None) -> Usage:
+    u = Usage()
+    u.feed(sdk.AssistantMessage(content=[sdk.TextBlock(text or "")], model=FAST_MODEL, message_id="m1"))
+    u.feed(sdk.ResultMessage(subtype="success", duration_ms=1, duration_api_ms=1, is_error=False, num_turns=1,
+                             session_id="s1", total_cost_usd=0.01, result=text,
+                             usage={"input_tokens": 10, "output_tokens": 5}))
+    return u
+
+
+def test_ask_json_ok(monkeypatch, capsys):
+    recorded: list[tuple[str, dict]] = []
+    monkeypatch.setattr(runner.metrics, "record", lambda stage, **kw: recorded.append((stage, kw)))
+
+    def fake_run(prompt, *, tools, max_turns, token, tag, **options):
+        assert prompt == "請回 JSON" and tools == [] and max_turns == 2
+        assert token == "tok" and tag == "kg" and options == {"model": FAST_MODEL}
+        return _reply_usage('前言 {"items": [1, 2]} 後語'), None, 1.5
+
+    monkeypatch.setattr(runner, "run", fake_run)
+    assert ask_json("請回 JSON", token="tok", stage="kg_extract", tag="kg") == {"items": [1, 2]}
+    assert len(recorded) == 1
+    stage, rec = recorded[0]
+    assert stage == "kg_extract" and rec["status"] == "ok" and rec["runner"] == "sdk" and rec["seconds"] == 1.5
+    assert "[kg] ok turns=1" in capsys.readouterr().err
+
+
+def test_ask_json_failure_and_bad_json(monkeypatch):
+    """有結果的失敗照記用量再拋 RuntimeError；沒結果不記用量直接拋；回覆非 JSON 記完 ok 後拋 ValueError。"""
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(runner.metrics, "record", lambda stage, **kw: recorded.append((stage, kw["status"])))
+
+    monkeypatch.setattr(runner, "run", lambda *a, **k: (failed("rate_limit", "429 quota", 429), None, 0.5))
+    with pytest.raises(RuntimeError, match="額度用完"):
+        ask_json("p", token="tok", stage="cluster", tag="cluster", model="m", max_turns=3)
+    assert recorded == [("cluster", "quota_exhausted")]
+
+    monkeypatch.setattr(runner, "run", lambda *a, **k: (Usage(), "RuntimeError: boom", 0.2))
+    with pytest.raises(RuntimeError, match=r"沒有收到結果.*boom"):
+        ask_json("p", token="tok", stage="cluster", tag="cluster")
+    assert len(recorded) == 1  # usage.result 為 None 時不呼叫 log_usage
+
+    monkeypatch.setattr(runner, "run", lambda *a, **k: (_reply_usage("沒有大括號"), None, 0.3))
+    with pytest.raises(ValueError, match="回覆裡沒有 JSON 物件"):
+        ask_json("p", token="tok", stage="kg_relate", tag="kg")
+    assert recorded[-1] == ("kg_relate", "ok")

@@ -19,7 +19,8 @@ interface PeriodicSyncEvent extends ExtendableEvent {
 precache(self.__WB_MANIFEST)
 cleanupOutdatedCaches()
 
-// 單一 bundle，新版立刻接手不會讓開著的頁面找不到檔案
+// 新版立刻接手並清掉舊版的 precache。開著的舊頁面之後才要載的分包（知識圖譜、維運）會找不到，
+// 由 RouteErrorBoundary 接住、請使用者重新載入（只換內容區，不會整頁白掉）
 void self.skipWaiting()
 clientsClaim()
 

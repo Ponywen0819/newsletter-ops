@@ -21,7 +21,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 8px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 8px;
   background: var(--card);
   color: var(--text);
@@ -150,6 +150,11 @@
 .kg-node {
   cursor: pointer;
 }
+/* 透明的點擊區：fill 不是 none 才收得到點擊 */
+.kg-node .kg-hit {
+  fill: transparent;
+  stroke: none;
+}
 .kg-node circle {
   fill: var(--card);
   stroke: var(--link);
@@ -189,6 +194,12 @@
 
 /* ---- 詳情與列表 ---- */
 
+/* 捲到詳情時停在 sticky 標頭（≥1024px）下面 */
+@media (min-width: 1024px) {
+  .kg-detail {
+    scroll-margin-top: 61px;
+  }
+}
 .kg-detail {
   margin: 16px 0;
   padding: 12px 16px;
@@ -326,6 +337,20 @@
 @media (pointer: coarse) {
   .kg-toolbar .fb-btn,
   .kg-list .kg-linkish {
+    min-height: 44px;
+  }
+  /* 實體膠囊、關係、「回到晨報」「以這則為中心」、實體清單：原本只有 17～24px 高，手指點不準 */
+  .kg-search input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  .kg-chips a,
+  .kg-relations .kg-linkish,
+  .kg-actions a,
+  .kg-items a,
+  .kg-entity-list a {
+    display: inline-flex;
+    align-items: center;
     min-height: 44px;
   }
 }

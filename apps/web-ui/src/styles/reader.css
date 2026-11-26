@@ -1,10 +1,53 @@
 /*
  * 筆電的新聞目錄（≥1100px）：左側 sticky 的目錄＋右側一整頁往下捲的內文。
  * 內文與窄螢幕完全一樣（所有新聞依序顯示、用滾輪閱讀）；目錄只負責「現在讀到哪、點一下跳過去」。
- * <1100px 沒有目錄，.unit、.group 只是沒有樣式的包裝。
+ * <1100px 沒有左欄：目錄改成內文最上面（今日頭條之後）一個收合的 .mobile-toc；.unit、.group 只是沒有樣式的包裝。
  */
 .reader-nav {
   display: none;
+}
+/* 窄螢幕的收合目錄（≥1100px 有左欄，不顯示） */
+.mobile-toc {
+  margin: 0 0 16px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  font-size: var(--fs-list);
+}
+/* 維持 summary 預設的 list-item：瀏覽器的展開／收合三角形才會在（display:flex 會把它弄不見） */
+.mobile-toc summary {
+  padding: 12px 14px; /* 一行字＋上下內距超過 44px，手指點得到 */
+  line-height: 1.4;
+  color: var(--heading);
+  font-weight: 600;
+  cursor: pointer;
+}
+.mobile-toc nav {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0 14px 10px;
+  border-top: 1px solid var(--rule);
+}
+.mobile-toc ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mobile-toc .reader-nav-title {
+  margin: 12px 0 2px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--muted);
+}
+.mobile-toc a {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  line-height: 1.4;
+}
+@media (min-width: 1100px) {
+  .mobile-toc {
+    display: none;
+  }
 }
 @media (min-width: 1100px) {
   /* 卡片在這幾頁只是容器：寬度放到「左欄 280 ＋ 間距 24 ＋ 右欄 720」，白底改由右欄承擔。
@@ -106,10 +149,12 @@
   .reader-body > .unit:first-child > h2 {
     margin-top: 0;
   }
-  /* 點目錄／j／k 捲過去時，停在 sticky 標頭的下面，而不是被它蓋住 */
+}
+/* 點目錄／j／k 捲過去時停在 sticky 標頭的下面，而不是被它蓋住；標頭從 1024px 起就是 sticky（layout.css） */
+@media (min-width: 1024px) {
   .reader .unit,
   .reader .group-title {
-    scroll-margin-top: calc(var(--header-h) + 16px);
+    scroll-margin-top: calc(var(--header-h, 45px) + 16px);
   }
 }
 /* 點目錄時平順捲過去；系統設定「減少動態效果」的人不套用 */

@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS links(src BIGINT, dst BIGINT, kind TEXT, quote TEXT, 
 CREATE INDEX IF NOT EXISTS mentions_key ON mentions(key);
 CREATE INDEX IF NOT EXISTS events_uid ON events(uid);
 CREATE INDEX IF NOT EXISTS links_dst ON links(dst);
+CREATE INDEX IF NOT EXISTS mentions_event ON mentions(event);
+CREATE INDEX IF NOT EXISTS links_src ON links(src);
+CREATE INDEX IF NOT EXISTS events_date ON events(date);
 """
 
 TYPES = {"org", "person", "product", "place", "other"}
@@ -73,15 +76,12 @@ def statuses(con: psycopg.Connection, ids: list[int], flags: dict[str, str]) -> 
     一個來源矛盾＝有爭議；明確撤回，或兩個以上來源矛盾＝失效。"""
     if not ids:
         return {}
-    marks = ",".join(["%s"] * len(ids))
-    out = {eid: "active" for eid in ids}
-    for eid, uid in con.execute(f"SELECT id, uid FROM events WHERE id IN ({marks})", ids):
-        if flags.get(uid) == "wrong":
-            out[eid] = "invalid"
+    uid_of = dict(con.execute("SELECT id, uid FROM events WHERE id = ANY(%s)", (ids,)).fetchall())
+    out = {eid: "invalid" if flags.get(uid_of.get(eid)) == "wrong" else "active" for eid in ids}
     against: dict[int, dict[str, set]] = {}
     for dst, kind, src_uid, source in con.execute(
-            f"""SELECT l.dst, l.kind, e.uid, i.source FROM links l JOIN events e ON e.id=l.src JOIN items i ON i.uid=e.uid
-                WHERE l.dst IN ({marks}) AND l.kind IN ('contradict', 'retract')""", ids):
+            """SELECT l.dst, l.kind, e.uid, i.source FROM links l JOIN events e ON e.id=l.src JOIN items i ON i.uid=e.uid
+               WHERE l.dst = ANY(%s) AND l.kind IN ('contradict', 'retract')""", (ids,)):
         if flags.get(src_uid) != "wrong":
             against.setdefault(dst, {}).setdefault(kind, set()).add(source)
     for eid, kinds in against.items():
@@ -91,17 +91,29 @@ def statuses(con: psycopg.Connection, ids: list[int], flags: dict[str, str]) -> 
             out[eid] = "invalid"
         elif kinds.get("contradict"):
             out[eid] = "disputed"
-    trusted = [eid for eid, uid in con.execute(f"SELECT id, uid FROM events WHERE id IN ({marks})", ids)
-               if flags.get(uid) == "trusted"]
-    out.update({eid: "active" for eid in trusted})
+    out.update({eid: "active" for eid, uid in uid_of.items() if flags.get(uid) == "trusted"})
     return out
 
 
 def sources(con: psycopg.Connection, eid: int, own: str) -> int:
     """報導這個事件的來源數：自己的來源加上 same 連到的其他來源。"""
-    rows = con.execute("""SELECT i.source FROM links l JOIN events e ON e.id = CASE WHEN l.src=%s THEN l.dst ELSE l.src END
-                          JOIN items i ON i.uid=e.uid WHERE l.kind='same' AND (l.src=%s OR l.dst=%s)""", (eid, eid, eid))
-    return len({own, *(r[0] for r in rows)})
+    return sources_many(con, {eid: own})[eid]
+
+
+def sources_many(con: psycopg.Connection, own: dict[int, str]) -> dict[int, int]:
+    """sources() 的批次版：{事件 id: 自己的來源} → {事件 id: 來源數}，一次查詢。"""
+    if not own:
+        return {}
+    ids = list(own)
+    found: dict[int, set[str]] = {eid: {src} for eid, src in own.items()}
+    for eid, source in con.execute(
+            """SELECT x.eid, i.source FROM (
+                   SELECT src AS eid, dst AS other FROM links WHERE kind='same' AND src = ANY(%s)
+                   UNION ALL
+                   SELECT dst, src FROM links WHERE kind='same' AND dst = ANY(%s)) x
+               JOIN events e ON e.id = x.other JOIN items i ON i.uid = e.uid""", (ids, ids)):
+        found[eid].add(source)
+    return {eid: len(srcs) for eid, srcs in found.items()}
 
 
 def dump(con: psycopg.Connection) -> dict[str, list[list]]:

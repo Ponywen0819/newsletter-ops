@@ -675,3 +675,18 @@ def test_auth_lifecycle(t) -> None:
     assert post("/api/auth/revoke", {})[0] == 200 and not site.auth.health_path.exists()  # 刪 token 連結果一起清
     assert not hasattr(site.auth, "monitor") and not hasattr(site.auth, "check_now")  # 定時驗證在 worker
     auth_store.delete(site.auth.token_path)
+
+
+def test_unknown_post_keeps_token(t) -> None:
+    """未知的 POST /api/xxx 回 404，且不會誤觸 revoke_token 刪除已存的 token。"""
+    site, req, post, secret = t.site, t.req, t.post, t.secret
+    assert post("/api/auth/token", {"token": secret})[0] == 200
+    assert auth_store.load(site.auth.token_path)["token"] == secret
+    assert site.auth.health_path.exists()
+
+    for path in ("/api/xxx", "/api/auth/unknown"):
+        status, body = post(path, {})
+        assert status == 404 and body == {"error": "not found"}, (path, status, body)
+    assert req("POST", "/api/xxx")[0] == 404
+    assert auth_store.load(site.auth.token_path)["token"] == secret
+    assert site.auth.health_path.exists()

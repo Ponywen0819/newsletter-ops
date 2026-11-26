@@ -2,7 +2,7 @@
 
 晨報網頁的前端：Vite + React + TypeScript。後端 `newsletter-web`（[web-server](../web-server/README.md)）只出 JSON，頁面全由前端畫；
 晨報是 shared 的 `report_data.py` 解析出的結構（標題、段落、巢狀清單、每則的 mark、資料來源），前端依結構排版。
-版面是自適應的（手機單欄、筆電左側欄＋內文，樣式在 `src/styles/`，依 `main.tsx` 的 import 順序疊加）。筆電版面由路由決定、不看內容：`/`、`/reports`、`/reports/<date>` 是左側欄＋內文（頁面用 `ReaderShell`，載入中與出錯也一樣，站內切換外框才不會跳），
+版面是自適應的（手機單欄、筆電左側欄＋內文；手機的晨報在今日頭條下面有收合的「本期目錄」，點一則就跳過去，樣式在 `src/styles/`，依 `main.tsx` 的 import 順序疊加）。筆電版面由路由決定、不看內容：`/`、`/reports`、`/reports/<date>` 是左側欄＋內文（頁面用 `ReaderShell`，載入中與出錯也一樣，站內切換外框才不會跳），
 `/feedback`、`/auth`、找不到頁面維持單欄卡片（`App.tsx` 的兩組 layout route）；email 吃同一份結構，由 notify 的 `render_email.py` 排成 inline-CSS HTML，兩邊版型各自維護。
 
 ```bash
@@ -16,7 +16,7 @@ npm run typecheck
 
 - 路由：`/` 當日、`/reports` 歷史（`?q=` 是全文搜尋，左欄有搜尋框；搜尋不進離線副本，離線時會失敗）、`/reports/<date>` 單日、`/stats` 回饋統計（從歷史晨報左欄連過去）、`/kg`、`/kg/item/<uid>[,<uid>…]`、`/kg/entity/<key>` 知識圖譜（見下面「知識圖譜」）、`/feedback/<uid>?v=…` email 連結的確認頁、`/auth` 授權與 `/ops`、`/ops/metrics`、`/ops/config` 維運（正式區只能從入口閘門的區網入口 8788 開，見 [web-server/README.md](../web-server/README.md)「安全邊界」）。後端對這幾條回 `index.html`，
   其他不認得的路徑回 404 的 `index.html`（前端畫「找不到頁面」）。新增前端路由時，`apps/web-server/src/newsletter_web_server/server.py` 的 `SPA_ROUTES` 要同步。API 清單見 [web-server/README.md](../web-server/README.md)。
-- 鍵盤：晨報頁 `j`／`k` 跳到下一則／上一則（≥1100px，有左側目錄時）；`[`／`]` 換到前一份／下一份（內文最後也有連結）。輸入框裡、帶修飾鍵時不攔截。
+- 鍵盤：每頁第一個 Tab 是「跳到主要內容」（跳過頁首與筆電的目錄，只移焦點、不改網址）；焦點外框全站一致（`base.css` 的 `:focus-visible`）。晨報頁 `j`／`k` 跳到下一則／上一則（≥1100px，有左側目錄時）；`[`／`]` 換到前一份／下一份（內文最後也有連結）。輸入框裡、帶修飾鍵時不攔截。
 - Claude 認證橫幅（`src/authHealth.tsx`、`components/Layout.tsx`）：載入時與每次回到前景問一次 `GET /api/auth-health`（worker 每天驗一次，不輪詢），
   有問題才在頁首顯示。`/api/session` 的 `local` 為真時附「前往授權」連結，否則（經 Tunnel）只寫「請在主機上重新授權」。各狀態的意思見 [web-server/README.md](../web-server/README.md)。
 - 開發時經 Vite 的代理直接連 web（沒有入口閘門），`/auth` 可以正常測。後端埠號不是 8787 時，
@@ -25,6 +25,7 @@ npm run typecheck
 - 深色模式：預設跟系統（`prefers-color-scheme`），頁首「配色」可改成淺色／深色，選擇存在瀏覽器的 localStorage（key `theme`，只收 `light`／`dark`，沒有＝自動），後端不知道。
   `<html data-theme>` 是唯一真相；顏色在 `styles/base.css` 的 `:root` 用 `light-dark(淺, 深)` 定義（需要 2024 年中以後的瀏覽器）。
   `public/theme-init.js` 在 `<head>` 同步套用儲存的主題，避免先閃一下錯的顏色；CSP 不許行內腳本，所以它必須是外部檔。
+  裝成 App 時狀態列的顏色（`theme-color`）：`index.html` 依系統淺色／深色各一個；選了固定的主題時 `theme-init.js` 與 `theme.ts` 把兩個都改成那一色（頁首底色 `--card`）。
   放進 `public/` 的檔案要同時放行 `.gitignore`（白名單）、`.dockerignore`，並在 `Dockerfile` 的前端階段 COPY，否則不會進版控或映像。
 
 ## PWA（可安裝，離線讀最近的晨報）
@@ -45,8 +46,8 @@ npm run typecheck
 - **離線**：有網路時永遠先拿最新的（標記狀態、新產出的晨報不會被舊快取蓋住）。
 - **知識圖譜**（`src/pages/KgPages.tsx`、`src/components/KgView.tsx`、`src/kgLayout.ts`、`src/styles/kg.css`）：晨報每則的「脈絡」連到 `/kg/item/<uid>`（這則的前因後果），`/kg/entity/<key>` 是一個實體的時間軸，`/kg` 找實體（從歷史晨報左欄連過去）。圖是自己畫的 inline SVG，不用圖形函式庫：橫軸是日期（一天一欄，舊在左），線的顏色是關係（後續、同一件事、矛盾、撤回），節點的樣子是狀態（有爭議、失效）。圖只給滑鼠與觸控（`aria-hidden`），鍵盤與螢幕閱讀器用下面的事件列表，內容相同。點事件看詳情：原文引句、關係與證據、提到的實體、所在晨報；有進晨報的可以直接標「事實有誤」或「確認可信」（兩者互斥，再按一次取消），之後重新載入（狀態要伺服器重算）。整組在 `App.tsx` 裡 lazy 載入（另一個 chunk），晨報本身不必多帶；**只在線上能用**，不進離線副本，service worker 也不碰 `/api/kg/*`。
 - **維運**（`src/pages/OpsPages.tsx`、`src/styles/ops.css`）：只限本機（同 `/auth`，非本機畫「找不到頁面」、不呼叫 `/api/ops*`），頁首「維運」連過去，另一個 lazy chunk。
-  `/ops` 是 worker 狀態、上次每日流程、手動執行（預設從上次失敗的那步開始）、試抓來源、重建知識圖譜與最近一次的輸出；有東西在跑時每 3 秒更新，否則 15 秒。
-  `/ops/metrics` 是執行紀錄表（期間、是否包含測試與維運工作），`/ops/config` 是唯讀的來源、興趣與主設定。都不進離線副本。
+  `/ops` 是 worker 狀態、上次每日流程、手動執行（預設從上次失敗的那步開始）、試抓來源、重建知識圖譜與最近一次的輸出；有東西在跑時每 3 秒更新，否則 15 秒（分頁在背景時不問，回到前景馬上問一次）。
+  `/ops/metrics` 是執行紀錄表（期間、是否包含測試與維運工作，記在網址的 `?days=&all=1`；表格水平捲動時第一欄固定），`/ops/config` 是唯讀的來源、興趣與主設定。都不進離線副本。
 - **事實有誤／確認可信**（`src/components/FactFlagButton.tsx`）：晨報裡和有用／沒用同一排，只有「事實有誤」；知識圖譜的事件詳情兩個都有。送 `POST /api/kg-flag`。**不排隊**：離線或連不上時直接顯示做不到，不改畫面。狀態來自 payload 的 `flags`（舊的離線副本沒有，當作沒標）。
 - **離線時的標記**（`src/feedbackQueue.ts`）：離線或連不上時按「有用／沒用」不送出，先排進 `localStorage` 的 `feedback-queue`（`{uid: {mark, before, at, tries}}`，`before` 是第一次按下前畫面上的標記），
   畫面立刻更新、按鈕旁標「待同步」，本機副本（today、單日晨報）的 `marks` 也一起改寫（保留 `ETag`），離線重開仍看得到。同一則只留最後一次；改回 `before` 就整筆拿掉。
@@ -65,6 +66,7 @@ npm run typecheck
   探測時機：App 啟動、`online`／`offline` 事件、回到前景、資料請求前；結果重用 **5 秒**（成功與失敗都重用，同時多個請求共用一次探測），不做常駐輪詢。狀態從異常回到正常時，今日、歷史列表、單日晨報會自動重抓。
   只有 `/api/today`、`/api/reports`、`/api/reports/<date>` 走這個判斷；`POST`、`/api/session`、`/api/auth*`、`/api/feedback/*` 照舊直接送出。
 - **更新**：新版 service worker 直接接手（`skipWaiting`＋`clientsClaim`），不提示重新整理；舊版的 precache 自動清掉。
+  開著的舊頁面之後才要載的分包（知識圖譜、維運）因此可能載不到：`components/RouteErrorBoundary.tsx` 接住，內容區顯示「網頁已更新」與重新載入鈕（頁首照常能用，換頁就恢復）；其他執行期錯誤同樣只換掉內容區。
 - **檔案**：`vite.config.ts`（`vite-plugin-pwa`：manifest、註冊）、`src/sw.ts`（service worker 的路由）、`public/icons/`（`icon.svg` 是來源，另有 192、512、maskable 512、apple-touch-icon 180 的 PNG；換圖示就重新輸出這四張）。
   `public/` 的檔案原樣複製到 `dist/` 根目錄；它被 `.gitignore`、`.dockerignore` 放行，`Dockerfile` 也有 `COPY apps/web-ui/public`，新增這類目錄時三處都要加。
 

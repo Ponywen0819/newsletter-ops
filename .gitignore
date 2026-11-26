@@ -91,3 +91,6 @@ __pycache__/
 
 # Claude Code 的 git worktree（完整 checkout，Nx 會重複讀到專案）
 /.claude/worktrees/
+
+# agy-dispatch 的執行紀錄與隔離 worktree（.agy/wt/<id> 是完整 checkout，同上）
+/.agy/

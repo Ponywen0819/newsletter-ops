@@ -6,6 +6,7 @@ import type { KgEvent } from './types'
 export const COL_W = 136
 export const ROW_H = 52
 export const RADIUS = 9
+export const HIT = 44 // 節點的點擊區（觸控目標至少 44px）
 const PAD_X = 56
 const PAD_TOP = 40
 const PAD_BOTTOM = 24

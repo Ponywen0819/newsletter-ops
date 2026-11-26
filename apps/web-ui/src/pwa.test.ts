@@ -59,7 +59,8 @@ describe('index.html', () => {
 
   it('theme-color 與 apple-touch-icon 在，圖示檔存在', () => {
     const html = read('index.html')
-    expect(html).toMatch(/<meta name="theme-color" content="#ffffff"/)
+    expect(html).toContain('<meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff"')
+    expect(html).toContain('<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1f2937"')
     const icon = html.match(/<link rel="apple-touch-icon" href="([^"]+)"/)
     expect(icon).not.toBeNull()
     expect(existsSync(join(out, icon![1].slice(1)))).toBe(true)

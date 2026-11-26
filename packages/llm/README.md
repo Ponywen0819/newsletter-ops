@@ -2,12 +2,12 @@
 
 用 Claude Agent SDK 跑 agent 的共用執行器：OAuth 認證、只開指定工具的執行、失敗分類、用量紀錄。
 唯一的第三方依賴 `claude-agent-sdk` 在這裡；只依賴 [shared](../shared/README.md)。
-使用者是 [collect](../collect/README.md) 的搜尋與 [writer](../writer/README.md)；[web-server](../../apps/web-server/README.md) 用它驗證 token。
+使用者是 [collect](../collect/README.md) 的搜尋與同一件事的分組（cluster）、[writer](../writer/README.md) 的報告與知識圖譜；[web-server](../../apps/web-server/README.md) 用它驗證 token。
 專案全貌見[根目錄 README](../../README.md)。
 
 ```
 src/newsletter_llm/
-  runner.py              pick_auth（選認證、清環境）、run（跑一次 agent）、failure（失敗分類）、log_usage、--auth-check
+  runner.py              pick_auth（選認證、清環境）、run（跑一次 agent）、ask_json／parse_json_object／FAST_MODEL（單輪 JSON 問答）、failure（失敗分類）、log_usage、--auth-check
 ```
 
 ```bash
@@ -54,7 +54,7 @@ npx nx run llm:test                                           # tests/ 底下的
 
 ## 用量與成本
 
-每次執行結束時從 SDK 的結果取 token 與 `total_cost_usd`，寫成 `runner: sdk` 的紀錄（stage 由呼叫端決定：writer 是 `claude`、搜尋是 `search`）
+每次執行結束時從 SDK 的結果取 token 與 `total_cost_usd`，寫成 `runner: sdk` 的紀錄（stage 由呼叫端決定：writer 是 `claude`、搜尋是 `search`、分組是 `cluster`、知識圖譜是 `kg_extract`／`kg_relate`）
 （label 沿用 `NEWSLETTER_RUN_LABEL`）。和其他 stage 一樣，**要開 debug 才會寫**：`NEWSLETTER_DEBUG=1`。
 stderr 的 `[writer]`／`[search]` 摘要行（含估算費用 `est_usd`）不受 debug 影響，一定會進 log。`summary` 的 `via` 欄分辨路線（`sdk` / `chat`），
 `usd` 欄只有 `sdk` 路線有值。**走訂閱額度時 `total_cost_usd` 只是 SDK 依牌價估的 API 等價費用，不是實際扣款**

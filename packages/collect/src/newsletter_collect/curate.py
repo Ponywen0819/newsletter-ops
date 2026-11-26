@@ -32,7 +32,7 @@ _NAMED_AT = re.compile(r"([A-Za-z][\w-]*)\s+(?:at|@)\s+$")
 VENUE_BOOST = {"main": 2.0, "minor": 0.8, "submitted": 0.4}
 
 
-def _norm_title(title: str) -> str:
+def norm_title(title: str) -> str:
     return STOP.sub(" ", title.lower()).strip()
 
 
@@ -221,22 +221,31 @@ def dedupe(items: list[dict], threshold: float = 0.88, name_topics: frozenset[st
     name_topics 裡的主題（國際新聞）另外用專有名詞比對：各家標題寫法不同，相似度幾乎合併不了。"""
     unique = _dedupe_urls(items)
     names = {id(i): _names(f"{i['title']}. {i.get('summary', '')}") for i in unique if i["topic"] in name_topics}
+    # 每則留下的新聞一個 SequenceMatcher（seq2 是它的標題，前處理只做一次）。O(n²) 的比對先用上界剪枝：
+    # ratio() ≤ quick_ratio() ≤ real_quick_ratio()，上界沒到門檻就不必算昂貴的 ratio()，結果完全相同。
+    matchers: dict[int, SequenceMatcher] = {}
+
+    def similar(norm: str, k: dict) -> bool:
+        sm = matchers[id(k)]
+        sm.set_seq1(norm)
+        return sm.real_quick_ratio() >= threshold and sm.quick_ratio() >= threshold and sm.ratio() >= threshold
 
     def matches(item: dict, k: dict, norm: str) -> bool:
-        if SequenceMatcher(None, norm, _norm_title(k["title"])).ratio() >= threshold:
+        if similar(norm, k):
             return True
         return (item["topic"] in name_topics and item["topic"] == k["topic"] and item["source"] != k["source"]
                 and same_story(names[id(item)], names[id(k)]))
 
     kept: list[dict] = []
     for item in sorted(unique, key=lambda i: i.get("rank", 0), reverse=True):
-        norm = _norm_title(item["title"])
+        norm = norm_title(item["title"])
         match = next((k for k in kept if matches(item, k, norm)), None)
         if match:
             match.setdefault("also_in", []).append(item["source"])
             match.setdefault("_dupes", []).append(item)  # 別家的報導：cluster 會把它們掛成同一件事的 coverage
         else:
             kept.append(item)
+            matchers[id(item)] = SequenceMatcher(None, "", norm)
     for item in kept:
         item["also_in"] = sorted({s for s in item.get("also_in", []) if s != item["source"]})
         if item["also_in"] and not item["source"].startswith("arXiv"):

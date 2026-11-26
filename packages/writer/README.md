@@ -71,6 +71,8 @@ uv run --project packages/writer newsletter-kg --import-sqlite state/kg.sqlite  
 - **失敗不擋寫報告**：只記 log 與 `stage: stories` 的 metrics，那天 skill 改用 curated 的 `stories`（沒有前因）。
 
 加了 coverage 之後一天要萃取的則數約多一倍，`kg.py` 改成每 20 則一次萃取、每 40 個事件一次比對，避免單次回覆太長。
+同一階段的各批互不相依，同時問 `PARALLEL_ASKS`（2）批，每批一個 claude 子程序；任一批失敗整個階段就失敗（和逐批問時一樣，不會寫入一半）。
+比對候選、來源數都是一次查詢算完整批（`kg_store.sources_many`），不再每個事件各查一次；`events(date)`、`mentions(event)`、`links(src)` 有索引（`kg_store.SCHEMA`，下次 `connect()` 時自動建立）。
 
 ## exit code
 

@@ -24,6 +24,8 @@ from newsletter_shared import ROOT, today
 
 LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 COMMENT = re.compile(r"^\s*<!--(.*?)-->\s*$")
+SUBJECT_RE = re.compile(r"<!--\s*subject[：:]\s*(.*?)\s*-->")
+HEADLINE_RE = re.compile(r"^[ \t]*>[> \t]*\**今日頭條\**[：:]\**[ \t]*(.*)$", re.MULTILINE)
 BOLD = re.compile(r"\*\*(.+?)\*\*")
 CODE = re.compile(r"`([^`]+)`")
 BULLET = re.compile(r"^( *)[-*] (.+)$")
@@ -36,6 +38,23 @@ SLOT = re.compile(f"{SLOT_OPEN}(\\d+){SLOT_CLOSE}")
 def plain(text: str) -> str:
     """去掉粗體、行內碼、連結語法，只留文字（今日頭條的純文字版）。"""
     return re.sub(r"\*\*|`", "", LINK.sub(r"\1", text)).strip()
+
+
+def extract_headline(md: str) -> str:
+    """從報告 Markdown 抓今日頭條（純文字）；沒有時回空字串。"""
+    match = HEADLINE_RE.search(md)
+    return plain(match[1]) if match else ""
+
+
+def extract_subject(md: str) -> str:
+    """從報告 Markdown 抓 <!-- subject: ... --> 註解；沒有時回空字串。"""
+    match = SUBJECT_RE.search(md)
+    return match[1].strip() if match else ""
+
+
+def extract_mark_uids(md: str) -> list[str]:
+    """從報告 Markdown 依出現順序抓所有 <!-- mark: ... uid=... --> 的 uid。"""
+    return [m[2] for m in MARK_RE.finditer(md)]
 
 
 def votable_after(blocks: list[dict], standalone_mark: bool = False) -> bool:
@@ -106,16 +125,14 @@ class _ReportParser:
         self.current: dict | None = None   # 目前開著的 list block
         self.stack: list[list[dict]] = []  # stack[d - 1] ＝ 第 d 層的項目清單
 
-    def comment(self, line: str, body: str) -> None:
-        if body.strip().startswith("subject:"):
-            self.subject = body.strip()[len("subject:"):].strip()
-        mark = MARK_RE.search(line)
-        if not mark:
-            return
-        if self.current is not None:
-            self.current["items"][-1].setdefault("uids", []).append(mark[2])
-        else:
-            self.blocks.append({"type": "mark", "uid": mark[2], "votable": votable_after(self.blocks, standalone_mark=True)})
+    def comment(self, line: str) -> None:
+        if subject := extract_subject(line):
+            self.subject = subject
+        for uid in extract_mark_uids(line):
+            if self.current is not None:
+                self.current["items"][-1].setdefault("uids", []).append(uid)
+            else:
+                self.blocks.append({"type": "mark", "uid": uid, "votable": votable_after(self.blocks, standalone_mark=True)})
 
     def bullet(self, indent: str, text: str) -> None:
         level = len(indent) // 2 + 1
@@ -144,15 +161,15 @@ class _ReportParser:
             self.blocks.append({"type": "heading", "inline": parse_inline(line[3:].strip(), self.links)})
         elif line.startswith(">"):
             text = line.lstrip("> ").strip()
-            if "今日頭條" in text:
-                self.headline = plain(re.sub(r"^\**今日頭條[：:]\**\s*", "", text))
+            if headline := extract_headline(line):
+                self.headline = headline
             self.blocks.append({"type": "callout", "inline": parse_inline(text, self.links)})
         else:
             self.blocks.append({"type": "paragraph", "inline": parse_inline(line.strip(), self.links)})
 
     def feed(self, line: str) -> None:
-        if comment := COMMENT.match(line):
-            self.comment(line, comment[1])
+        if COMMENT.match(line):
+            self.comment(line)
             return  # 其餘註解不進頁面，也不打斷清單
         if bullet := BULLET.match(line):
             self.bullet(bullet[1], bullet[2])

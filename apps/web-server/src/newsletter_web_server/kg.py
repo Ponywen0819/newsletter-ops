@@ -36,15 +36,13 @@ def _int(value: str, allowed: Callable[[int], bool], name: str) -> int:
     return n
 
 
-def _marks(values) -> str:
-    return ",".join(["%s"] * len(values))
-
-
 class Graph:
-    def __init__(self, root: Path, today: Callable[[], str], report_of: Callable[[], dict[str, str]]):
-        self.flags_path = root / "state" / "kg_flags.jsonl"
+    def __init__(self, root: Path, today: Callable[[], str], report_of: Callable[[], dict[str, str]],
+                 flags: Callable[[], dict[str, str]] | None = None):
+        flags_path = root / "state" / "kg_flags.jsonl"
         self.today = today
         self.report_of = report_of  # uid → 收錄它的最新一份晨報日期
+        self.flags = flags or (lambda: kg_flags.read(flags_path))  # uid → wrong／trusted
 
     def _open(self) -> psycopg.Connection:
         con = kg_store.open_readonly()
@@ -56,24 +54,23 @@ class Graph:
         """事件（含實體、狀態、來源數、所在晨報）與它們之間的連結；舊到新。"""
         if not ids:
             return {"events": [], "links": [], "flags": {}}
-        marks = _marks(ids)
         entities: dict[int, list[dict]] = {}
         for eid, key, name, type_ in con.execute(
-                f"SELECT event, key, name, type FROM mentions WHERE event IN ({marks}) ORDER BY id", ids):
+                "SELECT event, key, name, type FROM mentions WHERE event = ANY(%s) ORDER BY id", (ids,)):
             entities.setdefault(eid, []).append({"key": key, "name": name, "type": type_})
         status = kg_store.statuses(con, ids, flags)
         reports = self.report_of()
-        events = []
-        for eid, uid, day, summary, quote, title, url, source in con.execute(
-                f"""SELECT e.id, e.uid, e.date, e.summary, e.quote, i.title, i.url, i.source
-                    FROM events e JOIN items i ON i.uid=e.uid WHERE e.id IN ({marks}) ORDER BY e.date, e.id""", ids):
-            events.append({"id": eid, "uid": uid, "date": day, "summary": summary, "quote": quote,
-                           "title": title, "url": url, "source": source, "status": status[eid],
-                           "sources": kg_store.sources(con, eid, source), "report": reports.get(uid),
-                           "entities": entities.get(eid, [])})
+        rows = con.execute(
+            """SELECT e.id, e.uid, e.date, e.summary, e.quote, i.title, i.url, i.source
+               FROM events e JOIN items i ON i.uid=e.uid WHERE e.id = ANY(%s) ORDER BY e.date, e.id""", (ids,)).fetchall()
+        counts = kg_store.sources_many(con, {r[0]: r[7] for r in rows})
+        events = [{"id": eid, "uid": uid, "date": day, "summary": summary, "quote": quote,
+                   "title": title, "url": url, "source": source, "status": status[eid],
+                   "sources": counts[eid], "report": reports.get(uid), "entities": entities.get(eid, [])}
+                  for eid, uid, day, summary, quote, title, url, source in rows]
         links = [{"src": s, "dst": d, "kind": k, "quote": q or "", "date": day} for s, d, k, q, day in con.execute(
-            f"""SELECT DISTINCT src, dst, kind, quote, date FROM links
-                WHERE src IN ({marks}) AND dst IN ({marks}) ORDER BY date, src, dst""", ids + ids)]
+            """SELECT DISTINCT src, dst, kind, quote, date FROM links
+               WHERE src = ANY(%s) AND dst = ANY(%s) ORDER BY date, src, dst""", (ids, ids))]
         uids = {e["uid"] for e in events}
         return {"events": events, "links": links,
                 "flags": {u: f for u, f in flags.items() if u in uids}}  # wrong 與 trusted
@@ -84,24 +81,23 @@ class Graph:
         if len(uids) > MAX_UIDS:
             raise ApiError(HTTPStatus.BAD_REQUEST, f"一次最多 {MAX_UIDS} 則")
         hops = _int(depth, lambda n: n in DEPTHS, "depth")
-        flags = kg_flags.read(self.flags_path)
+        flags = self.flags()
         reports = self.report_of()
         with self._open() as con:
             items = [{"uid": uid, "date": day, "title": title, "url": url, "source": source, "report": reports.get(uid)}
                      for uid, day, title, url, source in con.execute(
-                         f"SELECT uid, date, title, url, source FROM items WHERE uid IN ({_marks(uids)})", uids)]
+                         "SELECT uid, date, title, url, source FROM items WHERE uid = ANY(%s)", (uids,))]
             if not items:
                 raise NotFound(",".join(uids))
             seeds = [r[0] for r in con.execute(
-                f"SELECT id FROM events WHERE uid IN ({_marks(uids)}) ORDER BY id", uids)][:MAX_EVENTS]
+                "SELECT id FROM events WHERE uid = ANY(%s) ORDER BY id", (uids,))][:MAX_EVENTS]
             seen, frontier, truncated = set(seeds), list(seeds), False
             for _ in range(hops):
                 if not frontier:
                     break
-                marks = _marks(frontier)
                 near = sorted({n for (n,) in con.execute(
-                    f"""SELECT dst FROM links WHERE src IN ({marks}) UNION SELECT src FROM links WHERE dst IN ({marks})""",
-                    frontier + frontier)} - seen, reverse=True)  # id 大的較新，截斷時留新的
+                    "SELECT dst FROM links WHERE src = ANY(%s) UNION SELECT src FROM links WHERE dst = ANY(%s)",
+                    (frontier, frontier))} - seen, reverse=True)  # id 大的較新，截斷時留新的
                 room = MAX_EVENTS - len(seen)
                 if len(near) > room:
                     truncated, near = True, near[:room]
@@ -116,7 +112,7 @@ class Graph:
             raise NotFound(key)
         span = _int(days, lambda n: 1 <= n <= MAX_DAYS, "days")
         since = (date.fromisoformat(self.today()) - timedelta(days=span)).isoformat()
-        flags = kg_flags.read(self.flags_path)
+        flags = self.flags()
         with self._open() as con:
             named = con.execute("""SELECT name, type, COUNT(*) AS n FROM mentions WHERE key=%s
                                    GROUP BY name, type ORDER BY n DESC, name LIMIT 1""", (key,)).fetchone()
@@ -128,9 +124,9 @@ class Graph:
             truncated, ids = len(ids) > MAX_EVENTS, ids[:MAX_EVENTS]
             total = con.execute("SELECT COUNT(DISTINCT event) FROM mentions WHERE key=%s", (key,)).fetchone()[0]
             related = [{"key": k, "name": n, "type": t, "count": c} for k, n, t, c in con.execute(
-                f"""SELECT key, MIN(name), MIN(type), COUNT(DISTINCT event) AS c FROM mentions
-                    WHERE event IN ({_marks(ids)}) AND key != %s GROUP BY key ORDER BY c DESC, key LIMIT %s""",
-                [*ids, key, RELATED_LIMIT])] if ids else []
+                """SELECT key, MIN(name), MIN(type), COUNT(DISTINCT event) AS c FROM mentions
+                   WHERE event = ANY(%s) AND key != %s GROUP BY key ORDER BY c DESC, key LIMIT %s""",
+                (ids, key, RELATED_LIMIT))] if ids else []
             graph = self._graph(con, sorted(ids), flags)
         return {"entity": {"key": key, "name": named[0], "type": named[1], "total": total},
                 "days": span, "since": since, "related": related, **graph, "truncated": truncated}

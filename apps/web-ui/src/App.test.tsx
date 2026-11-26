@@ -51,7 +51,7 @@ describe('路由', () => {
   })
 
   it.each([
-    [{ finished_at: null, exit_code: null, step: null }, '2026-10-03 的晨報正在產生', '完成後重新整理'],
+    [{ finished_at: null, exit_code: null, step: null }, '2026-10-03 的晨報正在產生', '完成後這一頁會自己換成新的晨報'],
     [{ finished_at: 'b', exit_code: 3, step: 'collect' }, '2026-10-03 的晨報產生失敗', '在「蒐集新聞」這步失敗（exit 3），30 分鐘後會自動重跑一次'],
     [{ finished_at: 'b', exit_code: 3, step: 'collect', trigger: 'retry' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
     [{ finished_at: 'b', exit_code: 5, step: 'write' }, '2026-10-03 的晨報產生失敗', '不會自動重跑'],
@@ -60,6 +60,116 @@ describe('路由', () => {
     open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run: rec } }) })
     expect(await screen.findByRole('heading', { name: title })).toBeInTheDocument()
     expect(screen.getByText(text, { exact: false })).toBeInTheDocument()
+  })
+
+  it('/ 晨報正在產生：每分鐘再問一次，好了就直接換上，中間不閃「載入中」', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let ready = false
+    const running = { trigger: 'schedule', started_at: 'a', finished_at: null, exit_code: null, step: null }
+    open('/', {
+      'GET /api/today': () => ({
+        json: ready
+          ? { date: '2026-10-03', latest: '2026-10-03', report, marks: {} }
+          : { date: '2026-10-03', latest: null, report: null, marks: {}, run: running },
+      }),
+    })
+    expect(await screen.findByRole('heading', { name: '2026-10-03 的晨報正在產生' })).toBeInTheDocument()
+    ready = true
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+    expect(screen.queryByText('載入中…')).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('/ 晨報正在產生、下面顯示最新一份：重問失敗（網路瞬斷）照舊顯示，不換成錯誤頁；回到前景馬上重問', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let mode: 'running' | 'down' | 'ready' = 'running'
+    const fallback = { date: '2026-10-02', report, marks: {}, prev: null, next: null }
+    const running = { trigger: 'schedule', started_at: 'a', finished_at: null, exit_code: null, step: null }
+    const net = open('/', {
+      'GET /api/today': () =>
+        mode === 'down'
+          ? { status: 503, json: { error: 'x' } } // 閘道暫時錯誤
+          : mode === 'ready'
+            ? { json: { date: '2026-10-03', latest: '2026-10-03', report, marks: {} } }
+            : { json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run: running } },
+    })
+    expect(await screen.findByText('2026-10-03 的晨報正在產生')).toBeInTheDocument()
+    mode = 'down'
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+    await waitFor(() => expect(net.calls.filter((c) => c.path === '/api/today')).toHaveLength(2))
+    expect(screen.getByText('2026-10-03 的晨報正在產生')).toBeInTheDocument() // 舊晨報與提示都還在
+    expect(screen.queryByRole('heading', { name: '讀取失敗' })).toBeNull()
+    mode = 'ready'
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange'))) // 回到前景：不必等滿一分鐘
+    await waitFor(() => expect(screen.queryByText('2026-10-03 的晨報正在產生')).toBeNull())
+    vi.useRealTimers()
+  })
+
+  it('/ 正在顯示舊晨報時，伺服器確定的錯誤（500）要讓人看到，不默默沿用', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let broken = false
+    const fallback = { date: '2026-10-02', report, marks: {}, prev: null, next: null }
+    const running = { trigger: 'schedule', started_at: 'a', finished_at: null, exit_code: null, step: null }
+    open('/', {
+      'GET /api/today': () =>
+        broken
+          ? { status: 500, json: { error: '報告格式不符' } }
+          : { json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run: running } },
+    })
+    expect(await screen.findByText('2026-10-03 的晨報正在產生')).toBeInTheDocument()
+    broken = true
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    expect(screen.getByText('報告格式不符')).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it.each([
+    [{ exit_code: 3, trigger: 'schedule' }, null], // 30 分鐘後會自動重跑：不叫人手動
+    [{ exit_code: 3, trigger: 'retry' }, ['到維運頁重跑', '/ops']],
+    [{ exit_code: 5, trigger: 'schedule' }, ['到授權頁處理', '/auth']], // 認證失敗：去授權頁
+  ])('/ 產生失敗的處理入口（本機）%#', async (over, link) => {
+    const run = { started_at: 'a', finished_at: 'b', step: 'collect', ...over }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: null, report: null, marks: {}, run } }) }, true)
+    await screen.findByRole('heading', { name: '2026-10-03 的晨報產生失敗' })
+    await waitFor(() => expect(screen.getByRole('link', { name: '維運' })).toBeInTheDocument()) // session 已經到了
+    const found = screen.queryAllByRole('link', { name: /重跑|授權頁/ }).map((a) => [a.textContent, a.getAttribute('href')])
+    expect(found).toEqual(link ? [link] : [])
+  })
+
+  it('/ 開著過夜的 App：回到前景時上次載入超過 10 分鐘就重問，換成今天的晨報', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    let day = '2026-10-02'
+    const net = open('/', { 'GET /api/today': () => ({ json: { date: day, latest: day, report, marks: {} } }) })
+    await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange'))) // 剛載入：不重問
+    expect(net.calls.filter((c) => c.path === '/api/today')).toHaveLength(1)
+    day = '2026-10-03'
+    await act(() => vi.advanceTimersByTimeAsync(11 * 60_000))
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange')))
+    await waitFor(() => expect(document.title).toBe('每日晨間簡報 2026-10-03'))
+    vi.useRealTimers()
+  })
+
+  it('/ 讀取失敗：可以再試一次', async () => {
+    let fail = true
+    open('/', {
+      'GET /api/today': () => (fail ? { status: 500, json: { error: '壞了' } } : { json: { date: '2026-09-28', latest: '2026-09-28', report, marks: {} } }),
+    })
+    expect(await screen.findByRole('heading', { name: '讀取失敗' })).toBeInTheDocument()
+    fail = false
+    await userEvent.click(screen.getByRole('button', { name: '再試一次' }))
+    expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
+  })
+
+  it('/ 產生失敗：本機給維運頁的連結；提示在整個版面最上面（手機先看到它，不是舊晨報的標題）', async () => {
+    const fallback = { date: '2026-10-02', report, marks: {}, prev: null, next: null }
+    const run = { trigger: 'retry', started_at: 'a', finished_at: 'b', exit_code: 3, step: 'collect' }
+    open('/', { 'GET /api/today': () => ({ json: { date: '2026-10-03', latest: '2026-10-02', report: null, marks: {}, fallback, run } }) }, true)
+    const banner = (await screen.findByText('2026-10-03 的晨報產生失敗')).closest('p')!
+    expect(await within(banner).findByRole('link', { name: '到維運頁重跑' })).toHaveAttribute('href', '/ops')
+    expect(banner.nextElementSibling).toHaveClass('reader') // 在兩欄版面之前
   })
 
   it('/ 當日跑成功但還沒有晨報檔：照一般的還沒產出', async () => {
@@ -131,7 +241,7 @@ describe('路由', () => {
       'GET /api/reports': () => ({ json: { reports: [{ date: '2026-09-28', headline: '某事發生' }, { date: '2026-09-27', headline: '' }] } }),
       'GET /api/reports/2026-09-28': () => ({ json: { date: '2026-09-28', report, marks: {} } }),
     })
-    const link = await screen.findByRole('link', { name: '2026-09-28' })
+    const link = await screen.findByRole('link', { name: /^2026-09-28/ })
     expect(link.parentElement).toHaveTextContent('某事發生')
     await userEvent.click(link)
     expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()
@@ -242,7 +352,7 @@ describe('版面由路由決定', () => {
     cleanup()
 
     open('/reports', { 'GET /api/reports': () => ({ json: { reports: [{ date: '2026-09-28', headline: '某事發生' }] } }) })
-    const link = await screen.findByRole('link', { name: '2026-09-28' })
+    const link = await screen.findByRole('link', { name: /^2026-09-28/ })
     expect(side()).toContainElement(screen.getByRole('heading', { level: 1, name: '歷史晨報' }))
     expect(body()).toContainElement(link)
   })
@@ -254,7 +364,7 @@ describe('版面由路由決定', () => {
       }),
     })
     expect(await screen.findByText('找到 1 筆')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '2026-09-28' })).toHaveAttribute('href', '/reports/2026-09-28')
+    expect(screen.getByRole('link', { name: /^2026-09-28/ })).toHaveAttribute('href', '/reports/2026-09-28')
     expect([...document.querySelectorAll('.reports mark')].map((m) => m.textContent)).toEqual(['NVIDIA', 'Nvidia'])
     expect(screen.getByRole('searchbox')).toHaveValue('nvidia')
     await waitFor(() => expect(document.title).toBe('搜尋「nvidia」— 歷史晨報'))
@@ -278,7 +388,7 @@ describe('版面由路由決定', () => {
       'GET /api/search?q=x': () => ({ status: 500, json: { error: '壞了' } }),
     })
     await userEvent.type(await screen.findByRole('searchbox'), '沒有') // 列表還在載入時就開始打字
-    await screen.findByRole('link', { name: '2026-09-28' })
+    await screen.findByRole('link', { name: /^2026-09-28/ })
     expect(screen.getByRole('searchbox')).toHaveValue('沒有') // 資料到了，搜尋框沒被換掉
     await userEvent.type(screen.getByRole('searchbox'), '{Enter}')
     expect(await screen.findByText('沒有找到「沒有」')).toBeInTheDocument()
@@ -291,7 +401,25 @@ describe('版面由路由決定', () => {
     expect(await screen.findByRole('heading', { name: '搜尋失敗' })).toBeInTheDocument()
     await userEvent.clear(screen.getByRole('searchbox'))
     await userEvent.type(screen.getByRole('searchbox'), '{Enter}')
-    expect(await screen.findByRole('link', { name: '2026-09-28' })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /^2026-09-28/ })).toBeInTheDocument()
+  })
+
+  it('/reports 搜尋結果：每列整列是連結（名稱含命中的那行）；把搜尋框清空就回列表、焦點留在框裡', async () => {
+    open('/reports?q=a', {
+      'GET /api/reports': () => ({ json: { reports: [{ date: '2026-09-28', headline: '某事發生' }] } }),
+      'GET /api/search?q=a': () => ({
+        json: { q: 'a', results: [{ date: '2026-09-28', text: 'a 第一行' }, { date: '2026-09-28', text: 'a 第二行' }], truncated: false },
+      }),
+    })
+    const rows = await screen.findAllByRole('link', { name: /^2026-09-28 a 第/ })
+    expect(rows.map((a) => a.getAttribute('href'))).toEqual(['/reports/2026-09-28', '/reports/2026-09-28'])
+    expect(rows[0]).not.toHaveAccessibleName(rows[1]!.textContent ?? '') // 同一天兩筆：名稱分得出來
+    await userEvent.clear(screen.getByRole('searchbox')) // 刪光（含按輸入框裡的 ×）
+    expect(await screen.findByRole('link', { name: '2026-09-28 某事發生' })).toBeInTheDocument()
+    expect(screen.queryByText(/找到/)).not.toBeInTheDocument()
+    expect(screen.getByRole('searchbox')).toHaveFocus()
+    await userEvent.type(screen.getByRole('searchbox'), 'a{Enter}') // 直接打下一個詞
+    expect(await screen.findByText('找到 2 筆')).toBeInTheDocument()
   })
 
   it('站內切換首頁 → 歷史 → 單日，外框一直是 reader；點到 single 的頁面才換', async () => {
@@ -303,7 +431,7 @@ describe('版面由路由決定', () => {
     const nav = within(await screen.findByRole('navigation'))
     expect(layout()).toBe('reader')
     await userEvent.click(nav.getByRole('link', { name: '歷史晨報' }))
-    const link = await screen.findByRole('link', { name: '2026-09-28' })
+    const link = await screen.findByRole('link', { name: /^2026-09-28/ })
     expect(layout()).toBe('reader')
     await userEvent.click(link)
     expect(await screen.findByRole('heading', { level: 1, name: '每日晨間簡報' })).toBeInTheDocument()

@@ -59,7 +59,6 @@ KG_LOCK = "state/kg"  # writer 的 KG 鎖檔是 state/kg.lock
 EXIT_BUSY = 75  # 和 worker 的 EXIT_BUSY 一樣：pipeline 在跑
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 UID_RE = re.compile(r"[0-9a-f]{16}")
-MARK_RE = re.compile(r"<!--\s*mark:\s*[+-]{0,2}\s*uid=([0-9a-f]{16})\s*-->")
 JOB_TIMEOUT = 75 * 60  # 秒；重寫報告的上限（worker 那邊是 60 分鐘）
 
 
@@ -436,20 +435,22 @@ def cmd_snapshot(args, env) -> int:
 
 def sections(md: str) -> dict[str, list[str]]:
     """{段落標題: [uid, …]}；第一個 ## 之前的算「(開頭)」。"""
+    from newsletter_shared.report_data import extract_mark_uids  # 延遲 import：沒裝 shared 時其他子指令照舊能跑
+
     out: dict[str, list[str]] = {}
     current = "(開頭)"
     for line in md.splitlines():
         if line.startswith("## "):
             current = line[3:].strip()
-        for uid in MARK_RE.findall(line):
+        for uid in extract_mark_uids(line):
             out.setdefault(current, []).append(uid)
     return out
 
 
 def meta(md: str) -> dict[str, str]:
-    subject = re.search(r"<!--\s*subject:\s*(.*?)\s*-->", md)
-    headline = re.search(r"^>\s*\*\*今日頭條：\*\*\s*(.*)$", md, re.M)
-    return {"subject": subject[1] if subject else "", "headline": headline[1].strip() if headline else ""}
+    from newsletter_shared.report_data import extract_headline, extract_subject
+
+    return {"subject": extract_subject(md), "headline": extract_headline(md)}
 
 
 def _section_diff(a: list[str], b: list[str], where_p: dict, where_t: dict, name) -> list[str]:
@@ -503,6 +504,10 @@ def cmd_compare(args, env) -> int:
     stamp = args.date
     if not DATE_RE.fullmatch(stamp):
         raise DevError("日期要是 YYYY-MM-DD", 2)
+    try:  # 先確認比得了，免得在測試區重寫完（花額度、等好幾分鐘）才發現少了 shared
+        import newsletter_shared.report_data  # noqa: F401
+    except ImportError:
+        raise DevError("compare 需要 newsletter_shared：用 npm run devtools -- compare … 執行", 2) from None
     snap = Path(args.snapshot) if args.snapshot else latest_snapshot()
     files = snapshot_members(snap.read_bytes())
     prod_md = files.get(f"reports/{stamp}.md")

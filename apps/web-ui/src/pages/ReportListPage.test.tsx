@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockFetch } from '../test/fetchMock'
 import { ReportListPage } from './ReportListPage'
 
@@ -23,18 +23,18 @@ const two = [
 describe('ReportListPage 依月份分組', () => {
   it('跨兩個月以上：每個月份一個區塊（錨點 data-unit）、一個小標，日期連結在自己月份的區塊裡，新到舊', async () => {
     open(two)
-    await screen.findByRole('link', { name: '2026-10-05' })
+    await screen.findByRole('link', { name: /^2026-10-05/ })
     const sections = [...document.querySelectorAll<HTMLElement>('.reader-body > section.unit')]
     expect(sections.map((s) => s.dataset.unit)).toEqual(['m-2026-10', 'm-2026-09'])
     expect(sections.map((s) => within(s).getByRole('heading', { level: 2 }).textContent)).toEqual(['2026-10', '2026-09'])
-    expect(within(sections[0]!).getAllByRole('link').map((a) => a.textContent)).toEqual(['2026-10-05', '2026-10-02'])
-    expect(within(sections[1]!).getAllByRole('link').map((a) => a.textContent)).toEqual(['2026-09-30'])
+    expect(within(sections[0]!).getAllByRole('link').map((a) => a.querySelector('.reports-date')?.textContent)).toEqual(['2026-10-05', '2026-10-02'])
+    expect(within(sections[1]!).getAllByRole('link').map((a) => a.querySelector('.reports-date')?.textContent)).toEqual(['2026-09-30'])
     expect(screen.getByRole('heading', { level: 1, name: '歷史晨報' })).toBeInTheDocument()
   })
 
   it('只有一個月份：和分組前完全一樣——一張 ul，沒有區塊、沒有小標', async () => {
     open(two.slice(0, 2))
-    await screen.findByRole('link', { name: '2026-10-05' })
+    await screen.findByRole('link', { name: /^2026-10-05/ })
     expect(document.querySelector('section')).toBeNull()
     expect(screen.queryByRole('heading', { level: 2 })).toBeNull()
     expect(document.querySelectorAll('.reader-body > ul.reports > li')).toHaveLength(2)
@@ -55,11 +55,15 @@ describe('ReportListPage 月份目錄（≥1100px 左欄）', () => {
     Element.prototype.scrollIntoView = function (this: HTMLElement, arg?: boolean | ScrollIntoViewOptions) {
       scrolled.push({ el: this, arg: typeof arg === 'object' ? arg : undefined })
     }
+    // scroll-spy 一個畫格才算一次：測試裡讓畫格立刻到，每次捲動事件都看得到結果
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => (cb(0), 0))
   })
   afterEach(() => {
     window.history.replaceState(null, '', '/')
     Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
     Reflect.deleteProperty(document.documentElement, 'scrollHeight')
+
+    vi.unstubAllGlobals()
   })
 
   const nav = async () => within(await screen.findByRole('navigation', { name: '月份目錄' }))
@@ -79,7 +83,7 @@ describe('ReportListPage 月份目錄（≥1100px 左欄）', () => {
 
   it('只有一個月份：沒有目錄', async () => {
     open(two.slice(0, 2))
-    await screen.findByRole('link', { name: '2026-10-05' })
+    await screen.findByRole('link', { name: /^2026-10-05/ })
     expect(screen.queryByRole('navigation', { name: '月份目錄' })).toBeNull()
   })
 
