@@ -120,7 +120,7 @@ Python 的 lint 是 `uvx ruff@0.17.3 check`（規則在 ruff.toml），前端是
 ```bash
 git ls-files '*.sh' | xargs uvx --from shellcheck-py shellcheck --severity=warning
 uv run --no-project python deploy/check_boundaries.py
-uv run --no-project --with "pytest>=9,<10" --with ./packages/shared pytest -q deploy   # 依賴方向檢查與 devtools 的測試
+uv run --no-project --with "pytest>=9,<10" --with-editable ./packages/shared pytest -q deploy   # 依賴方向檢查與 devtools 的測試
 ```
 
 commit 前自動跑 Ruff（每個 clone 啟用一次；要略過用 `git commit --no-verify`）：
